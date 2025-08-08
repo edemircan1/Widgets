@@ -1,24 +1,49 @@
-  towerData?: Array<{usid: string, heightFt: number, distance: number, terrainElevation: number, totalElevation: number, towers: any[]}>
-
-===
-
-// YENİ METOD - Tower dikey çizgileri için Column Series ekle
+// YENİ METOD - Her USID için tek tower çizgisi
   addTowerColumnSeries = (ctx) => {
     if (!this.props.towerData || this.props.towerData.length === 0) {
       return null
     }
 
-    console.log('🗼 Creating tower column series with', this.props.towerData.length, 'towers')
+    console.log('🗼 Processing tower data for unique USIDs')
 
-    // Tower data'yı chart formatına dönüştür
-    const towerChartData = this.props.towerData.map(tower => ({
+    // Her USID için tek tower location bul
+    const uniqueTowerMap = new Map()
+    
+    this.props.towerData.forEach(tower => {
+      tower.towers.forEach(towerInfo => {
+        const usid = towerInfo.usid
+        
+        // Bu USID'yi daha önce görmedik, ekle
+        if (!uniqueTowerMap.has(usid)) {
+          uniqueTowerMap.set(usid, {
+            usid: usid,
+            distance: tower.distance,
+            terrainElevation: tower.terrainElevation,
+            totalElevation: tower.totalElevation,
+            heightFt: towerInfo.heightFt,
+            heightMeters: towerInfo.heightMeters,
+            azimuth: towerInfo.azimuth || 'N/A',
+            face: towerInfo.face || 'N/A'
+          })
+          console.log(`🗼 Added unique tower USID: ${usid} at distance ${tower.distance.toFixed(1)}m, height: ${towerInfo.heightFt}ft`)
+        }
+      })
+    })
+
+    // Unique tower'ları chart formatına dönüştür
+    const uniqueTowerArray = Array.from(uniqueTowerMap.values())
+    const towerChartData = uniqueTowerArray.map(tower => ({
       x: convertSingle(tower.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit),
       terrainY: convertSingle(tower.terrainElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
       towerTopY: convertSingle(tower.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
-      towerHeight: convertSingle(tower.towerHeight, 'meters', this.props.selectedElevationUnit),
-      usids: tower.towers.map(t => t.usid).join(', '),
-      heightInfo: `${tower.towerHeightFt.toFixed(1)}ft (${tower.towerHeight.toFixed(1)}m)`
+      towerHeight: convertSingle(tower.heightMeters, 'meters', this.props.selectedElevationUnit),
+      usid: tower.usid,
+      heightInfo: `${tower.heightFt.toFixed(1)}ft (${tower.heightMeters.toFixed(1)}m)`,
+      azimuth: tower.azimuth,
+      face: tower.face
     }))
+
+    console.log(`🗼 Creating ${towerChartData.length} unique tower columns`)
 
     // Column Series oluştur (dikey çizgiler için)
     const towerColumnSeries = ColumnSeries.new(ctx.chart.root, {
@@ -33,30 +58,35 @@
       stroke: colorAm5('#0044aa'),     // Koyu mavi border
       cornerRadiusBL: 0,
       cornerRadiusBR: 0,
-      cornerRadiusTL: 2,
-      cornerRadiusTR: 2
+      cornerRadiusTL: 3,
+      cornerRadiusTR: 3
     })
 
-    // Column genişliği ayarla
+    // Column genişliği ve style ayarla
     towerColumnSeries.columns.template.setAll({
-      width: 8,  // Column genişliği
-      fillOpacity: 0.8,
-      strokeWidth: 1,
+      width: 12,  // Daha kalın column
+      fillOpacity: 0.85,
+      strokeWidth: 2,
       strokeOpacity: 1
     })
 
     // Hover efekti
     towerColumnSeries.columns.template.states.create('hover', {
       fillOpacity: 1,
-      scale: 1.1
+      scale: 1.15,
+      fill: colorAm5('#0088ff') // Hover'da daha açık mavi
     })
 
-    // Tower tooltip'i
+    // Detaylı tower tooltip'i
     towerColumnSeries.set('tooltip', TooltipAm5.new(ctx.chart.root, {
-      labelText: `🗼 Tower
-Distance: {x} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedLinearUnit)?.abbreviation)}
-USID: {usids}
+      labelText: `🗼 Cell Tower
+USID: {usid}
 Height: {heightInfo}
+Azimuth: {azimuth}°
+Face: {face}
+
+📍 Location
+Distance: {x} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedLinearUnit)?.abbreviation)}
 Terrain: {terrainY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}
 Total: {towerTopY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}`
     }))
@@ -64,30 +94,14 @@ Total: {towerTopY} ${this.nls(this.props.unitOptions.find(u => u.value === this.
     // Tower data'yı set et
     towerColumnSeries.data.setAll(towerChartData)
 
-    console.log('🗼 Tower column series created with data:', towerChartData)
+    console.log(`🗼 ${uniqueTowerArray.length} unique towers added to chart:`)
+    console.table(uniqueTowerArray.map(t => ({
+      USID: t.usid,
+      'Distance (m)': t.distance.toFixed(1),
+      'Height (ft)': t.heightFt.toFixed(1),
+      'Azimuth': t.azimuth,
+      'Face': t.face
+    })))
 
     return towerColumnSeries
-  }
-
-
-===
-
-initChart = async (params) => {
-    // ... mevcut kod
-
-    //Create Volumetric objects series
-    if (this._viewOutput && this.props.showVolumetricObj && this.props.mapView.view.type === '3d') {
-      const volumetricObjSeries = this.addVolumetricObjLineSeries(ctx)
-      volumetricObjSeries.data.setAll(params.definition.data)
-      chart.series.push(volumetricObjSeries)
-    }
-
-    // YENİ EKLENEN: Tower Column Series
-    const towerSeries = this.addTowerColumnSeries(ctx)
-    if (towerSeries) {
-      chart.series.push(towerSeries)
-    }
-
-    this.profilingWithCustomizeOptions(ctx)
-    // ... devam eden kod
   }
