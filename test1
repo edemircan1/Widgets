@@ -1,95 +1,31 @@
-// Private field ekle (class'ın en üstüne, constructor'dan önce)
-  private _towerData: Array<{usid: string, heightFt: number, distance: number}> = []
+this.setState({
+        intersectionResult: intersectionResult,
+        viewModelErrorState: false,
+        profileResult: modifiedChartData,
+        chartDataUpdateTime: Date.now(),
+        // YENİ EKLENEN: Tower data'yı state'e ekle
+        towerData: this._towerData
+      }, async () => {
 
-  // YENİ METOD - Tower data'yı toparla ve sakla
-  addPolygonHeights = async (profileData: any): Promise<any> => {
-    if (!profileData || !profileData.lines || profileData.lines.length === 0) {
-      return profileData
-    }
 
-    try {
-      // Profile line geometry'sini al
-      const profileGeometry = this._defaultViewModel?.input?.geometry
-      if (!profileGeometry) {
-        return profileData
-      }
+=========
 
-      // FeatureLayer instance oluştur
-      const featureLayer = new FeatureLayer({
-        url: this.state.polygonHeightLayerUrl
-      })
 
-      await featureLayer.load()
+interface IState {
+  // ... diğer state'ler
+  updatedSelectableLayersAtRuntime: string[]
+  polygonHeightLayerUrl: string
+  // YENİ EKLENEN:
+  towerData: Array<{usid: string, heightFt: number, distance: number, terrainElevation: number, totalElevation: number}>
+}
 
-      const query = featureLayer.createQuery()
-      query.geometry = profileGeometry
-      query.spatialRelationship = 'intersects'
-      query.returnGeometry = true
-      query.outFields = ['usid', 'height_ft']
-      query.returnZ = true
 
-      const queryResult = await featureLayer.queryFeatures(query)
-      
-      if (queryResult.features.length === 0) {
-        this._towerData = []
-        return profileData
-      }
+=====
 
-      // USID bazlı height mapping
-      const usidHeightMap = new Map()
-      queryResult.features.forEach((feature) => {
-        const usid = feature.attributes.usid
-        const heightFt = feature.attributes.height_ft
-        
-        if (usid && heightFt && !isNaN(heightFt) && !usidHeightMap.has(usid)) {
-          usidHeightMap.set(usid, heightFt)
-        }
-      })
-
-      // Tower data'yı topla
-      const towerData = []
-      const samples = profileData.lines[0].samples
-
-      samples.forEach((sample, sampleIndex) => {
-        const samplePoint = new Point({
-          x: sample.x,
-          y: sample.y,
-          spatialReference: profileGeometry.spatialReference
-        })
-
-        const touchedUsids = new Set()
-        queryResult.features.forEach((feature) => {
-          if (geometryEngine.intersects(samplePoint, feature.geometry)) {
-            const usid = feature.attributes.usid
-            if (usid && usidHeightMap.has(usid)) {
-              touchedUsids.add(usid)
-            }
-          }
-        })
-
-        // Bu sample'da tower varsa kaydet
-        if (touchedUsids.size > 0) {
-          touchedUsids.forEach((usid) => {
-            const heightFt = usidHeightMap.get(usid)
-            towerData.push({
-              usid: usid,
-              heightFt: heightFt,
-              distance: sample.distance,
-              terrainElevation: sample.elevation,
-              totalElevation: sample.elevation + (heightFt * 0.3048)
-            })
-          })
-        }
-      })
-
-      this._towerData = towerData
-      console.log('Tower Data:', this._towerData)
-
-      return profileData // Orijinal data'yı return et, tower'ları chart'ta ayrı göstereceğiz
-
-    } catch (error) {
-      console.error('Error processing tower data:', error)
-      this._towerData = []
-      return profileData
-    }
-  }
+this.state = {
+  // ... diğer state'ler
+  updatedSelectableLayersAtRuntime: [],
+  polygonHeightLayerUrl: 'https://your-feature-layer-url-here/FeatureServer/0',
+  // YENİ EKLENEN:
+  towerData: []
+}
