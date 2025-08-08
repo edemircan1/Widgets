@@ -1,4 +1,4 @@
-// YENİ METOD - Polygon height'ları profile'a ekle (USID bazlı) - DEBUG VERSION
+// YENİ METOD - Polygon height'ları profile'a ekle (USID bazlı, duplicate face handling)
   addPolygonHeights = async (profileData: any): Promise<any> => {
     if (!profileData || !profileData.lines || profileData.lines.length === 0) {
       return profileData
@@ -24,7 +24,7 @@
       query.geometry = profileGeometry
       query.spatialRelationship = 'intersects'
       query.returnGeometry = true
-      query.outFields = ['USID', 'height_ft'] // USID ve height_ft field'larını al
+      query.outFields = ['usid', 'height_ft'] // lowercase field names
       query.returnZ = true
 
       const queryResult = await featureLayer.queryFeatures(query)
@@ -36,22 +36,25 @@
 
       console.log(`Found ${queryResult.features.length} intersecting polygons`)
 
-      // USID bazlı height mapping oluştur
+      // USID bazlı height mapping oluştur (sadece unique USID'ler)
       const usidHeightMap = new Map()
       console.log('=== POLYGON ATTRIBUTES DEBUG ===')
       queryResult.features.forEach((feature, index) => {
-        console.log(`Polygon ${index}:`, feature.attributes)
-        const usid = feature.attributes.USID
+        const usid = feature.attributes.usid
         const heightFt = feature.attributes.height_ft
-        if (usid && heightFt && !isNaN(heightFt)) {
+        
+        // Aynı USID'yi sadece bir kez map'e ekle
+        if (usid && heightFt && !isNaN(heightFt) && !usidHeightMap.has(usid)) {
           usidHeightMap.set(usid, heightFt)
           console.log(`✓ MAPPED - USID: ${usid}, Height: ${heightFt} ft`)
+        } else if (usidHeightMap.has(usid)) {
+          console.log(`⚠ DUPLICATE USID SKIPPED - USID: ${usid} already mapped with height: ${usidHeightMap.get(usid)} ft`)
         } else {
-          console.log(`✗ SKIPPED - USID: ${usid}, Height: ${heightFt}`)
+          console.log(`✗ INVALID DATA - USID: ${usid}, Height: ${heightFt}`)
         }
       })
 
-      console.log(`Total mapped USIDs: ${usidHeightMap.size}`)
+      console.log(`Total unique USIDs mapped: ${usidHeightMap.size}`)
 
       // Profile data'yı modify et
       const modifiedProfileData = JSON.parse(JSON.stringify(profileData))
@@ -61,33 +64,55 @@
         const samples = modifiedProfileData.lines[0].samples
         console.log(`=== PROCESSING ${samples.length} SAMPLE POINTS ===`)
         
-        let totalHeightAdded = 0
-        samples.forEach((sample, index) => {
-          // Her sample point için polygon intersection kontrol et
+        // Her sample point için hangi USID'lere dokunduğunu track et
+        const sampleUsidMap = new Map() // sample index -> Set of USIDs
+        
+        samples.forEach((sample, sampleIndex) => {
           const samplePoint = new Point({
             x: sample.x,
             y: sample.y,
             spatialReference: profileGeometry.spatialReference
           })
 
+          const touchedUsids = new Set()
+
           // Intersecting polygon'ları kontrol et
           queryResult.features.forEach((feature) => {
             if (geometryEngine.intersects(samplePoint, feature.geometry)) {
-              const usid = feature.attributes.USID
-              const heightFt = usidHeightMap.get(usid)
-              
-              if (heightFt && !isNaN(heightFt)) {
-                // Feet to meters conversion
-                const heightInMeters = heightFt * 0.3048
-                sample.elevation = sample.elevation + heightInMeters
-                totalHeightAdded++
-                console.log(`✓ Added ${heightFt} ft (${heightInMeters} m) for USID: ${usid} at sample ${index}, distance ${sample.distance}`)
+              const usid = feature.attributes.usid
+              if (usid && usidHeightMap.has(usid)) {
+                touchedUsids.add(usid)
               }
             }
           })
+
+          sampleUsidMap.set(sampleIndex, touchedUsids)
         })
 
-        console.log(`=== SUMMARY: Added height to ${totalHeightAdded} sample points ===`)
+        // Şimdi her sample'a height ekle (her USID sadece bir kez)
+        let totalHeightAdded = 0
+        let totalUsidsProcessed = 0
+        
+        samples.forEach((sample, sampleIndex) => {
+          const touchedUsids = sampleUsidMap.get(sampleIndex)
+          
+          if (touchedUsids && touchedUsids.size > 0) {
+            touchedUsids.forEach((usid) => {
+              const heightFt = usidHeightMap.get(usid)
+              if (heightFt && !isNaN(heightFt)) {
+                const heightInMeters = heightFt * 0.3048
+                sample.elevation = sample.elevation + heightInMeters
+                totalHeightAdded += heightInMeters
+                totalUsidsProcessed++
+                console.log(`✓ Added ${heightFt} ft (${heightInMeters} m) for USID: ${usid} at sample ${sampleIndex}, distance ${sample.distance}`)
+              }
+            })
+          }
+        })
+
+        console.log(`=== SUMMARY ===`)
+        console.log(`Processed ${totalUsidsProcessed} unique USID applications`)
+        console.log(`Total height added: ${(totalHeightAdded / 0.3048).toFixed(2)} ft (${totalHeightAdded.toFixed(2)} m)`)
       }
 
       return modifiedProfileData
