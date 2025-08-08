@@ -1,4 +1,286 @@
-</div>
+render () {
+    let infoMessagesForSelectDraw = ''
+    let warningMessagesForSelectDraw = ''
+    let infoMsgWhileSelectingOrDrawing = ''
+    if ((this.state.initialEmptyState && this.props.drawMode) || (this.state.emptyStateIfDoneClick && this.props.drawMode)) {
+      infoMessagesForSelectDraw = this.nls('drawUserInfo')
+    } else if ((this.state.initialEmptyState && this.props.selectMode) || (this.state.emptyStateIfDoneClick && this.props.selectMode)) {
+      infoMessagesForSelectDraw = this.nls('selectUserInfo')
+    }
+
+    if (this.state.emptyStateIfDoneClick && this.props.drawMode) {
+      warningMessagesForSelectDraw = this.nls('emptyDrawStateWarning')
+    } else if (this.state.emptyStateIfDoneClick && this.props.selectMode) {
+      warningMessagesForSelectDraw = this.nls('emptySelectStateWarning')
+    }
+
+    if (this.props.drawMode && this.props.chartRender) {
+      infoMsgWhileSelectingOrDrawing = this.nls('infoMsgWhileDrawing')
+    } else if (this.props.selectMode && this.props.chartRender) {
+      infoMsgWhileSelectingOrDrawing = this.props.isNewSegmentsForSelection && this.props.noGraphicAfterFirstSelection ? this.nls('infoMsgWhileSelecting') : this.nls('addToSelectionWarning')
+    }
+
+    //display error message when no features found for selection
+    const noFeaturesErrorDisplay = this.nls('noFeaturesFound')
+
+    const settingsOptions = this.settingsOptionsRender()
+    const statsRender = this.statisticsDisplay()
+    const exportInfoRender = this.exportOptionDisplay()
+
+    // Tower Summary Hesaplaması - Sadeleştirilmiş
+    const towerSummary = this.props.towerData ? {
+      totalTowers: this.props.towerData.length,
+      uniqueUSIDs: [...new Set(this.props.towerData.flatMap(t => t.towers.map(tower => tower.usid)))]
+    } : null
+
+    return <div className={'h-100 w-100'} css={getContainerStyle(this.props.theme)}>
+      {/* CLEAN FANCY HEADER */}
+      {this.props.chartRender && (
+        <div style={{
+          background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)',
+          color: 'white',
+          padding: this.props.isMobile ? '10px 14px' : '14px 18px',
+          borderRadius: '8px 8px 0 0',
+          marginBottom: '4px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+          minHeight: 'auto',
+          maxHeight: this.props.isMobile ? '80px' : '90px',
+          overflow: 'hidden'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            justifyContent: 'space-between',
+            flexWrap: this.props.isMobile ? 'wrap' : 'nowrap',
+            gap: this.props.isMobile ? '8px' : '12px'
+          }}>
+            <div style={{ flex: 1, minWidth: '200px' }}>
+              <h3 style={{ 
+                margin: '0 0 6px 0', 
+                fontSize: this.props.isMobile ? '16px' : '20px', 
+                fontWeight: '600',
+                textShadow: '0 1px 2px rgba(0,0,0,0.3)',
+                lineHeight: '1.2'
+              }}>
+                📡 Custom Cell Elevation Profile
+              </h3>
+              <div style={{ 
+                fontSize: this.props.isMobile ? '11px' : '13px', 
+                opacity: 0.9,
+                display: this.props.isMobile ? 'none' : 'block'
+              }}>
+                Advanced terrain analysis with cellular infrastructure mapping
+              </div>
+            </div>
+            
+            {/* Tower Summary Badge - Clean */}
+            {towerSummary && towerSummary.totalTowers > 0 && (
+              <div style={{
+                background: 'rgba(255,255,255,0.15)',
+                borderRadius: '10px',
+                padding: this.props.isMobile ? '8px 12px' : '10px 16px',
+                backdropFilter: 'blur(10px)',
+                border: '1px solid rgba(255,255,255,0.2)',
+                textAlign: 'center',
+                minWidth: this.props.isMobile ? '80px' : '120px'
+              }}>
+                <div style={{ 
+                  fontSize: this.props.isMobile ? '20px' : '24px', 
+                  fontWeight: 'bold',
+                  color: '#4FC3F7',
+                  lineHeight: '1',
+                  marginBottom: '4px'
+                }}>
+                  {towerSummary.uniqueUSIDs.length}
+                </div>
+                <div style={{ 
+                  fontSize: this.props.isMobile ? '10px' : '12px', 
+                  opacity: 0.8,
+                  fontWeight: '500'
+                }}>
+                  Cell Towers Found
+                </div>
+              </div>
+            )}
+          </div>
+          
+          {/* USIDs Display - Beautiful */}
+          {towerSummary && towerSummary.totalTowers > 0 && (
+            <div style={{
+              marginTop: '10px',
+              padding: '8px 12px',
+              background: 'rgba(255,255,255,0.1)',
+              borderRadius: '6px',
+              border: '1px solid rgba(255,255,255,0.15)'
+            }}>
+              <div style={{ 
+                fontSize: this.props.isMobile ? '9px' : '10px', 
+                opacity: 0.7,
+                marginBottom: '4px',
+                fontWeight: '500',
+                letterSpacing: '0.5px'
+              }}>
+                INTERSECTED USIDs
+              </div>
+              <div style={{ 
+                fontSize: this.props.isMobile ? '11px' : '13px', 
+                fontWeight: '500',
+                color: '#E3F2FD',
+                lineHeight: '1.3',
+                wordBreak: 'break-all'
+              }}>
+                {towerSummary.uniqueUSIDs.join(' • ')}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* HEADER TOOLBAR */}
+      <div style={{ height: this.props.chartRender ? 30 : 35 }} className={'ep-widget-header d-flex w-100'}>
+        <div className={'align-items-center w-100 pt-1'} style={{ display: 'inline-block' }}>
+          <Button role={'button'} aria-label={this.nls('settingsOptions')} aria-haspopup={'dialog'} title={this.nls('settingsOptions')} icon
+            id={'settingsOptions' + this.props.widgetId} className={'chart-actions'}
+            color={this.state.settingsOptionsOpen ? 'primary' : 'default'}
+            size={'sm'} type='default' onClick={this.toggleSettings}>
+            <Icon size={16} icon={epIcon.settingsIcon} />
+          </Button>
+
+          {this.state.allowExport && this.props.chartRender && ((this.props.drawMode && this.props.onDrawingComplete) ||
+          (this.props.selectMode)) &&
+            <Button role={'button'} aria-label={this.nls('chartExport')} aria-haspopup={'dialog'} title={this.nls('chartExport')} icon
+              id={'export' + this.props.widgetId} className={'chart-actions'} color={this.state.isExport ? 'primary' : 'default'}
+              size={'sm'} type='default' onClick={this.toggleExport}>
+              <Icon size={16} icon={exportIcon} />
+            </Button>
+          }
+
+          {this.props.chartRender &&
+            <React.Fragment>
+              <Button role={'button'} aria-label={this.nls('chartFlip')} title={this.nls('chartFlip')} icon
+                className={'chart-actions'} color={this.state.isFlipChart ? 'primary' : 'default'}
+                size={'sm'} type='default' onClick={this.onChartFlip}>
+                <Icon size={16} icon={epIcon.flipIcon} />
+              </Button>
+
+            {this.state.displayStats &&
+              <Button role={'button'} aria-label={this.nls('chartStatistics')} aria-haspopup={'dialog'} title={this.nls('chartStatistics')} icon
+                id={'statistics' + this.props.widgetId} className={'chart-actions'}
+                color={this.state.statisticsOpen ? 'primary' : 'default'}
+                size={'sm'} type='default' onClick={this.toggleStatistics}>
+                <Icon size={16} icon={epIcon.chartIcon} />
+              </Button>
+            }
+            </React.Fragment>
+          }
+
+          {this.state.settingsOptionsOpen &&
+            settingsOptions
+          }
+
+          {this.state.isExport &&
+            exportInfoRender
+          }
+
+          {this.state.statisticsOpen &&
+            statsRender
+          }
+        </div>
+      </div>
+
+      {/* BODY CONTAINER */}
+      <div className={classNames('ep-widget-bodyContainer d-flex w-100', this.props.chartRender ? '' : 'align-items-center')}
+           style={{ 
+             height: this.props.chartRender ? 
+               `calc(100% - ${this.props.isMobile ? '200px' : '210px'})` : 
+               'calc(100% - 85px)' 
+           }}>
+        <div className={classNames('w-100 h-100', this.props.chartRender ? '' : 'alignInfo align-items-center', this.props.noFeaturesFoundError ? 'alignInfo align-items-center' : '')}>
+          {!this.props.displayLoadingIndicator &&
+            <React.Fragment>
+              {!this.props.chartRender && !this.state.noFeaturesError && !this.state.noValidInput &&
+                <div tabIndex={0} ref={this._alertElement} aria-label={infoMessagesForSelectDraw}>
+                  <Alert className={'mb-4 w-100 userInfo py-1'}
+                    open={!this.props.chartRender && !this.state.noFeaturesError && !this.state.noValidInput}
+                    text={infoMessagesForSelectDraw}
+                    type={'info'}
+                    withIcon
+                  />
+                </div>
+              }
+              {this.state.emptyStateIfDoneClick && !this.props.chartRender && !this.state.noFeaturesError && !this.state.noValidInput &&
+                <Alert tabIndex={0} className={'w-100 userInfo py-1'}
+                  open={this.state.emptyStateIfDoneClick && !this.props.chartRender && !this.state.noFeaturesError && !this.state.noValidInput}
+                  text={warningMessagesForSelectDraw}
+                  type={'warning'}
+                  withIcon
+                />
+              }
+
+              {this.state.noFeaturesError &&
+                <Alert tabIndex={0} className={'w-100 userInfo py-1'}
+                  open={this.state.noFeaturesError}
+                  text={noFeaturesErrorDisplay}
+                  type={'warning'}
+                  withIcon
+                />
+              }
+
+              {this.state.noValidInput &&
+                <Alert tabIndex={0} className={'w-100 userInfo py-1'}
+                  open={this.state.noValidInput}
+                  text={this.state.viewModelErrorMsg}
+                  type={'warning'}
+                  withIcon
+                />
+              }
+            </React.Fragment>
+          }
+
+          {(this.props.chartRender || this.state.exportData) &&
+            <ProfileChart
+              ref={'chartObj'}
+              intl={this.props.intl}
+              isExportEnable={this.state.exportData}
+              parentWidgetId={this.props.widgetId}
+              isSelectModeActive={this.props.selectMode}
+              commonGeneralSettings={this.props.commonDsGeneralSettings}
+              activeDs={this.props.activeDataSource}
+              currentConfig={this.props.activeDatasourceConfig}
+              theme={this.props.theme}
+              selectedLinearUnit={this.state.selectedLinearUnit}
+              selectedElevationUnit={this.state.selectedElevationUnit}
+              showVolumetricObj={this.state.showViewLineGraph}
+              volumetricObjLineStyle={this.state.volumetricObjStyle}
+              volumetricObjLabel={this.state.volumetricObjLabel}
+              chartDataUpdateTime={this.props.chartDataUpdateTime}
+              profileResult={this.props.profileResult}
+              unitOptions={this.state.unitOptions}
+              highlightChartPositionOnMap={this.highlightChartPosition.bind(this)}
+              hideChartPosition={this.hideChartPosition.bind(this)}
+              chartInfo={this.getChartInfo.bind(this)}
+              toggleLegendSeriesState={this.onToggleSeries}
+              isFlip={this.state.isFlipChart}
+              isUniformChartScalingEnable={this.state.isUniformScalingEnable}
+              drawingLayer={this.props.drawingLayer}
+              intersectionHighlightLayer={this.props.intersectionHighlightLayer}
+              mapView={this.props.jimuMapView}
+              assetIntersectionResult={this.props.intersectionResult}
+              setExportButton={this.setExportButtonState}
+              isCustomIntervalEnabled={this.state.isCustomizeInterval}
+              customDistanceInterval={this.state.distanceInterval}
+              addedElelvationProfileLayers={this.state.addedElevationLayers}
+              profileSettingsForNewAddedLayer={this.state.profileSettingsForNewlyAddedLayers}
+              towerData={this.props.towerData}
+            />
+          }
+        </div>
+        {this.props.displayLoadingIndicator &&
+          <React.Fragment>
+            <Loading type={LoadingType.Donut} />
+          </React.Fragment>
+        }
+      </div>
 
       {/* FLOATING INFO MESSAGES */}
       <div className={'floatingInfoMsg'}>
