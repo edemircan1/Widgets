@@ -1,69 +1,25 @@
-// YENİ METOD - Polygon height'ları profile'a ekle
-  addPolygonHeights = async (profileData: any): Promise<any> => {
-    if (!profileData || !profileData.lines || profileData.lines.length === 0) {
-      return profileData
-    }
-
-    try {
-      // Profile line geometry'sini al
-      const profileGeometry = this._defaultViewModel?.input?.geometry
-      if (!profileGeometry) {
-        return profileData
+onChartDataReady = async (signal) => {
+    if (this.state.drawModeActive || this.state.selectModeActive) {
+      const intersectionResult = await this.createBufferGraphics(true)
+      if (signal.aborted) {
+        return
       }
 
-      // Feature layer'dan polygon'ları query et
-      const query = {
-        geometry: profileGeometry.toJSON(),
-        spatialRelationship: 'esriSpatialRelIntersects',
-        returnGeometry: true,
-        outFields: ['height_ft', 'OBJECTID'],
-        returnZ: true,
-        outSR: this._mapView.view.spatialReference.toJSON()
-      }
+      // YENİ EKLENEN: Polygon height'ları ekle
+      const modifiedChartData = await this.addPolygonHeights(this._defaultViewModel.chartData)
 
-      // FeatureLayer instance oluştur
-      const featureLayer = new FeatureLayer({
-        url: this.state.polygonHeightLayerUrl
-      })
-
-      const queryResult = await featureLayer.queryFeatures(query)
-      
-      if (queryResult.features.length === 0) {
-        return profileData
-      }
-
-      // Profile data'yı modify et
-      const modifiedProfileData = { ...profileData }
-      
-      // İlk line'ı (ground elevation) al
-      if (modifiedProfileData.lines && modifiedProfileData.lines[0] && modifiedProfileData.lines[0].samples) {
-        const samples = modifiedProfileData.lines[0].samples
-        
-        samples.forEach((sample, index) => {
-          // Her sample point için polygon intersection kontrol et
-          const samplePoint = new Point({
-            x: sample.x,
-            y: sample.y,
-            spatialReference: this._mapView.view.spatialReference
-          })
-
-          queryResult.features.forEach((feature) => {
-            if (geometryEngine.intersects(samplePoint, feature.geometry)) {
-              const heightValue = feature.attributes.height_ft
-              if (heightValue && !isNaN(heightValue)) {
-                // Mevcut elevation'a height_ft değerini ekle
-                sample.elevation = sample.elevation + heightValue
-              }
-            }
-          })
+      this.setState({
+        intersectionResult: intersectionResult,
+        viewModelErrorState: false,
+        profileResult: modifiedChartData, // Değişen satır: modifiedChartData
+        chartDataUpdateTime: Date.now()
+      }, async () => {
+        //as it takes some time to render the chart after setting data
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        this.setState({
+          loadingIndicator: false,
+          startChartRendering: true
         })
-      }
-
-      return modifiedProfileData
-    } catch (error) {
-      console.error('Error adding polygon heights:', error)
-      return profileData
+      })
     }
   }
-
-  onChartDataReady = async (signal) => {
