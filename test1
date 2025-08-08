@@ -1,31 +1,95 @@
-this.setState({
-        intersectionResult: intersectionResult,
-        viewModelErrorState: false,
-        profileResult: modifiedChartData,
-        chartDataUpdateTime: Date.now(),
-        // YENİ EKLENEN: Tower data'yı state'e ekle
-        towerData: this._towerData
-      }, async () => {
+// YENİ METOD - Tower data'yı profile samples'larına embed et
+  addPolygonHeights = async (profileData: any): Promise<any> => {
+    if (!profileData || !profileData.lines || profileData.lines.length === 0) {
+      return profileData
+    }
 
+    try {
+      // Profile line geometry'sini al
+      const profileGeometry = this._defaultViewModel?.input?.geometry
+      if (!profileGeometry) {
+        return profileData
+      }
 
-=========
+      // FeatureLayer instance oluştur
+      const featureLayer = new FeatureLayer({
+        url: this.state.polygonHeightLayerUrl
+      })
 
+      await featureLayer.load()
 
-interface IState {
-  // ... diğer state'ler
-  updatedSelectableLayersAtRuntime: string[]
-  polygonHeightLayerUrl: string
-  // YENİ EKLENEN:
-  towerData: Array<{usid: string, heightFt: number, distance: number, terrainElevation: number, totalElevation: number}>
-}
+      const query = featureLayer.createQuery()
+      query.geometry = profileGeometry
+      query.spatialRelationship = 'intersects'
+      query.returnGeometry = true
+      query.outFields = ['usid', 'height_ft']
+      query.returnZ = true
 
+      const queryResult = await featureLayer.queryFeatures(query)
+      
+      if (queryResult.features.length === 0) {
+        console.log('No towers found')
+        return profileData
+      }
 
-=====
+      // USID bazlı height mapping
+      const usidHeightMap = new Map()
+      queryResult.features.forEach((feature) => {
+        const usid = feature.attributes.usid
+        const heightFt = feature.attributes.height_ft
+        
+        if (usid && heightFt && !isNaN(heightFt) && !usidHeightMap.has(usid)) {
+          usidHeightMap.set(usid, heightFt)
+        }
+      })
 
-this.state = {
-  // ... diğer state'ler
-  updatedSelectableLayersAtRuntime: [],
-  polygonHeightLayerUrl: 'https://your-feature-layer-url-here/FeatureServer/0',
-  // YENİ EKLENEN:
-  towerData: []
-}
+      // Profile data'yı modify et
+      const modifiedProfileData = JSON.parse(JSON.stringify(profileData))
+      const samples = modifiedProfileData.lines[0].samples
+
+      // Her sample'a tower bilgisini ekle
+      samples.forEach((sample, sampleIndex) => {
+        const samplePoint = new Point({
+          x: sample.x,
+          y: sample.y,
+          spatialReference: profileGeometry.spatialReference
+        })
+
+        // Bu sample'da hangi tower'lar var?
+        const towersAtThisPoint = []
+        
+        queryResult.features.forEach((feature) => {
+          if (geometryEngine.intersects(samplePoint, feature.geometry)) {
+            const usid = feature.attributes.usid
+            const heightFt = usidHeightMap.get(usid)
+            if (usid && heightFt && !isNaN(heightFt)) {
+              towersAtThisPoint.push({
+                usid: usid,
+                heightFt: heightFt,
+                heightMeters: heightFt * 0.3048
+              })
+            }
+          }
+        })
+
+        // Tower bilgilerini sample'a ekle
+        if (towersAtThisPoint.length > 0) {
+          sample.towers = towersAtThisPoint
+          
+          // Toplam tower height'ını elevation'a ekle
+          const totalTowerHeight = towersAtThisPoint.reduce((sum, tower) => sum + tower.heightMeters, 0)
+          sample.originalElevation = sample.elevation // Orijinal terrain elevation'ını sakla
+          sample.elevation = sample.elevation + totalTowerHeight // Tower'lı elevation
+          
+          console.log(`Sample at distance ${sample.distance}: ${towersAtThisPoint.length} towers, total height: ${totalTowerHeight.toFixed(2)}m`)
+        }
+      })
+
+      console.log('Profile modified with tower data')
+      return modifiedProfileData
+
+    } catch (error) {
+      console.error('Error adding tower data:', error)
+      return profileData
+    }
+  }
