@@ -1,107 +1,199 @@
-// YENİ METOD - Her USID için tek tower çizgisi
-  addTowerColumnSeries = (ctx) => {
-    if (!this.props.towerData || this.props.towerData.length === 0) {
-      return null
+// TOWER DATA COLLECTION - Terrain'i değiştirmeden sadece tower bilgilerini topla
+  addPolygonHeights = async (profileData: any): Promise<any> => {
+    if (!profileData || !profileData.lines || profileData.lines.length === 0) {
+      return profileData
     }
 
-    console.log('🗼 Processing tower data for unique USIDs')
+    try {
+      // Profile line geometry'sini al
+      const profileGeometry = this._defaultViewModel?.input?.geometry
+      if (!profileGeometry) {
+        return profileData
+      }
 
-    // Her USID için tek tower location bul
-    const uniqueTowerMap = new Map()
-    
-    this.props.towerData.forEach(tower => {
-      tower.towers.forEach(towerInfo => {
-        const usid = towerInfo.usid
+      // FeatureLayer instance oluştur
+      const featureLayer = new FeatureLayer({
+        url: this.state.polygonHeightLayerUrl
+      })
+
+      await featureLayer.load()
+
+      // Query parametreleri
+      const query = featureLayer.createQuery()
+      query.geometry = profileGeometry
+      query.spatialRelationship = 'intersects'
+      query.returnGeometry = true
+      query.outFields = ['usid', 'height_ft', 'azimuth', 'face']
+      query.returnZ = true
+
+      const queryResult = await featureLayer.queryFeatures(query)
+      
+      if (queryResult.features.length === 0) {
+        console.log('🗼 No towers found along profile')
+        this._towerData = []
+        return profileData // Orijinal data'yı return et
+      }
+
+      // USID bazlı tower mapping (unique towers only)
+      const uniqueTowerMap = new Map()
+
+      queryResult.features.forEach((feature) => {
+        const usid = feature.attributes.usid
+        const heightFt = feature.attributes.height_ft
+        const azimuth = feature.attributes.azimuth
+        const face = feature.attributes.face
         
-        // Bu USID'yi daha önce görmedik, ekle
-        if (!uniqueTowerMap.has(usid)) {
+        if (usid && heightFt && !isNaN(heightFt) && !uniqueTowerMap.has(usid)) {
           uniqueTowerMap.set(usid, {
-            usid: usid,
-            distance: tower.distance,
-            terrainElevation: tower.terrainElevation,
-            totalElevation: tower.totalElevation,
-            heightFt: towerInfo.heightFt,
-            heightMeters: towerInfo.heightMeters,
-            azimuth: towerInfo.azimuth || 'N/A',
-            face: towerInfo.face || 'N/A'
+            heightFt: heightFt,
+            heightMeters: heightFt * 0.3048,
+            azimuth: azimuth || 'N/A',
+            face: face || 'N/A',
+            geometry: feature.geometry
           })
-          console.log(`🗼 Added unique tower USID: ${usid} at distance ${tower.distance.toFixed(1)}m, height: ${towerInfo.heightFt}ft`)
         }
       })
-    })
 
-    // Unique tower'ları chart formatına dönüştür
-    const uniqueTowerArray = Array.from(uniqueTowerMap.values())
-    const towerChartData = uniqueTowerArray.map(tower => ({
-      x: convertSingle(tower.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit),
-      terrainY: convertSingle(tower.terrainElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
-      towerTopY: convertSingle(tower.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
-      towerHeight: convertSingle(tower.heightMeters, 'meters', this.props.selectedElevationUnit),
-      usid: tower.usid,
-      heightInfo: `${tower.heightFt.toFixed(1)}ft (${tower.heightMeters.toFixed(1)}m)`,
-      azimuth: tower.azimuth,
-      face: tower.face
-    }))
+      console.log(`🗼 Found ${uniqueTowerMap.size} unique towers along profile`)
 
-    console.log(`🗼 Creating ${towerChartData.length} unique tower columns`)
+      // Terrain data'yı değiştirmeden tower locations'ları bul
+      const originalSamples = profileData.lines[0].samples
+      const towerDetails = []
 
-    // Column Series oluştur (dikey çizgiler için)
-    const towerColumnSeries = ColumnSeries.new(ctx.chart.root, {
-      name: '🗼 Cell Towers',
-      valueXField: 'x',
-      openValueYField: 'terrainY',     // Terrain elevation (alt)
-      valueYField: 'towerTopY',        // Tower top elevation (üst)
-      xAxis: ctx.xAxis,
-      yAxis: ctx.yAxis,
-      legendLabelText: '{name}',
-      fill: colorAm5('#0066cc'),       // Mavi renk
-      stroke: colorAm5('#0044aa'),     // Koyu mavi border
-      cornerRadiusBL: 0,
-      cornerRadiusBR: 0,
-      cornerRadiusTL: 3,
-      cornerRadiusTR: 3
-    })
+      originalSamples.forEach((sample, sampleIndex) => {
+        const samplePoint = new Point({
+          x: sample.x,
+          y: sample.y,
+          spatialReference: profileGeometry.spatialReference
+        })
 
-    // Column genişliği ve style ayarla
-    towerColumnSeries.columns.template.setAll({
-      width: 12,  // Daha kalın column
-      fillOpacity: 0.85,
-      strokeWidth: 2,
-      strokeOpacity: 1
-    })
+        // Bu sample'da hangi tower'lar var?
+        const towersAtThisPoint = []
 
-    // Hover efekti
-    towerColumnSeries.columns.template.states.create('hover', {
-      fillOpacity: 1,
-      scale: 1.15,
-      fill: colorAm5('#0088ff') // Hover'da daha açık mavi
-    })
+        queryResult.features.forEach((feature) => {
+          if (geometryEngine.intersects(samplePoint, feature.geometry)) {
+            const usid = feature.attributes.usid
+            const towerInfo = uniqueTowerMap.get(usid)
+            
+            if (usid && towerInfo && !towersAtThisPoint.find(t => t.usid === usid)) {
+              towersAtThisPoint.push({
+                usid: usid,
+                heightFt: towerInfo.heightFt,
+                heightMeters: towerInfo.heightMeters,
+                azimuth: towerInfo.azimuth,
+                face: towerInfo.face
+              })
+            }
+          }
+        })
 
-    // Detaylı tower tooltip'i
-    towerColumnSeries.set('tooltip', TooltipAm5.new(ctx.chart.root, {
-      labelText: `🗼 Cell Tower
-USID: {usid}
-Height: {heightInfo}
-Azimuth: {azimuth}°
-Face: {face}
+        // Tower varsa location'ını kaydet (terrain'i DEĞİŞTİRME!)
+        if (towersAtThisPoint.length > 0) {
+          const totalTowerHeight = towersAtThisPoint.reduce((sum, tower) => sum + tower.heightMeters, 0)
+          
+          const towerDetail = {
+            distance: sample.distance,
+            terrainElevation: sample.elevation, // Orijinal terrain elevation
+            towerHeight: totalTowerHeight,
+            towerHeightFt: totalTowerHeight / 0.3048,
+            totalElevation: sample.elevation + totalTowerHeight, // Sadece hesaplama için
+            towers: towersAtThisPoint,
+            sampleIndex: sampleIndex
+          }
+          towerDetails.push(towerDetail)
 
-📍 Location
-Distance: {x} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedLinearUnit)?.abbreviation)}
-Terrain: {terrainY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}
-Total: {towerTopY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}`
-    }))
+          console.log(`🗼 Tower at distance ${sample.distance.toFixed(1)}m: ${towersAtThisPoint.length} towers, total height: ${(totalTowerHeight / 0.3048).toFixed(1)}ft`)
+        }
+      })
 
-    // Tower data'yı set et
-    towerColumnSeries.data.setAll(towerChartData)
+      // Global tower data'yı sakla
+      this._towerData = towerDetails
 
-    console.log(`🗼 ${uniqueTowerArray.length} unique towers added to chart:`)
-    console.table(uniqueTowerArray.map(t => ({
-      USID: t.usid,
-      'Distance (m)': t.distance.toFixed(1),
-      'Height (ft)': t.heightFt.toFixed(1),
-      'Azimuth': t.azimuth,
-      'Face': t.face
-    })))
+      // Detailed console output
+      if (towerDetails.length > 0) {
+        console.log('\n🗼 === TOWER PROFILE SUMMARY ===')
+        console.log(`Total tower locations: ${towerDetails.length}`)
+        console.log(`Unique towers found: ${uniqueTowerMap.size}`)
+        console.table(towerDetails.map(t => ({
+          'Distance (m)': t.distance.toFixed(1),
+          'Terrain (m)': t.terrainElevation.toFixed(1),
+          'Tower Height (ft)': t.towerHeightFt.toFixed(1),
+          'Total Elevation (m)': t.totalElevation.toFixed(1),
+          'USIDs': t.towers.map(tower => tower.usid).join(', ')
+        })))
+        console.log('=================================\n')
+      }
 
-    return towerColumnSeries
+      // SADECE ORİJİNAL PROFILE DATA'YI RETURN ET (terrain değiştirilmedi)
+      return profileData
+
+    } catch (error) {
+      console.error('🗼 Error processing tower data:', error)
+      this._towerData = []
+      return profileData
+    }
+  }
+
+======
+
+
+getAdjustedBounds = ({ data, pixelWidth, pixelHeight }) => {
+    const statistics = data.statistics
+    const minX = 0
+    //get min max from ground statistics
+    let maxX = statistics.maxDistance
+    maxX = convertSingle(maxX, data.effectiveUnits.distance, this.props.selectedLinearUnit)
+    let minY = statistics.minElevation
+    minY = convertSingle(minY, data.effectiveUnits.elevation, this.props.selectedElevationUnit)
+    let maxY = statistics.maxElevation
+    maxY = convertSingle(maxY, data.effectiveUnits.elevation, this.props.selectedElevationUnit)
+    
+    //calculate min max based on all the profiles (TOWER'LAR HARİÇ)
+    for (const layerId in this._minMaxOfEachProfile) {
+      // Tower series'ini scaling'den hariç tut
+      if (!layerId.includes('tower') && !layerId.includes('Tower')) {
+        if (this._minMaxOfEachProfile[layerId].max > maxY) {
+          maxY = this._minMaxOfEachProfile[layerId].max
+        }
+        if (this._minMaxOfEachProfile[layerId].min < minY) {
+          minY = this._minMaxOfEachProfile[layerId].min
+        }
+      }
+    }
+
+    // Make sure our ranges are not too small.
+    const rangeX = Math.max(maxX - minX, 0.001)
+    let rangeY = Math.max(maxY - minY, 0.001)
+
+    if (data.dynamicElevationRange) {
+      // Convert to elevation units so that all values are compatible.
+      const rangeXInElevationUnits = convertSingle(rangeX, this.props.selectedLinearUnit, this.props.selectedElevationUnit)
+      // Make sure the Y axis is not too small in relation to the X axis.
+      rangeY = Math.max(rangeY, rangeXInElevationUnits / 300)
+    }
+
+    // Apply some padding at the top and bottom so the chart lines don't align
+    // with the axes.
+    minY = minY - 0.02 * rangeY
+    maxY = minY + rangeY + 0.02 * rangeY
+
+    // Adjust the Y axis such that we obtain guides and labels at 'nice' locations.
+    const yMinMax = niceScale(minY, maxY, 10)
+    rangeY = yMinMax[1] - yMinMax[0]
+
+    if (this.props.isUniformChartScalingEnable) { //if uniform scaling is true
+      return this.getUniformBounds({
+        bounds: { minX, maxX, minY, maxY },
+        pixelWidth,
+        pixelHeight,
+        centered: true
+      })
+    }
+
+    return {
+      minX,
+      maxX: minX + rangeX,
+      minY,
+      maxY: minY + rangeY
+    }
   }
