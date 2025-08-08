@@ -1,4 +1,7 @@
-// YENİ METOD - Polygon height'ları profile'a ekle ve chart için hazırla
+// Private field ekle (class'ın en üstüne, constructor'dan önce)
+  private _towerData: Array<{usid: string, heightFt: number, distance: number}> = []
+
+  // YENİ METOD - Tower data'yı toparla ve sakla
   addPolygonHeights = async (profileData: any): Promise<any> => {
     if (!profileData || !profileData.lines || profileData.lines.length === 0) {
       return profileData
@@ -16,10 +19,8 @@
         url: this.state.polygonHeightLayerUrl
       })
 
-      // Layer yüklenene kadar bekle
       await featureLayer.load()
 
-      // Query parametreleri
       const query = featureLayer.createQuery()
       query.geometry = profileGeometry
       query.spatialRelationship = 'intersects'
@@ -30,13 +31,11 @@
       const queryResult = await featureLayer.queryFeatures(query)
       
       if (queryResult.features.length === 0) {
-        console.log('No intersecting towers found')
+        this._towerData = []
         return profileData
       }
 
-      console.log(`Found towers from ${queryResult.features.length} polygons`)
-
-      // USID bazlı height mapping oluştur
+      // USID bazlı height mapping
       const usidHeightMap = new Map()
       queryResult.features.forEach((feature) => {
         const usid = feature.attributes.usid
@@ -44,73 +43,53 @@
         
         if (usid && heightFt && !isNaN(heightFt) && !usidHeightMap.has(usid)) {
           usidHeightMap.set(usid, heightFt)
-          console.log(`Tower found - USID: ${usid}, Height: ${heightFt} ft`)
         }
       })
 
-      // Profile data'yı modify et
-      const modifiedProfileData = JSON.parse(JSON.stringify(profileData))
-      
-      // Orijinal terrain line'ını koru
-      const originalTerrainLine = JSON.parse(JSON.stringify(modifiedProfileData.lines[0]))
-      
-      // Tower'lı yeni line oluştur
-      const towerLine = JSON.parse(JSON.stringify(originalTerrainLine))
-      towerLine.id = 'tower-elevation-line'
-      
-      if (towerLine.samples) {
-        const samples = towerLine.samples
-        const sampleUsidMap = new Map()
-        
-        // Her sample point için touched USID'leri bul
-        samples.forEach((sample, sampleIndex) => {
-          const samplePoint = new Point({
-            x: sample.x,
-            y: sample.y,
-            spatialReference: profileGeometry.spatialReference
-          })
+      // Tower data'yı topla
+      const towerData = []
+      const samples = profileData.lines[0].samples
 
-          const touchedUsids = new Set()
-          queryResult.features.forEach((feature) => {
-            if (geometryEngine.intersects(samplePoint, feature.geometry)) {
-              const usid = feature.attributes.usid
-              if (usid && usidHeightMap.has(usid)) {
-                touchedUsids.add(usid)
-              }
-            }
-          })
-          sampleUsidMap.set(sampleIndex, touchedUsids)
+      samples.forEach((sample, sampleIndex) => {
+        const samplePoint = new Point({
+          x: sample.x,
+          y: sample.y,
+          spatialReference: profileGeometry.spatialReference
         })
 
-        // Tower line'a height'ları ekle
-        let towersAdded = 0
-        samples.forEach((sample, sampleIndex) => {
-          const touchedUsids = sampleUsidMap.get(sampleIndex)
-          
-          if (touchedUsids && touchedUsids.size > 0) {
-            touchedUsids.forEach((usid) => {
-              const heightFt = usidHeightMap.get(usid)
-              if (heightFt && !isNaN(heightFt)) {
-                const heightInMeters = heightFt * 0.3048
-                sample.elevation = sample.elevation + heightInMeters
-                towersAdded++
-              }
-            })
+        const touchedUsids = new Set()
+        queryResult.features.forEach((feature) => {
+          if (geometryEngine.intersects(samplePoint, feature.geometry)) {
+            const usid = feature.attributes.usid
+            if (usid && usidHeightMap.has(usid)) {
+              touchedUsids.add(usid)
+            }
           }
         })
 
-        console.log(`Added ${towersAdded} tower heights to elevation profile`)
-      }
+        // Bu sample'da tower varsa kaydet
+        if (touchedUsids.size > 0) {
+          touchedUsids.forEach((usid) => {
+            const heightFt = usidHeightMap.get(usid)
+            towerData.push({
+              usid: usid,
+              heightFt: heightFt,
+              distance: sample.distance,
+              terrainElevation: sample.elevation,
+              totalElevation: sample.elevation + (heightFt * 0.3048)
+            })
+          })
+        }
+      })
 
-      // İki line'ı da profile'a ekle
-      modifiedProfileData.lines = [
-        originalTerrainLine,  // Normal terrain
-        towerLine            // Terrain + Towers
-      ]
+      this._towerData = towerData
+      console.log('Tower Data:', this._towerData)
 
-      return modifiedProfileData
+      return profileData // Orijinal data'yı return et, tower'ları chart'ta ayrı göstereceğiz
+
     } catch (error) {
-      console.error('Error adding tower heights:', error)
+      console.error('Error processing tower data:', error)
+      this._towerData = []
       return profileData
     }
   }
