@@ -1,248 +1,93 @@
-// TOWER VISUALIZATION - Comprehensive tower data processing
-  addPolygonHeights = async (profileData: any): Promise<any> => {
-    if (!profileData || !profileData.lines || profileData.lines.length === 0) {
-      return profileData
+  towerData?: Array<{usid: string, heightFt: number, distance: number, terrainElevation: number, totalElevation: number, towers: any[]}>
+
+===
+
+// YENİ METOD - Tower dikey çizgileri için Column Series ekle
+  addTowerColumnSeries = (ctx) => {
+    if (!this.props.towerData || this.props.towerData.length === 0) {
+      return null
     }
 
-    try {
-      // Profile line geometry'sini al
-      const profileGeometry = this._defaultViewModel?.input?.geometry
-      if (!profileGeometry) {
-        return profileData
-      }
+    console.log('🗼 Creating tower column series with', this.props.towerData.length, 'towers')
 
-      // FeatureLayer instance oluştur
-      const featureLayer = new FeatureLayer({
-        url: this.state.polygonHeightLayerUrl
-      })
+    // Tower data'yı chart formatına dönüştür
+    const towerChartData = this.props.towerData.map(tower => ({
+      x: convertSingle(tower.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit),
+      terrainY: convertSingle(tower.terrainElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
+      towerTopY: convertSingle(tower.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
+      towerHeight: convertSingle(tower.towerHeight, 'meters', this.props.selectedElevationUnit),
+      usids: tower.towers.map(t => t.usid).join(', '),
+      heightInfo: `${tower.towerHeightFt.toFixed(1)}ft (${tower.towerHeight.toFixed(1)}m)`
+    }))
 
-      await featureLayer.load()
+    // Column Series oluştur (dikey çizgiler için)
+    const towerColumnSeries = ColumnSeries.new(ctx.chart.root, {
+      name: '🗼 Cell Towers',
+      valueXField: 'x',
+      openValueYField: 'terrainY',     // Terrain elevation (alt)
+      valueYField: 'towerTopY',        // Tower top elevation (üst)
+      xAxis: ctx.xAxis,
+      yAxis: ctx.yAxis,
+      legendLabelText: '{name}',
+      fill: colorAm5('#0066cc'),       // Mavi renk
+      stroke: colorAm5('#0044aa'),     // Koyu mavi border
+      cornerRadiusBL: 0,
+      cornerRadiusBR: 0,
+      cornerRadiusTL: 2,
+      cornerRadiusTR: 2
+    })
 
-      // Query parametreleri
-      const query = featureLayer.createQuery()
-      query.geometry = profileGeometry
-      query.spatialRelationship = 'intersects'
-      query.returnGeometry = true
-      query.outFields = ['usid', 'height_ft', 'azimuth', 'face'] // Daha fazla field al
-      query.returnZ = true
+    // Column genişliği ayarla
+    towerColumnSeries.columns.template.setAll({
+      width: 8,  // Column genişliği
+      fillOpacity: 0.8,
+      strokeWidth: 1,
+      strokeOpacity: 1
+    })
 
-      const queryResult = await featureLayer.queryFeatures(query)
-      
-      if (queryResult.features.length === 0) {
-        console.log('🗼 No towers found along profile')
-        this._towerData = []
-        return profileData
-      }
+    // Hover efekti
+    towerColumnSeries.columns.template.states.create('hover', {
+      fillOpacity: 1,
+      scale: 1.1
+    })
 
-      // USID bazlı tower mapping (unique towers only)
-      const uniqueTowerMap = new Map()
-      const towersByDistance = []
+    // Tower tooltip'i
+    towerColumnSeries.set('tooltip', TooltipAm5.new(ctx.chart.root, {
+      labelText: `🗼 Tower
+Distance: {x} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedLinearUnit)?.abbreviation)}
+USID: {usids}
+Height: {heightInfo}
+Terrain: {terrainY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}
+Total: {towerTopY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}`
+    }))
 
-      queryResult.features.forEach((feature) => {
-        const usid = feature.attributes.usid
-        const heightFt = feature.attributes.height_ft
-        const azimuth = feature.attributes.azimuth
-        const face = feature.attributes.face
-        
-        if (usid && heightFt && !isNaN(heightFt) && !uniqueTowerMap.has(usid)) {
-          uniqueTowerMap.set(usid, {
-            heightFt: heightFt,
-            heightMeters: heightFt * 0.3048,
-            azimuth: azimuth || 'N/A',
-            face: face || 'N/A',
-            geometry: feature.geometry
-          })
-        }
-      })
+    // Tower data'yı set et
+    towerColumnSeries.data.setAll(towerChartData)
 
-      console.log(`🗼 Found ${uniqueTowerMap.size} unique towers along profile`)
+    console.log('🗼 Tower column series created with data:', towerChartData)
 
-      // Profile data'yı deep copy et
-      const modifiedProfileData = JSON.parse(JSON.stringify(profileData))
-      const originalSamples = modifiedProfileData.lines[0].samples
-
-      // Tower locations ve detailed info topla
-      const towerDetails = []
-      const towerMarkerPoints = [] // Chart'ta marker göstermek için
-
-      originalSamples.forEach((sample, sampleIndex) => {
-        const samplePoint = new Point({
-          x: sample.x,
-          y: sample.y,
-          spatialReference: profileGeometry.spatialReference
-        })
-
-        // Bu sample'da hangi tower'lar var?
-        const towersAtThisPoint = []
-        let totalTowerHeight = 0
-
-        queryResult.features.forEach((feature) => {
-          if (geometryEngine.intersects(samplePoint, feature.geometry)) {
-            const usid = feature.attributes.usid
-            const towerInfo = uniqueTowerMap.get(usid)
-            
-            if (usid && towerInfo && !towersAtThisPoint.find(t => t.usid === usid)) {
-              towersAtThisPoint.push({
-                usid: usid,
-                heightFt: towerInfo.heightFt,
-                heightMeters: towerInfo.heightMeters,
-                azimuth: towerInfo.azimuth,
-                face: towerInfo.face
-              })
-              totalTowerHeight += towerInfo.heightMeters
-            }
-          }
-        })
-
-        // Tower varsa sample'ı işaretle ve bilgileri kaydet
-        if (towersAtThisPoint.length > 0) {
-          // Orijinal terrain elevation'ını sakla
-          sample.originalElevation = sample.elevation
-          sample.towers = towersAtThisPoint
-          
-          // Tower'lı elevation'ı hesapla (terrain + towers)
-          sample.elevation = sample.elevation + totalTowerHeight
-          
-          // Tower details array'ine ekle
-          const towerDetail = {
-            distance: sample.distance,
-            terrainElevation: sample.originalElevation,
-            totalElevation: sample.elevation,
-            towerHeight: totalTowerHeight,
-            towerHeightFt: totalTowerHeight / 0.3048,
-            towers: towersAtThisPoint,
-            sampleIndex: sampleIndex
-          }
-          towerDetails.push(towerDetail)
-
-          // Chart marker points ekle
-          towerMarkerPoints.push({
-            distance: sample.distance,
-            terrainElevation: sample.originalElevation,
-            towerTop: sample.elevation,
-            towerHeight: totalTowerHeight,
-            usids: towersAtThisPoint.map(t => t.usid).join(', '),
-            info: `USID: ${towersAtThisPoint.map(t => t.usid).join(', ')} | Height: ${(totalTowerHeight / 0.3048).toFixed(1)}ft`
-          })
-
-          console.log(`🗼 Tower at distance ${sample.distance.toFixed(1)}m: ${towersAtThisPoint.length} towers, total height: ${(totalTowerHeight / 0.3048).toFixed(1)}ft`)
-        }
-      })
-
-      // Global tower data'yı sakla (diğer componentler için)
-      this._towerData = towerDetails
-
-      // Detailed console output
-      if (towerDetails.length > 0) {
-        console.log('\n🗼 === TOWER PROFILE SUMMARY ===')
-        console.log(`Total tower locations: ${towerDetails.length}`)
-        console.log(`Unique towers found: ${uniqueTowerMap.size}`)
-        console.table(towerDetails.map(t => ({
-          'Distance (m)': t.distance.toFixed(1),
-          'Terrain (m)': t.terrainElevation.toFixed(1),
-          'Tower Height (ft)': t.towerHeightFt.toFixed(1),
-          'Total Elevation (m)': t.totalElevation.toFixed(1),
-          'USIDs': t.towers.map(tower => tower.usid).join(', ')
-        })))
-        console.log('=================================\n')
-      }
-
-      // Modified profile data'yı return et
-      return modifiedProfileData
-
-    } catch (error) {
-      console.error('🗼 Error processing tower data:', error)
-      this._towerData = []
-      return profileData
-    }
+    return towerColumnSeries
   }
 
 
-=====
+===
 
-interface Props {
-  theme: IMThemeVariables
-  intl: IntlShape
-  widgetId: string
-  isMobile: boolean
-  displayLoadingIndicator: boolean
-  activeDataSource: string
-  commonDsGeneralSettings: any
-  defaultConfig: any
-  activeDatasourceConfig: any
-  profileResult: any
-  visibleGroundProfileStats: any
-  selectMode: boolean
-  drawMode: boolean
-  onDrawingComplete: boolean
-  isNewSegmentsForSelection: boolean
-  noGraphicAfterFirstSelection: boolean
-  chartRender: boolean
-  noFeaturesFoundError: boolean
-  drawingLayer: GraphicsLayer
-  intersectionHighlightLayer: GraphicsLayer
-  jimuMapView: JimuMapView
-  viewModelErrorState: boolean
-  profileErrorMsg: string
-  onNavBack: () => void
-  doneClick: () => boolean
-  activateDrawSelectToolForNewProfile: () => void
-  selectableLayersRuntime: (layersArray: string[]) => void
-  intersectingLayersRuntime: (layersArray: string[]) => void
-  chartPosition: (point: any) => void
-  hideChartPosition: () => void
-  buildOutputStatistics: (selectedElevationUnit: string, selectedLinearUnit: string, isFlip: boolean) => void
-  intersectingBufferRuntime: (bufferValues: AssetBufferIntersection) => void
-  intersectionResult: LayerIntersectionInfo[]
-  chartDataUpdateTime: number
-  currentPageId: string
-  addedElelvationProfileLayers: ElevationLayersInfo[]
-  groundLayerId: string
-  newAddedLayer: string[]
-  profileSettingsForNewAddedLayer: ProfileLayersSettings[]
-  // YENİ EKLENEN PROP:
-  towerData?: Array<{usid: string, heightFt: number, distance: number, terrainElevation: number, totalElevation: number}>
-}
+initChart = async (params) => {
+    // ... mevcut kod
 
+    //Create Volumetric objects series
+    if (this._viewOutput && this.props.showVolumetricObj && this.props.mapView.view.type === '3d') {
+      const volumetricObjSeries = this.addVolumetricObjLineSeries(ctx)
+      volumetricObjSeries.data.setAll(params.definition.data)
+      chart.series.push(volumetricObjSeries)
+    }
 
-=====
+    // YENİ EKLENEN: Tower Column Series
+    const towerSeries = this.addTowerColumnSeries(ctx)
+    if (towerSeries) {
+      chart.series.push(towerSeries)
+    }
 
-
-{(this.props.chartRender || this.state.exportData) &&
-            <ProfileChart
-              ref={'chartObj'}
-              intl={this.props.intl}
-              isExportEnable={this.state.exportData}
-              parentWidgetId={this.props.widgetId}
-              isSelectModeActive={this.props.selectMode}
-              commonGeneralSettings={this.props.commonDsGeneralSettings}
-              activeDs={this.props.activeDataSource}
-              currentConfig={this.props.activeDatasourceConfig}
-              theme={this.props.theme}
-              selectedLinearUnit={this.state.selectedLinearUnit}
-              selectedElevationUnit={this.state.selectedElevationUnit}
-              showVolumetricObj={this.state.showViewLineGraph}
-              volumetricObjLineStyle={this.state.volumetricObjStyle}
-              volumetricObjLabel={this.state.volumetricObjLabel}
-              chartDataUpdateTime={this.props.chartDataUpdateTime}
-              profileResult={this.props.profileResult}
-              unitOptions={this.state.unitOptions}
-              highlightChartPositionOnMap={this.highlightChartPosition.bind(this)}
-              hideChartPosition={this.hideChartPosition.bind(this)}
-              chartInfo={this.getChartInfo.bind(this)}
-              toggleLegendSeriesState={this.onToggleSeries}
-              isFlip={this.state.isFlipChart}
-              isUniformChartScalingEnable={this.state.isUniformScalingEnable}
-              drawingLayer={this.props.drawingLayer}
-              intersectionHighlightLayer={this.props.intersectionHighlightLayer}
-              mapView={this.props.jimuMapView}
-              assetIntersectionResult={this.props.intersectionResult}
-              setExportButton={this.setExportButtonState}
-              isCustomIntervalEnabled={this.state.isCustomizeInterval}
-              customDistanceInterval={this.state.distanceInterval}
-              addedElelvationProfileLayers={this.state.addedElevationLayers}
-              profileSettingsForNewAddedLayer={this.state.profileSettingsForNewlyAddedLayers}
-              // YENİ EKLENEN PROP:
-              towerData={this.props.towerData}
-            />
-          }
+    this.profilingWithCustomizeOptions(ctx)
+    // ... devam eden kod
+  }
