@@ -1,4 +1,4 @@
-// YENİ METOD - Polygon height'ları profile'a ekle
+// YENİ METOD - Polygon height'ları profile'a ekle (USID bazlı)
   addPolygonHeights = async (profileData: any): Promise<any> => {
     if (!profileData || !profileData.lines || profileData.lines.length === 0) {
       return profileData
@@ -24,7 +24,7 @@
       query.geometry = profileGeometry
       query.spatialRelationship = 'intersects'
       query.returnGeometry = true
-      query.outFields = ['height_ft']
+      query.outFields = ['USID', 'height_ft'] // USID ve height_ft field'larını al
       query.returnZ = true
 
       const queryResult = await featureLayer.queryFeatures(query)
@@ -35,6 +35,17 @@
       }
 
       console.log(`Found ${queryResult.features.length} intersecting polygons`)
+
+      // USID bazlı height mapping oluştur
+      const usidHeightMap = new Map()
+      queryResult.features.forEach((feature) => {
+        const usid = feature.attributes.USID
+        const heightFt = feature.attributes.height_ft
+        if (usid && heightFt && !isNaN(heightFt)) {
+          usidHeightMap.set(usid, heightFt)
+          console.log(`USID: ${usid}, Height: ${heightFt} ft`)
+        }
+      })
 
       // Profile data'yı modify et
       const modifiedProfileData = JSON.parse(JSON.stringify(profileData))
@@ -51,14 +62,17 @@
             spatialReference: profileGeometry.spatialReference
           })
 
+          // Intersecting polygon'ları kontrol et
           queryResult.features.forEach((feature) => {
             if (geometryEngine.intersects(samplePoint, feature.geometry)) {
-              const heightValue = feature.attributes.height_ft
-              if (heightValue && !isNaN(heightValue)) {
-                // Mevcut elevation'a height_ft değerini ekle
-                const heightInMeters = heightValue * 0.3048 // feet to meters
+              const usid = feature.attributes.USID
+              const heightFt = usidHeightMap.get(usid)
+              
+              if (heightFt && !isNaN(heightFt)) {
+                // Feet to meters conversion
+                const heightInMeters = heightFt * 0.3048
                 sample.elevation = sample.elevation + heightInMeters
-                console.log(`Added ${heightValue} ft (${heightInMeters} m) to sample at distance ${sample.distance}`)
+                console.log(`Added ${heightFt} ft (${heightInMeters} m) for USID: ${usid} at distance ${sample.distance}`)
               }
             }
           })
