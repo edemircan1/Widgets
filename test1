@@ -1,214 +1,607 @@
-# Drop a Pin Widget - Directory Structure
+/** @jsx jsx */
+import {
+React,
+jsx,
+AllWidgetProps,
+css,
+SerializedStyles,
+IMState,
+ReactResizeDetector,
+lodash
+} from ‘jimu-core’
+import { JimuMapViewComponent, JimuMapView } from ‘jimu-arcgis’
+import {
+Button,
+Icon,
+Popper,
+TextInput,
+Select,
+Option,
+Alert
+} from ‘jimu-ui’
+import Point from ‘esri/geometry/Point’
+import Graphic from ‘esri/Graphic’
+import SimpleMarkerSymbol from ‘esri/symbols/SimpleMarkerSymbol’
+import GraphicsLayer from ‘esri/layers/GraphicsLayer’
+import PopupTemplate from ‘esri/PopupTemplate’
 
-## 📁 Complete Directory Tree
+interface Config {
+useMapWidget: string
+}
+
+interface WidgetState {
+jimuMapView: JimuMapView
+isDropMode: boolean
+selectedPin: any
+showPopup: boolean
+popupPosition: { x: number; y: number }
+pinData: {
+id: string
+name: string
+lat: number
+lng: number
+color: string
+}
+graphicsLayer: GraphicsLayer
+}
+
+export default class DropPinWidget extends React.PureComponent<
+AllWidgetProps<Config>,
+WidgetState
+
+> {
+> private mapClickHandler: any = null
+> private pinCounter: number = 0
+> private availableColors = [
+> { value: ‘#FF0000’, label: ‘Red’ },
+> { value: ‘#00FF00’, label: ‘Green’ },
+> { value: ‘#0000FF’, label: ‘Blue’ },
+> { value: ‘#FFFF00’, label: ‘Yellow’ },
+> { value: ‘#FF00FF’, label: ‘Magenta’ },
+> { value: ‘#00FFFF’, label: ‘Cyan’ },
+> { value: ‘#FFA500’, label: ‘Orange’ },
+> { value: ‘#800080’, label: ‘Purple’ }
+> ]
+
+constructor(props: AllWidgetProps<Config>) {
+super(props)
 
 ```
-client/
-└── your-extensions/
-    └── widgets/
-        └── drop-pin/                    ← Widget root folder
-            ├── 📄 manifest.json         ← Widget manifest (from "Widget Configuration Files" artifact)
-            ├── 📄 config.ts             ← Config interface (from "Widget Configuration Files" artifact) 
-            ├── 📄 widget.tsx            ← Main widget code (from "Drop a Pin Widget - Main Widget Component" artifact)
-            ├── 📄 style.css             ← Widget styles (from "Widget Styles and Additional Files" artifact)
-            ├── 📁 nls/                  ← Localization folder
-            │   └── 📄 default.ts        ← Default language strings (from "Widget Configuration Files" artifact)
-            └── 📁 setting/              ← Settings panel folder
-                └── 📄 setting.tsx       ← Settings component (from "Widget Configuration Files" artifact)
-```
-
-## 🗂️ File Mapping Guide
-
-### **Root Level Files** (`client/your-extensions/widgets/drop-pin/`)
-
-|File           |Source Artifact                              |Content Type        |
-|---------------|---------------------------------------------|--------------------|
-|`manifest.json`|**Widget Configuration Files**               |JSON manifest       |
-|`config.ts`    |**Widget Configuration Files**               |TypeScript interface|
-|`widget.tsx`   |**Drop a Pin Widget - Main Widget Component**|Main React component|
-|`style.css`    |**Widget Styles and Additional Files**       |CSS styles          |
-
-### **nls/ Folder** (`client/your-extensions/widgets/drop-pin/nls/`)
-
-|File        |Source Artifact               |Content Type        |
-|------------|------------------------------|--------------------|
-|`default.ts`|**Widget Configuration Files**|Localization strings|
-
-### **setting/ Folder** (`client/your-extensions/widgets/drop-pin/setting/`)
-
-|File         |Source Artifact               |Content Type            |
-|-------------|------------------------------|------------------------|
-|`setting.tsx`|**Widget Configuration Files**|Settings React component|
-
-## 🚀 Step-by-Step Implementation
-
-### **Step 1: Create Directory Structure**
-
-```bash
-# Navigate to your Experience Builder directory
-cd /path/to/arcgis-experience-builder-developer-edition/client/your-extensions/widgets/
-
-# Create the widget directory structure
-mkdir -p drop-pin/nls drop-pin/setting
-```
-
-### **Step 2: Extract and Place Files**
-
-#### **From “Widget Configuration Files” artifact:**
-
-```bash
-# Extract these sections to separate files:
-
-# 1. Lines 1-4 (Config interface) → config.ts
-# 2. Lines 6-76 (Setting component) → setting/setting.tsx  
-# 3. Lines 78-108 (manifest.json) → manifest.json
-# 4. Lines 110-125 (nls/default.ts) → nls/default.ts
-```
-
-#### **From “Drop a Pin Widget - Main Widget Component” artifact:**
-
-```bash
-# The entire file content → widget.tsx
-```
-
-#### **From “Widget Styles and Additional Files” artifact:**
-
-```bash
-# The entire CSS content → style.css
-```
-
-### **Step 3: File Content Breakdown**
-
-#### **📄 manifest.json**
-
-```json
-{
-  "name": "drop-pin",
-  "type": "widget",
-  "version": "1.0.0",
-  "exbVersion": "1.14.0",
-  "author": "Custom Widget Developer",
-  "description": "A widget to drop pins on the map with customizable names and colors",
-  "copyright": "",
-  "license": "",
-  "main": "dist/runtime/widget.js",
-  "setting": "dist/setting/setting.js",
-  "icon": "📍",
-  "properties": {
-    "supportInlineEditing": false,
-    "supportRepeat": false,
-    "canCrossFilterDS": false
+this.state = {
+  jimuMapView: null,
+  isDropMode: false,
+  selectedPin: null,
+  showPopup: false,
+  popupPosition: { x: 0, y: 0 },
+  pinData: {
+    id: '',
+    name: '',
+    lat: 0,
+    lng: 0,
+    color: '#FF0000'
   },
-  "defaultConfig": {
-    "useMapWidget": ""
-  },
-  "translatedLocales": ["en"],
-  "dependencies": ["jimu-arcgis"],
-  "hasStyle": true,
-  "hasConfig": true,
-  "hasSettingPage": true,
-  "category": "Map Tools",
-  "layouts": [
-    {
-      "name": "default",
-      "type": "row",
-      "content": []
-    }
-  ]
+  graphicsLayer: null
 }
 ```
 
-#### **📄 config.ts**
-
-```typescript
-export interface Config {
-  useMapWidget: string
 }
+
+componentDidMount() {
+// Create graphics layer for pins
+const graphicsLayer = new GraphicsLayer({
+id: ‘drop-pin-layer’,
+title: ‘Dropped Pins’
+})
+
+```
+this.setState({ graphicsLayer })
 ```
 
-#### **📄 nls/default.ts**
+}
 
-```typescript
-export default {
-  widgetName: 'Drop a Pin',
-  widgetDescription: 'Drop pins on the map with custom names and colors',
-  selectMapWidget: 'Please select a map widget',
-  dropPinMode: 'Click to enter drop pin mode',
-  cancelDropMode: 'Click to cancel drop pin mode',
-  pinName: 'Pin Name',
-  pinColor: 'Pin Color',
-  coordinates: 'Coordinates',
-  saveChanges: 'Save Changes',
-  removePin: 'Remove Pin',
-  copyCoordinates: 'Click to copy coordinates',
-  instructions: {
-    title: 'Instructions',
-    step1: 'Click the pin button to enter drop mode',
-    step2: 'Click anywhere on the map to drop a pin',
-    step3: 'Edit pin properties in the popup',
-    step4: 'Click existing pins to modify them'
+componentWillUnmount() {
+this.removeMapClickHandler()
+}
+
+onActiveViewChange = (jimuMapView: JimuMapView) => {
+if (jimuMapView) {
+this.setState({ jimuMapView }, () => {
+// Add graphics layer to map
+if (this.state.graphicsLayer) {
+jimuMapView.view.map.add(this.state.graphicsLayer)
+}
+})
+}
+}
+
+toggleDropMode = () => {
+const { isDropMode, jimuMapView } = this.state
+
+```
+if (!isDropMode) {
+  // Enable drop mode
+  this.setState({ isDropMode: true })
+  this.addMapClickHandler()
+  
+  // Change cursor to crosshair
+  if (jimuMapView?.view?.container) {
+    jimuMapView.view.container.style.cursor = 'crosshair'
+  }
+} else {
+  // Disable drop mode
+  this.setState({ isDropMode: false, showPopup: false })
+  this.removeMapClickHandler()
+  
+  // Reset cursor
+  if (jimuMapView?.view?.container) {
+    jimuMapView.view.container.style.cursor = 'default'
   }
 }
 ```
 
-## ⚡ Quick Setup Commands
+}
 
-### **PowerShell (Windows)**
-
-```powershell
-# Navigate to widgets folder
-cd "C:\path\to\arcgis-experience-builder\client\your-extensions\widgets"
-
-# Create structure
-New-Item -ItemType Directory -Path "drop-pin\nls", "drop-pin\setting" -Force
-
-# Create files (you'll need to paste content manually)
-New-Item -ItemType File -Path "drop-pin\manifest.json", "drop-pin\config.ts", "drop-pin\widget.tsx", "drop-pin\style.css", "drop-pin\nls\default.ts", "drop-pin\setting\setting.tsx"
-```
-
-### **Bash (Mac/Linux)**
-
-```bash
-# Navigate to widgets folder
-cd /path/to/arcgis-experience-builder/client/your-extensions/widgets
-
-# Create structure
-mkdir -p drop-pin/{nls,setting}
-
-# Create files (you'll need to paste content manually)
-touch drop-pin/{manifest.json,config.ts,widget.tsx,style.css,nls/default.ts,setting/setting.tsx}
-```
-
-## 🔍 Visual Directory Verification
-
-After setup, your structure should look exactly like this:
+addMapClickHandler = () => {
+const { jimuMapView } = this.state
 
 ```
-📁 drop-pin/
-├── 📄 manifest.json          ✅ JSON configuration
-├── 📄 config.ts              ✅ TypeScript config
-├── 📄 widget.tsx             ✅ Main React component (largest file)
-├── 📄 style.css              ✅ CSS styles
-├── 📁 nls/
-│   └── 📄 default.ts         ✅ Localization
-└── 📁 setting/
-    └── 📄 setting.tsx        ✅ Settings panel
+if (jimuMapView?.view) {
+  this.mapClickHandler = jimuMapView.view.on('click', this.onMapClick)
+}
 ```
 
-## ⚠️ Important Notes
+}
 
-1. **File Names**: Must match exactly (case-sensitive)
-1. **Folder Names**: `nls` and `setting` are required folder names
-1. **Widget Name**: The folder `drop-pin` becomes your widget ID
-1. **File Extensions**: Must be `.tsx` for React components, `.ts` for TypeScript
-1. **Manifest**: Critical for widget registration in Experience Builder
+removeMapClickHandler = () => {
+if (this.mapClickHandler) {
+this.mapClickHandler.remove()
+this.mapClickHandler = null
+}
+}
 
-## 🧪 Testing Your Setup
+onMapClick = (event: any) => {
+const { isDropMode, graphicsLayer } = this.state
 
-1. **Start Development Server**: Run Experience Builder dev server
-1. **Check Widget Panel**: Look for “Drop a Pin” in Map Tools category
-1. **Add to Experience**: Drag widget to your experience
-1. **Configure**: Set map widget in settings
-1. **Test Functionality**: Click pin button and drop pins on map
+```
+if (!isDropMode || !graphicsLayer) return
 
-Your widget should now be ready to use! 🎉
+const { mapPoint } = event
+
+// Check if clicking on existing pin
+this.state.jimuMapView.view.hitTest(event).then((response) => {
+  const existingPin = response.results.find(result => 
+    result.graphic && result.graphic.layer === graphicsLayer
+  )
+  
+  if (existingPin) {
+    // Edit existing pin
+    this.editPin(existingPin.graphic)
+  } else {
+    // Create new pin
+    this.createNewPin(mapPoint, event)
+  }
+})
+```
+
+}
+
+createNewPin = (mapPoint: Point, event: any) => {
+this.pinCounter++
+
+```
+const pinData = {
+  id: `pin_${this.pinCounter}_${Date.now()}`,
+  name: `Pin ${this.pinCounter}`,
+  lat: parseFloat(mapPoint.latitude.toFixed(6)),
+  lng: parseFloat(mapPoint.longitude.toFixed(6)),
+  color: '#FF0000'
+}
+
+const graphic = this.createPinGraphic(pinData, mapPoint)
+this.state.graphicsLayer.add(graphic)
+
+// Show popup
+this.showPinPopup(pinData, event, graphic)
+```
+
+}
+
+editPin = (graphic: Graphic) => {
+const pinData = {
+id: graphic.attributes.id,
+name: graphic.attributes.name,
+lat: parseFloat(graphic.geometry.latitude.toFixed(6)),
+lng: parseFloat(graphic.geometry.longitude.toFixed(6)),
+color: graphic.attributes.color
+}
+
+```
+// Get screen coordinates for popup
+const screenPoint = this.state.jimuMapView.view.toScreen(graphic.geometry)
+const event = { x: screenPoint.x, y: screenPoint.y }
+
+this.showPinPopup(pinData, event, graphic)
+```
+
+}
+
+createPinGraphic = (pinData: any, point: Point) => {
+const symbol = new SimpleMarkerSymbol({
+color: pinData.color,
+size: ‘16px’,
+outline: {
+color: [255, 255, 255, 0.8],
+width: 2
+},
+style: ‘circle’
+})
+
+```
+return new Graphic({
+  geometry: point,
+  symbol: symbol,
+  attributes: {
+    id: pinData.id,
+    name: pinData.name,
+    color: pinData.color,
+    lat: pinData.lat,
+    lng: pinData.lng
+  }
+})
+```
+
+}
+
+showPinPopup = (pinData: any, event: any, graphic: Graphic) => {
+this.setState({
+selectedPin: graphic,
+pinData: { …pinData },
+showPopup: true,
+popupPosition: { x: event.x, y: event.y },
+isDropMode: false
+})
+
+```
+// Reset cursor
+if (this.state.jimuMapView?.view?.container) {
+  this.state.jimuMapView.view.container.style.cursor = 'default'
+}
+```
+
+}
+
+updatePinName = (event: React.ChangeEvent<HTMLInputElement>) => {
+this.setState({
+pinData: {
+…this.state.pinData,
+name: event.target.value
+}
+})
+}
+
+updatePinColor = (event: React.ChangeEvent<HTMLSelectElement>) => {
+this.setState({
+pinData: {
+…this.state.pinData,
+color: event.target.value
+}
+})
+}
+
+savePinChanges = () => {
+const { selectedPin, pinData, graphicsLayer } = this.state
+
+```
+if (!selectedPin || !graphicsLayer) return
+
+// Update graphic attributes
+selectedPin.attributes = {
+  ...selectedPin.attributes,
+  name: pinData.name,
+  color: pinData.color
+}
+
+// Update symbol color
+const newSymbol = selectedPin.symbol.clone()
+newSymbol.color = pinData.color
+selectedPin.symbol = newSymbol
+
+// Refresh the layer
+graphicsLayer.remove(selectedPin)
+graphicsLayer.add(selectedPin)
+
+this.closePopup()
+```
+
+}
+
+removePin = () => {
+const { selectedPin, graphicsLayer } = this.state
+
+```
+if (selectedPin && graphicsLayer) {
+  graphicsLayer.remove(selectedPin)
+  this.closePopup()
+}
+```
+
+}
+
+closePopup = () => {
+this.setState({
+showPopup: false,
+selectedPin: null,
+pinData: {
+id: ‘’,
+name: ‘’,
+lat: 0,
+lng: 0,
+color: ‘#FF0000’
+}
+})
+}
+
+copyCoordinates = () => {
+const { pinData } = this.state
+const coordinates = `${pinData.lat}, ${pinData.lng}`
+
+```
+if (navigator.clipboard) {
+  navigator.clipboard.writeText(coordinates)
+} else {
+  // Fallback for older browsers
+  const textArea = document.createElement('textarea')
+  textArea.value = coordinates
+  document.body.appendChild(textArea)
+  textArea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textArea)
+}
+```
+
+}
+
+getStyle = (): SerializedStyles => {
+return css`
+.drop-pin-widget {
+padding: 8px;
+background: white;
+border-radius: 4px;
+box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+```
+  .pin-button {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    transition: all 0.2s ease;
+  }
+
+  .pin-button:hover {
+    transform: scale(1.05);
+  }
+
+  .pin-button.active {
+    background-color: #0078d4;
+    color: white;
+  }
+
+  .popup-content {
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    padding: 16px;
+    min-width: 280px;
+    max-width: 350px;
+    z-index: 1000;
+  }
+
+  .popup-header {
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #e0e0e0;
+  }
+
+  .popup-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    margin-bottom: 4px;
+  }
+
+  .coordinates {
+    font-size: 12px;
+    color: #666;
+    font-family: monospace;
+    background: #f5f5f5;
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    border: 1px solid #ddd;
+    transition: background-color 0.2s ease;
+  }
+
+  .coordinates:hover {
+    background: #e8e8e8;
+  }
+
+  .form-group {
+    margin-bottom: 12px;
+  }
+
+  .form-label {
+    display: block;
+    font-size: 12px;
+    font-weight: 500;
+    color: #333;
+    margin-bottom: 4px;
+  }
+
+  .button-group {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid #e0e0e0;
+  }
+
+  .btn-save {
+    background: #0078d4;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    flex: 1;
+  }
+
+  .btn-save:hover {
+    background: #106ebe;
+  }
+
+  .btn-remove {
+    background: #d13438;
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    flex: 1;
+  }
+
+  .btn-remove:hover {
+    background: #a4262c;
+  }
+
+  .color-preview {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    margin-left: 8px;
+    border: 2px solid #fff;
+    box-shadow: 0 0 0 1px #ddd;
+    vertical-align: middle;
+  }
+`
+```
+
+}
+
+render() {
+const { useMapWidget } = this.props.config
+const { isDropMode, showPopup, popupPosition, pinData } = this.state
+
+```
+return (
+  <div className="widget-drop-pin" css={this.getStyle()}>
+    <div className="drop-pin-widget">
+      <Button
+        className={`pin-button ${isDropMode ? 'active' : ''}`}
+        onClick={this.toggleDropMode}
+        title={isDropMode ? 'Cancel pin drop mode' : 'Drop a pin on the map'}
+        type={isDropMode ? 'primary' : 'default'}
+      >
+        📍
+      </Button>
+    </div>
+
+    {useMapWidget && (
+      <JimuMapViewComponent
+        useMapWidgetId={useMapWidget}
+        onActiveViewChange={this.onActiveViewChange}
+      />
+    )}
+
+    {showPopup && (
+      <Popper
+        open={showPopup}
+        placement="top-start"
+        reference={{
+          getBoundingClientRect: () => ({
+            top: popupPosition.y,
+            left: popupPosition.x,
+            right: popupPosition.x,
+            bottom: popupPosition.y,
+            width: 0,
+            height: 0
+          })
+        }}
+        offset={[0, 10]}
+        modifiers={[
+          {
+            name: 'preventOverflow',
+            options: {
+              boundary: 'viewport',
+              padding: 8
+            }
+          }
+        ]}
+      >
+        <div className="popup-content">
+          <div className="popup-header">
+            <div className="popup-title">{pinData.name}</div>
+            <div 
+              className="coordinates"
+              onClick={this.copyCoordinates}
+              title="Click to copy coordinates"
+            >
+              {pinData.lat}, {pinData.lng}
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Pin Name</label>
+            <TextInput
+              value={pinData.name}
+              onChange={this.updatePinName}
+              placeholder="Enter pin name"
+              size="sm"
+            />
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">
+              Pin Color
+              <span 
+                className="color-preview" 
+                style={{ backgroundColor: pinData.color }}
+              ></span>
+            </label>
+            <Select
+              value={pinData.color}
+              onChange={this.updatePinColor}
+              size="sm"
+            >
+              {this.availableColors.map(color => (
+                <Option key={color.value} value={color.value}>
+                  {color.label}
+                </Option>
+              ))}
+            </Select>
+          </div>
+
+          <div className="button-group">
+            <button className="btn-save" onClick={this.savePinChanges}>
+              Save Changes
+            </button>
+            <button className="btn-remove" onClick={this.removePin}>
+              Remove Pin
+            </button>
+          </div>
+        </div>
+      </Popper>
+    )}
+  </div>
+)
+```
+
+}
+}
