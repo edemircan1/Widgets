@@ -1,220 +1,44 @@
 /** @jsx jsx */
-import { React, jsx, AllWidgetProps } from ‘jimu-core’
-import { JimuMapViewComponent, JimuMapView } from ‘jimu-arcgis’
+import { React, jsx } from ‘jimu-core’
+import { AllWidgetSettingProps } from ‘jimu-for-builder’
+import { MapWidgetSelector, SettingSection, SettingRow } from ‘jimu-ui/advanced/setting-components’
 import { IMConfig } from ‘../config’
-import Point from ‘esri/geometry/Point’
-import Graphic from ‘esri/Graphic’
-import SimpleMarkerSymbol from ‘esri/symbols/SimpleMarkerSymbol’
-import GraphicsLayer from ‘esri/layers/GraphicsLayer’
 
-interface State {
-jimuMapView: JimuMapView
-isDropMode: boolean
-showPopup: boolean
-selectedGraphic: Graphic
-pinName: string
-coordinates: string
-graphicsLayer: GraphicsLayer
-}
+export default class Setting extends React.PureComponent<AllWidgetSettingProps<IMConfig>> {
 
-export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>, State> {
-private mapClickHandler: any = null
-private pinCounter = 0
-
-constructor(props) {
-super(props)
-this.state = {
-jimuMapView: null,
-isDropMode: false,
-showPopup: false,
-selectedGraphic: null,
-pinName: ‘’,
-coordinates: ‘’,
-graphicsLayer: new GraphicsLayer({ title: ‘Drop Pins’ })
-}
-}
-
-onActiveViewChange = (jimuMapView: JimuMapView) => {
-if (jimuMapView) {
-jimuMapView.view.map.add(this.state.graphicsLayer)
-this.setState({ jimuMapView })
-}
-}
-
-toggleDropMode = () => {
-if (this.state.isDropMode) {
-this.exitDropMode()
-} else {
-this.enterDropMode()
-}
-}
-
-enterDropMode = () => {
-this.setState({ isDropMode: true })
-if (this.state.jimuMapView) {
-this.mapClickHandler = this.state.jimuMapView.view.on(‘click’, this.onMapClick)
-this.state.jimuMapView.view.container.style.cursor = ‘crosshair’
-}
-}
-
-exitDropMode = () => {
-this.setState({ isDropMode: false, showPopup: false })
-if (this.mapClickHandler) {
-this.mapClickHandler.remove()
-this.mapClickHandler = null
-}
-if (this.state.jimuMapView) {
-this.state.jimuMapView.view.container.style.cursor = ‘default’
-}
-}
-
-onMapClick = (event) => {
-const point = new Point({
-longitude: event.mapPoint.longitude,
-latitude: event.mapPoint.latitude,
-spatialReference: event.mapPoint.spatialReference
+onMapWidgetSelected = (useMapWidgetIds: string[]) => {
+this.props.onSettingChange({
+id: this.props.id,
+config: this.props.config.set(‘useMapWidget’, useMapWidgetIds[0])
 })
-
-```
-// Check if clicking on existing pin
-this.state.jimuMapView.view.hitTest(event).then((response) => {
-  const existingPin = response.results.find(result => 
-    result.graphic && result.graphic.layer === this.state.graphicsLayer
-  )
-
-  if (existingPin) {
-    this.editPin(existingPin.graphic)
-  } else {
-    this.createPin(point)
-  }
-})
-```
-
-}
-
-createPin = (point: Point) => {
-this.pinCounter++
-const pinName = `Pin ${this.pinCounter}`
-
-```
-const symbol = new SimpleMarkerSymbol({
-  color: [255, 0, 0],
-  size: 12,
-  outline: { color: [255, 255, 255], width: 2 }
-})
-
-const graphic = new Graphic({
-  geometry: point,
-  symbol: symbol,
-  attributes: { name: pinName, id: Date.now() }
-})
-
-this.state.graphicsLayer.add(graphic)
-this.showPinPopup(graphic, pinName)
-```
-
-}
-
-editPin = (graphic: Graphic) => {
-this.showPinPopup(graphic, graphic.attributes.name)
-}
-
-showPinPopup = (graphic: Graphic, name: string) => {
-const coords = `${graphic.geometry.latitude.toFixed(6)}, ${graphic.geometry.longitude.toFixed(6)}`
-this.setState({
-showPopup: true,
-selectedGraphic: graphic,
-pinName: name,
-coordinates: coords,
-isDropMode: false
-})
-if (this.state.jimuMapView) {
-this.state.jimuMapView.view.container.style.cursor = ‘default’
-}
-}
-
-updatePinName = (event) => {
-this.setState({ pinName: event.target.value })
-}
-
-savePin = () => {
-if (this.state.selectedGraphic) {
-this.state.selectedGraphic.attributes.name = this.state.pinName
-}
-this.setState({ showPopup: false })
-}
-
-removePin = () => {
-if (this.state.selectedGraphic) {
-this.state.graphicsLayer.remove(this.state.selectedGraphic)
-}
-this.setState({ showPopup: false })
-}
-
-copyCoordinates = () => {
-navigator.clipboard?.writeText(this.state.coordinates)
 }
 
 render() {
-const { useMapWidget } = this.props.config
+return (
+<div style={{ padding: ‘20px’ }}>
+<SettingSection title="Map Widget">
+<SettingRow>
+<MapWidgetSelector
+onSelect={this.onMapWidgetSelected}
+useMapWidgetIds={this.props.config.useMapWidget ? [this.props.config.useMapWidget] : []}
+/>
+</SettingRow>
+</SettingSection>
 
 ```
-return (
-  <div className="drop-pin-widget">
-    <button 
-      className={`pin-button ${this.state.isDropMode ? 'active' : ''}`}
-      onClick={this.toggleDropMode}
-      title="Drop Pin"
-    >
-      📍
-    </button>
-
-    {useMapWidget && (
-      <JimuMapViewComponent
-        useMapWidgetId={useMapWidget}
-        onActiveViewChange={this.onActiveViewChange}
-      />
-    )}
-
-    {this.state.showPopup && (
-      <div className="pin-popup" style={{
-        position: 'fixed',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)'
+    <SettingSection title="Instructions">
+      <div style={{ 
+        padding: '12px', 
+        background: '#f5f5f5', 
+        borderRadius: '4px',
+        fontSize: '14px'
       }}>
-        <div className="popup-header">Pin Details</div>
-        
-        <div className="form-group">
-          <label>Name:</label>
-          <input 
-            type="text"
-            value={this.state.pinName}
-            onChange={this.updatePinName}
-          />
-        </div>
-
-        <div className="form-group">
-          <label>Coordinates:</label>
-          <div 
-            className="coordinates"
-            onClick={this.copyCoordinates}
-            title="Click to copy"
-          >
-            {this.state.coordinates}
-          </div>
-        </div>
-
-        <div className="button-group">
-          <button className="btn btn-save" onClick={this.savePin}>
-            Save
-          </button>
-          <button className="btn btn-remove" onClick={this.removePin}>
-            Remove
-          </button>
-        </div>
+        <p>1. Select a map widget above</p>
+        <p>2. Click the pin button to drop pins</p>
+        <p>3. Click on the map to place pins</p>
+        <p>4. Click existing pins to edit them</p>
       </div>
-    )}
+    </SettingSection>
   </div>
 )
 ```
