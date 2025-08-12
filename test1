@@ -1,364 +1,214 @@
-render () {
-    let infoMessagesForSelectDraw = ''
-    let warningMessagesForSelectDraw = ''
-    let infoMsgWhileSelectingOrDrawing = ''
-    if ((this.state.initialEmptyState && this.props.drawMode) || (this.state.emptyStateIfDoneClick && this.props.drawMode)) {
-      infoMessagesForSelectDraw = this.nls('drawUserInfo')
-    } else if ((this.state.initialEmptyState && this.props.selectMode) || (this.state.emptyStateIfDoneClick && this.props.selectMode)) {
-      infoMessagesForSelectDraw = this.nls('selectUserInfo')
+# Drop a Pin Widget - Directory Structure
+
+## 📁 Complete Directory Tree
+
+```
+client/
+└── your-extensions/
+    └── widgets/
+        └── drop-pin/                    ← Widget root folder
+            ├── 📄 manifest.json         ← Widget manifest (from "Widget Configuration Files" artifact)
+            ├── 📄 config.ts             ← Config interface (from "Widget Configuration Files" artifact) 
+            ├── 📄 widget.tsx            ← Main widget code (from "Drop a Pin Widget - Main Widget Component" artifact)
+            ├── 📄 style.css             ← Widget styles (from "Widget Styles and Additional Files" artifact)
+            ├── 📁 nls/                  ← Localization folder
+            │   └── 📄 default.ts        ← Default language strings (from "Widget Configuration Files" artifact)
+            └── 📁 setting/              ← Settings panel folder
+                └── 📄 setting.tsx       ← Settings component (from "Widget Configuration Files" artifact)
+```
+
+## 🗂️ File Mapping Guide
+
+### **Root Level Files** (`client/your-extensions/widgets/drop-pin/`)
+
+|File           |Source Artifact                              |Content Type        |
+|---------------|---------------------------------------------|--------------------|
+|`manifest.json`|**Widget Configuration Files**               |JSON manifest       |
+|`config.ts`    |**Widget Configuration Files**               |TypeScript interface|
+|`widget.tsx`   |**Drop a Pin Widget - Main Widget Component**|Main React component|
+|`style.css`    |**Widget Styles and Additional Files**       |CSS styles          |
+
+### **nls/ Folder** (`client/your-extensions/widgets/drop-pin/nls/`)
+
+|File        |Source Artifact               |Content Type        |
+|------------|------------------------------|--------------------|
+|`default.ts`|**Widget Configuration Files**|Localization strings|
+
+### **setting/ Folder** (`client/your-extensions/widgets/drop-pin/setting/`)
+
+|File         |Source Artifact               |Content Type            |
+|-------------|------------------------------|------------------------|
+|`setting.tsx`|**Widget Configuration Files**|Settings React component|
+
+## 🚀 Step-by-Step Implementation
+
+### **Step 1: Create Directory Structure**
+
+```bash
+# Navigate to your Experience Builder directory
+cd /path/to/arcgis-experience-builder-developer-edition/client/your-extensions/widgets/
+
+# Create the widget directory structure
+mkdir -p drop-pin/nls drop-pin/setting
+```
+
+### **Step 2: Extract and Place Files**
+
+#### **From “Widget Configuration Files” artifact:**
+
+```bash
+# Extract these sections to separate files:
+
+# 1. Lines 1-4 (Config interface) → config.ts
+# 2. Lines 6-76 (Setting component) → setting/setting.tsx  
+# 3. Lines 78-108 (manifest.json) → manifest.json
+# 4. Lines 110-125 (nls/default.ts) → nls/default.ts
+```
+
+#### **From “Drop a Pin Widget - Main Widget Component” artifact:**
+
+```bash
+# The entire file content → widget.tsx
+```
+
+#### **From “Widget Styles and Additional Files” artifact:**
+
+```bash
+# The entire CSS content → style.css
+```
+
+### **Step 3: File Content Breakdown**
+
+#### **📄 manifest.json**
+
+```json
+{
+  "name": "drop-pin",
+  "type": "widget",
+  "version": "1.0.0",
+  "exbVersion": "1.14.0",
+  "author": "Custom Widget Developer",
+  "description": "A widget to drop pins on the map with customizable names and colors",
+  "copyright": "",
+  "license": "",
+  "main": "dist/runtime/widget.js",
+  "setting": "dist/setting/setting.js",
+  "icon": "📍",
+  "properties": {
+    "supportInlineEditing": false,
+    "supportRepeat": false,
+    "canCrossFilterDS": false
+  },
+  "defaultConfig": {
+    "useMapWidget": ""
+  },
+  "translatedLocales": ["en"],
+  "dependencies": ["jimu-arcgis"],
+  "hasStyle": true,
+  "hasConfig": true,
+  "hasSettingPage": true,
+  "category": "Map Tools",
+  "layouts": [
+    {
+      "name": "default",
+      "type": "row",
+      "content": []
     }
+  ]
+}
+```
 
-    if (this.state.emptyStateIfDoneClick && this.props.drawMode) {
-      warningMessagesForSelectDraw = this.nls('emptyDrawStateWarning')
-    } else if (this.state.emptyStateIfDoneClick && this.props.selectMode) {
-      warningMessagesForSelectDraw = this.nls('emptySelectStateWarning')
-    }
+#### **📄 config.ts**
 
-    if (this.props.drawMode && this.props.chartRender) {
-      infoMsgWhileSelectingOrDrawing = this.nls('infoMsgWhileDrawing')
-    } else if (this.props.selectMode && this.props.chartRender) {
-      infoMsgWhileSelectingOrDrawing = this.props.isNewSegmentsForSelection && this.props.noGraphicAfterFirstSelection ? this.nls('infoMsgWhileSelecting') : this.nls('addToSelectionWarning')
-    }
+```typescript
+export interface Config {
+  useMapWidget: string
+}
+```
 
-    //display error message when no features found for selection
-    const noFeaturesErrorDisplay = this.nls('noFeaturesFound')
+#### **📄 nls/default.ts**
 
-    const settingsOptions = this.settingsOptionsRender()
-    const statsRender = this.statisticsDisplay()
-    const exportInfoRender = this.exportOptionDisplay()
-
-    // Tower Summary Hesaplaması - Sadeleştirilmiş
-    const towerSummary = this.props.towerData ? {
-      totalTowers: this.props.towerData.length,
-      uniqueUSIDs: [...new Set(this.props.towerData.flatMap(t => t.towers.map(tower => tower.usid)))]
-    } : null
-
-    return <div className={'h-100 w-100'} css={getContainerStyle(this.props.theme)}>
-      {/* CLEAN FANCY HEADER */}
-      {this.props.chartRender && (
-        <div style={{
-          background: 'linear-gradient(135deg, #1e3c72 0%, #2a5298 100%)',
-          color: 'white',
-          padding: this.props.isMobile ? '10px 14px' : '14px 18px',
-          borderRadius: '8px 8px 0 0',
-          marginBottom: '4px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-          minHeight: 'auto',
-          maxHeight: this.props.isMobile ? '80px' : '90px',
-          overflow: 'hidden'
-        }}>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between',
-            flexWrap: this.props.isMobile ? 'wrap' : 'nowrap',
-            gap: this.props.isMobile ? '8px' : '12px'
-          }}>
-            <div style={{ flex: 1, minWidth: '200px' }}>
-              <h3 style={{ 
-                margin: '0 0 6px 0', 
-                fontSize: this.props.isMobile ? '16px' : '20px', 
-                fontWeight: '600',
-                textShadow: '0 1px 2px rgba(0,0,0,0.3)',
-                lineHeight: '1.2'
-              }}>
-                📡 Custom Cell Elevation Profile
-              </h3>
-              <div style={{ 
-                fontSize: this.props.isMobile ? '11px' : '13px', 
-                opacity: 0.9,
-                display: this.props.isMobile ? 'none' : 'block'
-              }}>
-                Advanced terrain analysis with cellular infrastructure mapping
-              </div>
-            </div>
-            
-            {/* Tower Summary Badge - Clean */}
-            {towerSummary && towerSummary.totalTowers > 0 && (
-              <div style={{
-                background: 'rgba(255,255,255,0.15)',
-                borderRadius: '10px',
-                padding: this.props.isMobile ? '8px 12px' : '10px 16px',
-                backdropFilter: 'blur(10px)',
-                border: '1px solid rgba(255,255,255,0.2)',
-                textAlign: 'center',
-                minWidth: this.props.isMobile ? '80px' : '120px'
-              }}>
-                <div style={{ 
-                  fontSize: this.props.isMobile ? '20px' : '24px', 
-                  fontWeight: 'bold',
-                  color: '#4FC3F7',
-                  lineHeight: '1',
-                  marginBottom: '4px'
-                }}>
-                  {towerSummary.uniqueUSIDs.length}
-                </div>
-                <div style={{ 
-                  fontSize: this.props.isMobile ? '10px' : '12px', 
-                  opacity: 0.8,
-                  fontWeight: '500'
-                }}>
-                  Cell Towers Found
-                </div>
-              </div>
-            )}
-          </div>
-          
-          {/* USIDs Display - Beautiful */}
-          {towerSummary && towerSummary.totalTowers > 0 && (
-            <div style={{
-              marginTop: '10px',
-              padding: '8px 12px',
-              background: 'rgba(255,255,255,0.1)',
-              borderRadius: '6px',
-              border: '1px solid rgba(255,255,255,0.15)'
-            }}>
-              <div style={{ 
-                fontSize: this.props.isMobile ? '9px' : '10px', 
-                opacity: 0.7,
-                marginBottom: '4px',
-                fontWeight: '500',
-                letterSpacing: '0.5px'
-              }}>
-                INTERSECTED USIDs
-              </div>
-              <div style={{ 
-                fontSize: this.props.isMobile ? '11px' : '13px', 
-                fontWeight: '500',
-                color: '#E3F2FD',
-                lineHeight: '1.3',
-                wordBreak: 'break-all'
-              }}>
-                {towerSummary.uniqueUSIDs.join(' • ')}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* HEADER TOOLBAR */}
-      <div style={{ height: this.props.chartRender ? 30 : 35 }} className={'ep-widget-header d-flex w-100'}>
-        <div className={'align-items-center w-100 pt-1'} style={{ display: 'inline-block' }}>
-          <Button role={'button'} aria-label={this.nls('settingsOptions')} aria-haspopup={'dialog'} title={this.nls('settingsOptions')} icon
-            id={'settingsOptions' + this.props.widgetId} className={'chart-actions'}
-            color={this.state.settingsOptionsOpen ? 'primary' : 'default'}
-            size={'sm'} type='default' onClick={this.toggleSettings}>
-            <Icon size={16} icon={epIcon.settingsIcon} />
-          </Button>
-
-          {this.state.allowExport && this.props.chartRender && ((this.props.drawMode && this.props.onDrawingComplete) ||
-          (this.props.selectMode)) &&
-            <Button role={'button'} aria-label={this.nls('chartExport')} aria-haspopup={'dialog'} title={this.nls('chartExport')} icon
-              id={'export' + this.props.widgetId} className={'chart-actions'} color={this.state.isExport ? 'primary' : 'default'}
-              size={'sm'} type='default' onClick={this.toggleExport}>
-              <Icon size={16} icon={exportIcon} />
-            </Button>
-          }
-
-          {this.props.chartRender &&
-            <React.Fragment>
-              <Button role={'button'} aria-label={this.nls('chartFlip')} title={this.nls('chartFlip')} icon
-                className={'chart-actions'} color={this.state.isFlipChart ? 'primary' : 'default'}
-                size={'sm'} type='default' onClick={this.onChartFlip}>
-                <Icon size={16} icon={epIcon.flipIcon} />
-              </Button>
-
-            {this.state.displayStats &&
-              <Button role={'button'} aria-label={this.nls('chartStatistics')} aria-haspopup={'dialog'} title={this.nls('chartStatistics')} icon
-                id={'statistics' + this.props.widgetId} className={'chart-actions'}
-                color={this.state.statisticsOpen ? 'primary' : 'default'}
-                size={'sm'} type='default' onClick={this.toggleStatistics}>
-                <Icon size={16} icon={epIcon.chartIcon} />
-              </Button>
-            }
-            </React.Fragment>
-          }
-
-          {this.state.settingsOptionsOpen &&
-            settingsOptions
-          }
-
-          {this.state.isExport &&
-            exportInfoRender
-          }
-
-          {this.state.statisticsOpen &&
-            statsRender
-          }
-        </div>
-      </div>
-
-      {/* BODY CONTAINER */}
-      <div className={classNames('ep-widget-bodyContainer d-flex w-100', this.props.chartRender ? '' : 'align-items-center')}
-           style={{ 
-             height: this.props.chartRender ? 
-               `calc(100% - ${this.props.isMobile ? '200px' : '210px'})` : 
-               'calc(100% - 85px)' 
-           }}>
-        <div className={classNames('w-100 h-100', this.props.chartRender ? '' : 'alignInfo align-items-center', this.props.noFeaturesFoundError ? 'alignInfo align-items-center' : '')}>
-          {!this.props.displayLoadingIndicator &&
-            <React.Fragment>
-              {!this.props.chartRender && !this.state.noFeaturesError && !this.state.noValidInput &&
-                <div tabIndex={0} ref={this._alertElement} aria-label={infoMessagesForSelectDraw}>
-                  <Alert className={'mb-4 w-100 userInfo py-1'}
-                    open={!this.props.chartRender && !this.state.noFeaturesError && !this.state.noValidInput}
-                    text={infoMessagesForSelectDraw}
-                    type={'info'}
-                    withIcon
-                  />
-                </div>
-              }
-              {this.state.emptyStateIfDoneClick && !this.props.chartRender && !this.state.noFeaturesError && !this.state.noValidInput &&
-                <Alert tabIndex={0} className={'w-100 userInfo py-1'}
-                  open={this.state.emptyStateIfDoneClick && !this.props.chartRender && !this.state.noFeaturesError && !this.state.noValidInput}
-                  text={warningMessagesForSelectDraw}
-                  type={'warning'}
-                  withIcon
-                />
-              }
-
-              {this.state.noFeaturesError &&
-                <Alert tabIndex={0} className={'w-100 userInfo py-1'}
-                  open={this.state.noFeaturesError}
-                  text={noFeaturesErrorDisplay}
-                  type={'warning'}
-                  withIcon
-                />
-              }
-
-              {this.state.noValidInput &&
-                <Alert tabIndex={0} className={'w-100 userInfo py-1'}
-                  open={this.state.noValidInput}
-                  text={this.state.viewModelErrorMsg}
-                  type={'warning'}
-                  withIcon
-                />
-              }
-            </React.Fragment>
-          }
-
-          {(this.props.chartRender || this.state.exportData) &&
-            <ProfileChart
-              ref={'chartObj'}
-              intl={this.props.intl}
-              isExportEnable={this.state.exportData}
-              parentWidgetId={this.props.widgetId}
-              isSelectModeActive={this.props.selectMode}
-              commonGeneralSettings={this.props.commonDsGeneralSettings}
-              activeDs={this.props.activeDataSource}
-              currentConfig={this.props.activeDatasourceConfig}
-              theme={this.props.theme}
-              selectedLinearUnit={this.state.selectedLinearUnit}
-              selectedElevationUnit={this.state.selectedElevationUnit}
-              showVolumetricObj={this.state.showViewLineGraph}
-              volumetricObjLineStyle={this.state.volumetricObjStyle}
-              volumetricObjLabel={this.state.volumetricObjLabel}
-              chartDataUpdateTime={this.props.chartDataUpdateTime}
-              profileResult={this.props.profileResult}
-              unitOptions={this.state.unitOptions}
-              highlightChartPositionOnMap={this.highlightChartPosition.bind(this)}
-              hideChartPosition={this.hideChartPosition.bind(this)}
-              chartInfo={this.getChartInfo.bind(this)}
-              toggleLegendSeriesState={this.onToggleSeries}
-              isFlip={this.state.isFlipChart}
-              isUniformChartScalingEnable={this.state.isUniformScalingEnable}
-              drawingLayer={this.props.drawingLayer}
-              intersectionHighlightLayer={this.props.intersectionHighlightLayer}
-              mapView={this.props.jimuMapView}
-              assetIntersectionResult={this.props.intersectionResult}
-              setExportButton={this.setExportButtonState}
-              isCustomIntervalEnabled={this.state.isCustomizeInterval}
-              customDistanceInterval={this.state.distanceInterval}
-              addedElelvationProfileLayers={this.state.addedElevationLayers}
-              profileSettingsForNewAddedLayer={this.state.profileSettingsForNewlyAddedLayers}
-              towerData={this.props.towerData}
-            />
-          }
-        </div>
-        {this.props.displayLoadingIndicator &&
-          <React.Fragment>
-            <Loading type={LoadingType.Donut} />
-          </React.Fragment>
-        }
-      </div>
-
-      {/* FLOATING INFO MESSAGES */}
-      <div className={'floatingInfoMsg'}>
-        {!this.state.enableForNewProfile && this.props.chartRender &&
-          <React.Fragment>
-            <div title={infoMsgWhileSelectingOrDrawing}>
-              <Alert tabIndex={0} className={classNames('alignDismissibleInfo py-1', this.state.dismissInfoMsg ? 'showMessage' : 'hideMessage')}
-                onClose={this.dismissInfoMsg}
-                open={this.state.dismissInfoMsg}
-                text={infoMsgWhileSelectingOrDrawing}
-                type={'info'}
-                withIcon
-                closable
-              />
-            </div>
-            <div title={infoMsgWhileSelectingOrDrawing}>
-              <Alert tabIndex={0} className={classNames('alignDismissibleInfo py-1', this.state.dismissWarningMsg ? 'showMessage' : 'hideMessage')}
-                onClose={this.dismissWarningMsg}
-                open={this.state.dismissWarningMsg}
-                text={infoMsgWhileSelectingOrDrawing}
-                type={'warning'}
-                withIcon
-                closable
-              />
-            </div>
-          </React.Fragment>
-        }
-      </div>
-
-      {/* FOOTER WITH RESET/NEW PROFILE BUTTONS */}
-      <div className={'ep-widget-footer'}>
-        <div className={'w-100 footer-display'}>
-          <Button role={'button'} aria-label={this.nls('backButtonLabel')} title={this.nls('backButtonLabel')}
-            className={'m-1 text-break'} size={'default'} type='tertiary' onClick={this.props.onNavBack}>
-            <Icon size={16} autoFlip icon={epIcon.arrowNavBack} />
-            {this.nls('backButtonLabel')}
-          </Button>
-
-          {this.props.commonDsGeneralSettings?.buttonStyle === ButtonTriggerType.IconText &&
-            <Button role={'button'} aria-label={this.nls('doneButtonLabel')} title={this.nls('doneButtonLabel')}
-              className={this.state.enableForNewProfile || this.props.onDrawingComplete || this.state.noValidInput ||
-                (this.props.selectMode && this.props.chartRender && !this.props.isNewSegmentsForSelection)
-                ? 'hidden'
-                : 'm-1 actionButton text-break'}
-              size={'default'} type='primary' onClick={this.onDoneClick}>
-              <React.Fragment>
-                <Icon size={16} icon={epIcon.doneIcon} />
-                {this.nls('doneButtonLabel')}
-              </React.Fragment>
-            </Button>
-          }
-
-          {this.props.chartRender && this.props.commonDsGeneralSettings?.buttonStyle === ButtonTriggerType.IconText &&
-            <React.Fragment>
-              <Button role={'button'} aria-label={this.nls('clearButtonLabel')} title={this.nls('clearButtonLabel')}
-                className={this.state.enableForNewProfile || this.props.onDrawingComplete ||
-                  (this.props.selectMode && this.props.chartRender && !this.props.isNewSegmentsForSelection)
-                  ? 'hidden'
-                  : 'm-1 actionButton text-break'}
-                size={'default'} type='default' onClick={this.onClearButtonClick}>
-                <Icon size={16} icon={epIcon.clearIcon} />
-                {this.nls('clearButtonLabel')}
-              </Button>
-            </React.Fragment>
-          }
-
-          {(this.state.enableForNewProfile || this.props.onDrawingComplete || this.state.noValidInput ||
-            (this.props.selectMode && this.props.chartRender && !this.props.isNewSegmentsForSelection)) &&
-            this.props.commonDsGeneralSettings?.buttonStyle === ButtonTriggerType.IconText &&
-            <Button role={'button'} aria-label={this.nls('newProfileButtonLabel')} title={this.nls('newProfileButtonLabel')}
-              className={'m-1 actionButton text-break'} size={'default'} type='primary' onClick={this.onNewProfileClick}>
-              <React.Fragment>
-                <Icon size={16} icon={this.props.drawMode ? epIcon.drawIcon : epIcon.selectIcon} />
-                {this.nls('newProfileButtonLabel')}
-              </React.Fragment>
-            </Button>
-          }
-        </div>
-      </div>
-    </div>
+```typescript
+export default {
+  widgetName: 'Drop a Pin',
+  widgetDescription: 'Drop pins on the map with custom names and colors',
+  selectMapWidget: 'Please select a map widget',
+  dropPinMode: 'Click to enter drop pin mode',
+  cancelDropMode: 'Click to cancel drop pin mode',
+  pinName: 'Pin Name',
+  pinColor: 'Pin Color',
+  coordinates: 'Coordinates',
+  saveChanges: 'Save Changes',
+  removePin: 'Remove Pin',
+  copyCoordinates: 'Click to copy coordinates',
+  instructions: {
+    title: 'Instructions',
+    step1: 'Click the pin button to enter drop mode',
+    step2: 'Click anywhere on the map to drop a pin',
+    step3: 'Edit pin properties in the popup',
+    step4: 'Click existing pins to modify them'
   }
+}
+```
+
+## ⚡ Quick Setup Commands
+
+### **PowerShell (Windows)**
+
+```powershell
+# Navigate to widgets folder
+cd "C:\path\to\arcgis-experience-builder\client\your-extensions\widgets"
+
+# Create structure
+New-Item -ItemType Directory -Path "drop-pin\nls", "drop-pin\setting" -Force
+
+# Create files (you'll need to paste content manually)
+New-Item -ItemType File -Path "drop-pin\manifest.json", "drop-pin\config.ts", "drop-pin\widget.tsx", "drop-pin\style.css", "drop-pin\nls\default.ts", "drop-pin\setting\setting.tsx"
+```
+
+### **Bash (Mac/Linux)**
+
+```bash
+# Navigate to widgets folder
+cd /path/to/arcgis-experience-builder/client/your-extensions/widgets
+
+# Create structure
+mkdir -p drop-pin/{nls,setting}
+
+# Create files (you'll need to paste content manually)
+touch drop-pin/{manifest.json,config.ts,widget.tsx,style.css,nls/default.ts,setting/setting.tsx}
+```
+
+## 🔍 Visual Directory Verification
+
+After setup, your structure should look exactly like this:
+
+```
+📁 drop-pin/
+├── 📄 manifest.json          ✅ JSON configuration
+├── 📄 config.ts              ✅ TypeScript config
+├── 📄 widget.tsx             ✅ Main React component (largest file)
+├── 📄 style.css              ✅ CSS styles
+├── 📁 nls/
+│   └── 📄 default.ts         ✅ Localization
+└── 📁 setting/
+    └── 📄 setting.tsx        ✅ Settings panel
+```
+
+## ⚠️ Important Notes
+
+1. **File Names**: Must match exactly (case-sensitive)
+1. **Folder Names**: `nls` and `setting` are required folder names
+1. **Widget Name**: The folder `drop-pin` becomes your widget ID
+1. **File Extensions**: Must be `.tsx` for React components, `.ts` for TypeScript
+1. **Manifest**: Critical for widget registration in Experience Builder
+
+## 🧪 Testing Your Setup
+
+1. **Start Development Server**: Run Experience Builder dev server
+1. **Check Widget Panel**: Look for “Drop a Pin” in Map Tools category
+1. **Add to Experience**: Drag widget to your experience
+1. **Configure**: Set map widget in settings
+1. **Test Functionality**: Click pin button and drop pins on map
+
+Your widget should now be ready to use! 🎉
