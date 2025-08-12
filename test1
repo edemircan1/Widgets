@@ -1,214 +1,146 @@
-# Drop a Pin Widget - Directory Structure
+/** @jsx jsx */
+import {
+React,
+jsx,
+Immutable
+} from ‘jimu-core’
+import { AllWidgetSettingProps } from ‘jimu-for-builder’
+import {
+MapWidgetSelector,
+SettingSection,
+SettingRow
+} from ‘jimu-ui/advanced/setting-components’
+import { Config } from ‘../config’
 
-## 📁 Complete Directory Tree
+export default class Setting extends React.PureComponent<
+AllWidgetSettingProps<Config>
 
-```
-client/
-└── your-extensions/
-    └── widgets/
-        └── drop-pin/                    ← Widget root folder
-            ├── 📄 manifest.json         ← Widget manifest (from "Widget Configuration Files" artifact)
-            ├── 📄 config.ts             ← Config interface (from "Widget Configuration Files" artifact) 
-            ├── 📄 widget.tsx            ← Main widget code (from "Drop a Pin Widget - Main Widget Component" artifact)
-            ├── 📄 style.css             ← Widget styles (from "Widget Styles and Additional Files" artifact)
-            ├── 📁 nls/                  ← Localization folder
-            │   └── 📄 default.ts        ← Default language strings (from "Widget Configuration Files" artifact)
-            └── 📁 setting/              ← Settings panel folder
-                └── 📄 setting.tsx       ← Settings component (from "Widget Configuration Files" artifact)
-```
+> {
+> onMapWidgetSelected = (useMapWidgetIds: string[]) => {
+> this.props.onSettingChange({
+> id: this.props.id,
+> config: this.props.config.set(‘useMapWidget’, useMapWidgetIds[0])
+> })
+> }
 
-## 🗂️ File Mapping Guide
-
-### **Root Level Files** (`client/your-extensions/widgets/drop-pin/`)
-
-|File           |Source Artifact                              |Content Type        |
-|---------------|---------------------------------------------|--------------------|
-|`manifest.json`|**Widget Configuration Files**               |JSON manifest       |
-|`config.ts`    |**Widget Configuration Files**               |TypeScript interface|
-|`widget.tsx`   |**Drop a Pin Widget - Main Widget Component**|Main React component|
-|`style.css`    |**Widget Styles and Additional Files**       |CSS styles          |
-
-### **nls/ Folder** (`client/your-extensions/widgets/drop-pin/nls/`)
-
-|File        |Source Artifact               |Content Type        |
-|------------|------------------------------|--------------------|
-|`default.ts`|**Widget Configuration Files**|Localization strings|
-
-### **setting/ Folder** (`client/your-extensions/widgets/drop-pin/setting/`)
-
-|File         |Source Artifact               |Content Type            |
-|-------------|------------------------------|------------------------|
-|`setting.tsx`|**Widget Configuration Files**|Settings React component|
-
-## 🚀 Step-by-Step Implementation
-
-### **Step 1: Create Directory Structure**
-
-```bash
-# Navigate to your Experience Builder directory
-cd /path/to/arcgis-experience-builder-developer-edition/client/your-extensions/widgets/
-
-# Create the widget directory structure
-mkdir -p drop-pin/nls drop-pin/setting
-```
-
-### **Step 2: Extract and Place Files**
-
-#### **From “Widget Configuration Files” artifact:**
-
-```bash
-# Extract these sections to separate files:
-
-# 1. Lines 1-4 (Config interface) → config.ts
-# 2. Lines 6-76 (Setting component) → setting/setting.tsx  
-# 3. Lines 78-108 (manifest.json) → manifest.json
-# 4. Lines 110-125 (nls/default.ts) → nls/default.ts
-```
-
-#### **From “Drop a Pin Widget - Main Widget Component” artifact:**
-
-```bash
-# The entire file content → widget.tsx
-```
-
-#### **From “Widget Styles and Additional Files” artifact:**
-
-```bash
-# The entire CSS content → style.css
-```
-
-### **Step 3: File Content Breakdown**
-
-#### **📄 manifest.json**
-
-```json
-{
-  "name": "drop-pin",
-  "type": "widget",
-  "version": "1.0.0",
-  "exbVersion": "1.14.0",
-  "author": "Custom Widget Developer",
-  "description": "A widget to drop pins on the map with customizable names and colors",
-  "copyright": "",
-  "license": "",
-  "main": "dist/runtime/widget.js",
-  "setting": "dist/setting/setting.js",
-  "icon": "📍",
-  "properties": {
-    "supportInlineEditing": false,
-    "supportRepeat": false,
-    "canCrossFilterDS": false
-  },
-  "defaultConfig": {
-    "useMapWidget": ""
-  },
-  "translatedLocales": ["en"],
-  "dependencies": ["jimu-arcgis"],
-  "hasStyle": true,
-  "hasConfig": true,
-  "hasSettingPage": true,
-  "category": "Map Tools",
-  "layouts": [
-    {
-      "name": "default",
-      "type": "row",
-      "content": []
-    }
-  ]
+render() {
+return (
+<div className="widget-setting-drop-pin">
+<SettingSection
+className="map-selector-section"
+title="Map Selection"
+>
+<SettingRow>
+<div style={{ width: ‘100%’ }}>
+<label style={{
+display: ‘block’,
+marginBottom: ‘8px’,
+fontSize: ‘14px’,
+fontWeight: ‘500’,
+color: ‘#333’
+}}>
+Select Map Widget
+</label>
+<MapWidgetSelector
+onSelect={this.onMapWidgetSelected}
+useMapWidgetIds={
+this.props.config.useMapWidget
+? [this.props.config.useMapWidget]
+: []
 }
+/>
+</div>
+</SettingRow>
+</SettingSection>
+
+```
+    <SettingSection
+      className="instructions-section"
+      title="Widget Instructions"
+    >
+      <SettingRow>
+        <div style={{ 
+          padding: '16px', 
+          background: '#f8f9fa', 
+          borderRadius: '8px',
+          fontSize: '13px',
+          color: '#495057',
+          lineHeight: '1.5'
+        }}>
+          <h4 style={{ 
+            margin: '0 0 12px 0', 
+            fontSize: '15px',
+            fontWeight: '600',
+            color: '#2c3e50'
+          }}>
+            How to use the Drop a Pin widget:
+          </h4>
+          <ol style={{ 
+            margin: 0, 
+            paddingLeft: '20px',
+            listStyleType: 'decimal'
+          }}>
+            <li style={{ marginBottom: '6px' }}>
+              Select a map widget above to connect this widget
+            </li>
+            <li style={{ marginBottom: '6px' }}>
+              Click the pin button (📍) to enter drop mode
+            </li>
+            <li style={{ marginBottom: '6px' }}>
+              Click anywhere on the map to drop a new pin
+            </li>
+            <li style={{ marginBottom: '6px' }}>
+              Edit pin name and color in the popup that appears
+            </li>
+            <li style={{ marginBottom: '6px' }}>
+              Click existing pins to modify or remove them
+            </li>
+            <li style={{ marginBottom: '0' }}>
+              Click coordinates in popup to copy to clipboard
+            </li>
+          </ol>
+        </div>
+      </SettingRow>
+    </SettingSection>
+
+    <SettingSection
+      className="features-section"
+      title="Features"
+    >
+      <SettingRow>
+        <div style={{
+          padding: '12px',
+          background: '#e8f5e8',
+          borderRadius: '6px',
+          fontSize: '12px',
+          color: '#2d5a2d'
+        }}>
+          <div style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            marginBottom: '8px',
+            fontWeight: '600'
+          }}>
+            ✅ Widget Features:
+          </div>
+          <ul style={{ 
+            margin: 0, 
+            paddingLeft: '16px',
+            listStyleType: 'disc'
+          }}>
+            <li>Interactive pin dropping with crosshair cursor</li>
+            <li>8 customizable pin colors</li>
+            <li>Editable pin names and properties</li>
+            <li>Copy coordinates to clipboard</li>
+            <li>Click existing pins to modify them</li>
+            <li>Remove pins functionality</li>
+          </ul>
+        </div>
+      </SettingRow>
+    </SettingSection>
+  </div>
+)
 ```
 
-#### **📄 config.ts**
-
-```typescript
-export interface Config {
-  useMapWidget: string
 }
-```
-
-#### **📄 nls/default.ts**
-
-```typescript
-export default {
-  widgetName: 'Drop a Pin',
-  widgetDescription: 'Drop pins on the map with custom names and colors',
-  selectMapWidget: 'Please select a map widget',
-  dropPinMode: 'Click to enter drop pin mode',
-  cancelDropMode: 'Click to cancel drop pin mode',
-  pinName: 'Pin Name',
-  pinColor: 'Pin Color',
-  coordinates: 'Coordinates',
-  saveChanges: 'Save Changes',
-  removePin: 'Remove Pin',
-  copyCoordinates: 'Click to copy coordinates',
-  instructions: {
-    title: 'Instructions',
-    step1: 'Click the pin button to enter drop mode',
-    step2: 'Click anywhere on the map to drop a pin',
-    step3: 'Edit pin properties in the popup',
-    step4: 'Click existing pins to modify them'
-  }
 }
-```
-
-## ⚡ Quick Setup Commands
-
-### **PowerShell (Windows)**
-
-```powershell
-# Navigate to widgets folder
-cd "C:\path\to\arcgis-experience-builder\client\your-extensions\widgets"
-
-# Create structure
-New-Item -ItemType Directory -Path "drop-pin\nls", "drop-pin\setting" -Force
-
-# Create files (you'll need to paste content manually)
-New-Item -ItemType File -Path "drop-pin\manifest.json", "drop-pin\config.ts", "drop-pin\widget.tsx", "drop-pin\style.css", "drop-pin\nls\default.ts", "drop-pin\setting\setting.tsx"
-```
-
-### **Bash (Mac/Linux)**
-
-```bash
-# Navigate to widgets folder
-cd /path/to/arcgis-experience-builder/client/your-extensions/widgets
-
-# Create structure
-mkdir -p drop-pin/{nls,setting}
-
-# Create files (you'll need to paste content manually)
-touch drop-pin/{manifest.json,config.ts,widget.tsx,style.css,nls/default.ts,setting/setting.tsx}
-```
-
-## 🔍 Visual Directory Verification
-
-After setup, your structure should look exactly like this:
-
-```
-📁 drop-pin/
-├── 📄 manifest.json          ✅ JSON configuration
-├── 📄 config.ts              ✅ TypeScript config
-├── 📄 widget.tsx             ✅ Main React component (largest file)
-├── 📄 style.css              ✅ CSS styles
-├── 📁 nls/
-│   └── 📄 default.ts         ✅ Localization
-└── 📁 setting/
-    └── 📄 setting.tsx        ✅ Settings panel
-```
-
-## ⚠️ Important Notes
-
-1. **File Names**: Must match exactly (case-sensitive)
-1. **Folder Names**: `nls` and `setting` are required folder names
-1. **Widget Name**: The folder `drop-pin` becomes your widget ID
-1. **File Extensions**: Must be `.tsx` for React components, `.ts` for TypeScript
-1. **Manifest**: Critical for widget registration in Experience Builder
-
-## 🧪 Testing Your Setup
-
-1. **Start Development Server**: Run Experience Builder dev server
-1. **Check Widget Panel**: Look for “Drop a Pin” in Map Tools category
-1. **Add to Experience**: Drag widget to your experience
-1. **Configure**: Set map widget in settings
-1. **Test Functionality**: Click pin button and drop pins on map
-
-Your widget should now be ready to use! 🎉
