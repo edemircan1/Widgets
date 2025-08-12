@@ -1,146 +1,93 @@
-/** @jsx jsx */
-import {
-React,
-jsx,
-Immutable
-} from ‘jimu-core’
-import { AllWidgetSettingProps } from ‘jimu-for-builder’
-import {
-MapWidgetSelector,
-SettingSection,
-SettingRow
-} from ‘jimu-ui/advanced/setting-components’
-import { Config } from ‘../config’
-
-export default class Setting extends React.PureComponent<
-AllWidgetSettingProps<Config>
-
-> {
-> onMapWidgetSelected = (useMapWidgetIds: string[]) => {
-> this.props.onSettingChange({
-> id: this.props.id,
-> config: this.props.config.set(‘useMapWidget’, useMapWidgetIds[0])
-> })
-> }
-
-render() {
-return (
-<div className="widget-setting-drop-pin">
-<SettingSection
-className="map-selector-section"
-title="Map Selection"
->
-<SettingRow>
-<div style={{ width: ‘100%’ }}>
-<label style={{
-display: ‘block’,
-marginBottom: ‘8px’,
-fontSize: ‘14px’,
-fontWeight: ‘500’,
-color: ‘#333’
-}}>
-Select Map Widget
-</label>
-<MapWidgetSelector
-onSelect={this.onMapWidgetSelected}
-useMapWidgetIds={
-this.props.config.useMapWidget
-? [this.props.config.useMapWidget]
-: []
+.drop-pin-widget {
+padding: 10px;
+background: white;
+border-radius: 4px;
+box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
-/>
-</div>
-</SettingRow>
-</SettingSection>
 
-```
-    <SettingSection
-      className="instructions-section"
-      title="Widget Instructions"
-    >
-      <SettingRow>
-        <div style={{ 
-          padding: '16px', 
-          background: '#f8f9fa', 
-          borderRadius: '8px',
-          fontSize: '13px',
-          color: '#495057',
-          lineHeight: '1.5'
-        }}>
-          <h4 style={{ 
-            margin: '0 0 12px 0', 
-            fontSize: '15px',
-            fontWeight: '600',
-            color: '#2c3e50'
-          }}>
-            How to use the Drop a Pin widget:
-          </h4>
-          <ol style={{ 
-            margin: 0, 
-            paddingLeft: '20px',
-            listStyleType: 'decimal'
-          }}>
-            <li style={{ marginBottom: '6px' }}>
-              Select a map widget above to connect this widget
-            </li>
-            <li style={{ marginBottom: '6px' }}>
-              Click the pin button (📍) to enter drop mode
-            </li>
-            <li style={{ marginBottom: '6px' }}>
-              Click anywhere on the map to drop a new pin
-            </li>
-            <li style={{ marginBottom: '6px' }}>
-              Edit pin name and color in the popup that appears
-            </li>
-            <li style={{ marginBottom: '6px' }}>
-              Click existing pins to modify or remove them
-            </li>
-            <li style={{ marginBottom: '0' }}>
-              Click coordinates in popup to copy to clipboard
-            </li>
-          </ol>
-        </div>
-      </SettingRow>
-    </SettingSection>
-
-    <SettingSection
-      className="features-section"
-      title="Features"
-    >
-      <SettingRow>
-        <div style={{
-          padding: '12px',
-          background: '#e8f5e8',
-          borderRadius: '6px',
-          fontSize: '12px',
-          color: '#2d5a2d'
-        }}>
-          <div style={{ 
-            display: 'flex', 
-            alignItems: 'center', 
-            marginBottom: '8px',
-            fontWeight: '600'
-          }}>
-            ✅ Widget Features:
-          </div>
-          <ul style={{ 
-            margin: 0, 
-            paddingLeft: '16px',
-            listStyleType: 'disc'
-          }}>
-            <li>Interactive pin dropping with crosshair cursor</li>
-            <li>8 customizable pin colors</li>
-            <li>Editable pin names and properties</li>
-            <li>Copy coordinates to clipboard</li>
-            <li>Click existing pins to modify them</li>
-            <li>Remove pins functionality</li>
-          </ul>
-        </div>
-      </SettingRow>
-    </SettingSection>
-  </div>
-)
-```
-
+.pin-button {
+width: 40px;
+height: 40px;
+border: none;
+border-radius: 50%;
+background: #0078d4;
+color: white;
+font-size: 18px;
+cursor: pointer;
+display: flex;
+align-items: center;
+justify-content: center;
 }
+
+.pin-button:hover {
+background: #106ebe;
+}
+
+.pin-button.active {
+background: #28a745;
+}
+
+.pin-popup {
+background: white;
+border: 1px solid #ccc;
+border-radius: 8px;
+padding: 16px;
+box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+min-width: 250px;
+z-index: 1000;
+}
+
+.popup-header {
+margin-bottom: 12px;
+font-weight: bold;
+}
+
+.form-group {
+margin-bottom: 12px;
+}
+
+.form-group label {
+display: block;
+margin-bottom: 4px;
+font-size: 14px;
+}
+
+.form-group input {
+width: 100%;
+padding: 6px;
+border: 1px solid #ccc;
+border-radius: 4px;
+}
+
+.coordinates {
+background: #f5f5f5;
+padding: 6px;
+border-radius: 4px;
+font-family: monospace;
+font-size: 12px;
+cursor: pointer;
+}
+
+.button-group {
+display: flex;
+gap: 8px;
+margin-top: 12px;
+}
+
+.btn {
+padding: 8px 16px;
+border: none;
+border-radius: 4px;
+cursor: pointer;
+flex: 1;
+}
+
+.btn-save {
+background: #28a745;
+color: white;
+}
+
+.btn-remove {
+background: #dc3545;
+color: white;
 }
