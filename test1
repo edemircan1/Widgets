@@ -1,138 +1,248 @@
-// config.ts - Widget Configuration Interface
-export interface Config {
-useMapWidget: string
+/* style.css - Widget Styles */
+.widget-drop-pin {
+position: relative;
+z-index: 1;
 }
 
-// settings/setting.tsx - Widget Settings Panel
-/** @jsx jsx */
-import {
-React,
-jsx,
-Immutable,
-UseDataSource
-} from ‘jimu-core’
-import { AllWidgetSettingProps } from ‘jimu-for-builder’
-import {
-MapWidgetSelector,
-SettingSection,
-SettingRow
-} from ‘jimu-ui/advanced/setting-components’
-import { Config } from ‘../config’
-
-export default class Setting extends React.PureComponent<
-AllWidgetSettingProps<Config>
-
-> {
-> onMapWidgetSelected = (useMapWidgetIds: string[]) => {
-> this.props.onSettingChange({
-> id: this.props.id,
-> config: this.props.config.set(‘useMapWidget’, useMapWidgetIds[0])
-> })
-> }
-
-render() {
-return (
-<div className=“widget-setting-drop-pin” style={{ padding: ‘20px’ }}>
-<SettingSection
-className="map-selector-section"
-title="Map Selection"
->
-<SettingRow>
-<MapWidgetSelector
-onSelect={this.onMapWidgetSelected}
-useMapWidgetIds={
-this.props.config.useMapWidget
-? [this.props.config.useMapWidget]
-: []
+.drop-pin-widget {
+padding: 8px;
+background: white;
+border-radius: 6px;
+box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+border: 1px solid rgba(0, 0, 0, 0.1);
 }
-/>
-</SettingRow>
-</SettingSection>
 
-```
-    <SettingSection
-      className="instructions-section"
-      title="Instructions"
-    >
-      <div style={{ 
-        padding: '12px', 
-        background: '#f8f9fa', 
-        borderRadius: '4px',
-        fontSize: '14px',
-        color: '#495057'
-      }}>
-        <h4 style={{ margin: '0 0 8px 0', fontSize: '14px' }}>How to use the Drop a Pin widget:</h4>
-        <ol style={{ margin: 0, paddingLeft: '20px' }}>
-          <li>Select a map widget above</li>
-          <li>Click the pin button to enter drop mode</li>
-          <li>Click anywhere on the map to drop a pin</li>
-          <li>Edit pin name and color in the popup</li>
-          <li>Click existing pins to modify or remove them</li>
-          <li>Click coordinates to copy to clipboard</li>
-        </ol>
-      </div>
-    </SettingSection>
-  </div>
-)
-```
+.pin-button {
+width: 44px;
+height: 44px;
+border-radius: 50%;
+display: flex;
+align-items: center;
+justify-content: center;
+font-size: 20px;
+border: 2px solid #e0e0e0;
+background: white;
+cursor: pointer;
+transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+user-select: none;
+}
 
+.pin-button:hover {
+transform: scale(1.05);
+box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+border-color: #0078d4;
+}
+
+.pin-button.active {
+background: linear-gradient(135deg, #0078d4 0%, #106ebe 100%);
+color: white;
+border-color: #0078d4;
+animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+0% {
+box-shadow: 0 0 0 0 rgba(0, 120, 212, 0.7);
+}
+70% {
+box-shadow: 0 0 0 10px rgba(0, 120, 212, 0);
+}
+100% {
+box-shadow: 0 0 0 0 rgba(0, 120, 212, 0);
 }
 }
 
-// manifest.json - Widget Manifest
-{
-“name”: “drop-pin”,
-“type”: “widget”,
-“version”: “1.0.0”,
-“exbVersion”: “1.14.0”,
-“author”: “Custom Widget Developer”,
-“description”: “A widget to drop pins on the map with customizable names and colors”,
-“copyright”: “”,
-“license”: “”,
-“main”: “dist/runtime/widget.js”,
-“setting”: “dist/setting/setting.js”,
-“icon”: “📍”,
-“properties”: {
-“supportInlineEditing”: false,
-“supportRepeat”: false,
-“canCrossFilterDS”: false
-},
-“defaultConfig”: {
-“useMapWidget”: “”
-},
-“translatedLocales”: [“en”],
-“dependencies”: [“jimu-arcgis”],
-“hasStyle”: true,
-“hasConfig”: true,
-“hasSettingPage”: true,
-“category”: “Map Tools”,
-“layouts”: [
-{
-“name”: “default”,
-“type”: “row”,
-“content”: []
-}
-]
+.popup-content {
+background: white;
+border-radius: 12px;
+box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+padding: 20px;
+min-width: 300px;
+max-width: 380px;
+z-index: 10000;
+border: 1px solid rgba(0, 0, 0, 0.08);
 }
 
-// nls/default.ts - Localization
-export default {
-widgetName: ‘Drop a Pin’,
-widgetDescription: ‘Drop pins on the map with custom names and colors’,
-selectMapWidget: ‘Please select a map widget’,
-dropPinMode: ‘Click to enter drop pin mode’,
-cancelDropMode: ‘Click to cancel drop pin mode’,
-pinName: ‘Pin Name’,
-pinColor: ‘Pin Color’,
-coordinates: ‘Coordinates’,
-saveChanges: ‘Save Changes’,
-removePin: ‘Remove Pin’,
-copyCoordinates: ‘Click to copy coordinates’,
-instructions: {
-title: ‘Instructions’,
-step1: ‘Click the pin button to enter drop mode’,
-step2: ‘Click anywhere on the map to drop a pin’,
-step3: ‘Edit pin properties in the popup’,
-step4: ‘Click existing pins to modify them’
+.popup-header {
+margin-bottom: 16px;
+padding-bottom: 12px;
+border-bottom: 1px solid #f0f0f0;
 }
+
+.popup-title {
+font-size: 16px;
+font-weight: 600;
+color: #2c3e50;
+margin-bottom: 6px;
+display: flex;
+align-items: center;
+}
+
+.coordinates {
+font-size: 13px;
+color: #7f8c8d;
+font-family: ‘Consolas’, ‘Monaco’, ‘Courier New’, monospace;
+background: #f8f9fa;
+padding: 6px 10px;
+border-radius: 6px;
+cursor: pointer;
+border: 1px solid #e9ecef;
+transition: all 0.2s ease;
+display: inline-block;
+user-select: all;
+}
+
+.coordinates:hover {
+background: #e3f2fd;
+border-color: #2196f3;
+color: #1976d2;
+}
+
+.coordinates:active {
+transform: scale(0.98);
+}
+
+.form-group {
+margin-bottom: 16px;
+}
+
+.form-label {
+display: flex;
+align-items: center;
+font-size: 13px;
+font-weight: 500;
+color: #34495e;
+margin-bottom: 6px;
+}
+
+.color-preview {
+display: inline-block;
+width: 18px;
+height: 18px;
+border-radius: 50%;
+margin-left: 8px;
+border: 3px solid #fff;
+box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
+vertical-align: middle;
+transition: transform 0.2s ease;
+}
+
+.color-preview:hover {
+transform: scale(1.1);
+}
+
+.button-group {
+display: flex;
+gap: 10px;
+margin-top: 20px;
+padding-top: 16px;
+border-top: 1px solid #f0f0f0;
+}
+
+.btn-save {
+background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
+color: white;
+border: none;
+padding: 10px 16px;
+border-radius: 8px;
+font-size: 13px;
+font-weight: 500;
+cursor: pointer;
+flex: 1;
+transition: all 0.2s ease;
+}
+
+.btn-save:hover {
+background: linear-gradient(135deg, #229954 0%, #27ae60 100%);
+transform: translateY(-1px);
+box-shadow: 0 4px 12px rgba(39, 174, 96, 0.3);
+}
+
+.btn-save:active {
+transform: translateY(0);
+}
+
+.btn-remove {
+background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
+color: white;
+border: none;
+padding: 10px 16px;
+border-radius: 8px;
+font-size: 13px;
+font-weight: 500;
+cursor: pointer;
+flex: 1;
+transition: all 0.2s ease;
+}
+
+.btn-remove:hover {
+background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
+transform: translateY(-1px);
+box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3);
+}
+
+.btn-remove:active {
+transform: translateY(0);
+}
+
+/* Input and Select Styling */
+.jimu-input,
+.jimu-select {
+border-radius: 8px !important;
+border: 2px solid #e9ecef !important;
+transition: all 0.2s ease !important;
+}
+
+.jimu-input:focus,
+.jimu-select:focus {
+border-color: #0078d4 !important;
+box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.1) !important;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+.popup-content {
+min-width: 280px;
+max-width: 320px;
+padding: 16px;
+}
+
+.pin-button {
+width: 40px;
+height: 40px;
+font-size: 18px;
+}
+}
+
+/* Accessibility */
+.pin-button:focus,
+.btn-save:focus,
+.btn-remove:focus {
+outline: 2px solid #0078d4;
+outline-offset: 2px;
+}
+
+/* Animation for popup entrance */
+.popup-content {
+animation: popupEnter 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes popupEnter {
+0% {
+opacity: 0;
+transform: scale(0.8) translateY(10px);
+}
+100% {
+opacity: 1;
+transform: scale(1) translateY(0);
+}
+}
+
+/* Map cursor override */
+.esri-view-root[data-drop-pin-mode=“true”] {
+cursor: crosshair !important;
+}
+
+.esri-view-root[data-drop-pin-mode=“true”] * {
+cursor: crosshair !important;
 }
