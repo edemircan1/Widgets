@@ -1,248 +1,214 @@
-/* style.css - Widget Styles */
-.widget-drop-pin {
-position: relative;
-z-index: 1;
-}
+# Drop a Pin Widget - Directory Structure
 
-.drop-pin-widget {
-padding: 8px;
-background: white;
-border-radius: 6px;
-box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-border: 1px solid rgba(0, 0, 0, 0.1);
-}
+## 📁 Complete Directory Tree
 
-.pin-button {
-width: 44px;
-height: 44px;
-border-radius: 50%;
-display: flex;
-align-items: center;
-justify-content: center;
-font-size: 20px;
-border: 2px solid #e0e0e0;
-background: white;
-cursor: pointer;
-transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-user-select: none;
-}
+```
+client/
+└── your-extensions/
+    └── widgets/
+        └── drop-pin/                    ← Widget root folder
+            ├── 📄 manifest.json         ← Widget manifest (from "Widget Configuration Files" artifact)
+            ├── 📄 config.ts             ← Config interface (from "Widget Configuration Files" artifact) 
+            ├── 📄 widget.tsx            ← Main widget code (from "Drop a Pin Widget - Main Widget Component" artifact)
+            ├── 📄 style.css             ← Widget styles (from "Widget Styles and Additional Files" artifact)
+            ├── 📁 nls/                  ← Localization folder
+            │   └── 📄 default.ts        ← Default language strings (from "Widget Configuration Files" artifact)
+            └── 📁 setting/              ← Settings panel folder
+                └── 📄 setting.tsx       ← Settings component (from "Widget Configuration Files" artifact)
+```
 
-.pin-button:hover {
-transform: scale(1.05);
-box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-border-color: #0078d4;
-}
+## 🗂️ File Mapping Guide
 
-.pin-button.active {
-background: linear-gradient(135deg, #0078d4 0%, #106ebe 100%);
-color: white;
-border-color: #0078d4;
-animation: pulse 2s infinite;
-}
+### **Root Level Files** (`client/your-extensions/widgets/drop-pin/`)
 
-@keyframes pulse {
-0% {
-box-shadow: 0 0 0 0 rgba(0, 120, 212, 0.7);
-}
-70% {
-box-shadow: 0 0 0 10px rgba(0, 120, 212, 0);
-}
-100% {
-box-shadow: 0 0 0 0 rgba(0, 120, 212, 0);
-}
-}
+|File           |Source Artifact                              |Content Type        |
+|---------------|---------------------------------------------|--------------------|
+|`manifest.json`|**Widget Configuration Files**               |JSON manifest       |
+|`config.ts`    |**Widget Configuration Files**               |TypeScript interface|
+|`widget.tsx`   |**Drop a Pin Widget - Main Widget Component**|Main React component|
+|`style.css`    |**Widget Styles and Additional Files**       |CSS styles          |
 
-.popup-content {
-background: white;
-border-radius: 12px;
-box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
-padding: 20px;
-min-width: 300px;
-max-width: 380px;
-z-index: 10000;
-border: 1px solid rgba(0, 0, 0, 0.08);
-}
+### **nls/ Folder** (`client/your-extensions/widgets/drop-pin/nls/`)
 
-.popup-header {
-margin-bottom: 16px;
-padding-bottom: 12px;
-border-bottom: 1px solid #f0f0f0;
-}
+|File        |Source Artifact               |Content Type        |
+|------------|------------------------------|--------------------|
+|`default.ts`|**Widget Configuration Files**|Localization strings|
 
-.popup-title {
-font-size: 16px;
-font-weight: 600;
-color: #2c3e50;
-margin-bottom: 6px;
-display: flex;
-align-items: center;
-}
+### **setting/ Folder** (`client/your-extensions/widgets/drop-pin/setting/`)
 
-.coordinates {
-font-size: 13px;
-color: #7f8c8d;
-font-family: ‘Consolas’, ‘Monaco’, ‘Courier New’, monospace;
-background: #f8f9fa;
-padding: 6px 10px;
-border-radius: 6px;
-cursor: pointer;
-border: 1px solid #e9ecef;
-transition: all 0.2s ease;
-display: inline-block;
-user-select: all;
-}
+|File         |Source Artifact               |Content Type            |
+|-------------|------------------------------|------------------------|
+|`setting.tsx`|**Widget Configuration Files**|Settings React component|
 
-.coordinates:hover {
-background: #e3f2fd;
-border-color: #2196f3;
-color: #1976d2;
-}
+## 🚀 Step-by-Step Implementation
 
-.coordinates:active {
-transform: scale(0.98);
-}
+### **Step 1: Create Directory Structure**
 
-.form-group {
-margin-bottom: 16px;
-}
+```bash
+# Navigate to your Experience Builder directory
+cd /path/to/arcgis-experience-builder-developer-edition/client/your-extensions/widgets/
 
-.form-label {
-display: flex;
-align-items: center;
-font-size: 13px;
-font-weight: 500;
-color: #34495e;
-margin-bottom: 6px;
-}
+# Create the widget directory structure
+mkdir -p drop-pin/nls drop-pin/setting
+```
 
-.color-preview {
-display: inline-block;
-width: 18px;
-height: 18px;
-border-radius: 50%;
-margin-left: 8px;
-border: 3px solid #fff;
-box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15);
-vertical-align: middle;
-transition: transform 0.2s ease;
-}
+### **Step 2: Extract and Place Files**
 
-.color-preview:hover {
-transform: scale(1.1);
-}
+#### **From “Widget Configuration Files” artifact:**
 
-.button-group {
-display: flex;
-gap: 10px;
-margin-top: 20px;
-padding-top: 16px;
-border-top: 1px solid #f0f0f0;
-}
+```bash
+# Extract these sections to separate files:
 
-.btn-save {
-background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
-color: white;
-border: none;
-padding: 10px 16px;
-border-radius: 8px;
-font-size: 13px;
-font-weight: 500;
-cursor: pointer;
-flex: 1;
-transition: all 0.2s ease;
-}
+# 1. Lines 1-4 (Config interface) → config.ts
+# 2. Lines 6-76 (Setting component) → setting/setting.tsx  
+# 3. Lines 78-108 (manifest.json) → manifest.json
+# 4. Lines 110-125 (nls/default.ts) → nls/default.ts
+```
 
-.btn-save:hover {
-background: linear-gradient(135deg, #229954 0%, #27ae60 100%);
-transform: translateY(-1px);
-box-shadow: 0 4px 12px rgba(39, 174, 96, 0.3);
-}
+#### **From “Drop a Pin Widget - Main Widget Component” artifact:**
 
-.btn-save:active {
-transform: translateY(0);
-}
+```bash
+# The entire file content → widget.tsx
+```
 
-.btn-remove {
-background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-color: white;
-border: none;
-padding: 10px 16px;
-border-radius: 8px;
-font-size: 13px;
-font-weight: 500;
-cursor: pointer;
-flex: 1;
-transition: all 0.2s ease;
-}
+#### **From “Widget Styles and Additional Files” artifact:**
 
-.btn-remove:hover {
-background: linear-gradient(135deg, #c0392b 0%, #a93226 100%);
-transform: translateY(-1px);
-box-shadow: 0 4px 12px rgba(231, 76, 60, 0.3);
-}
+```bash
+# The entire CSS content → style.css
+```
 
-.btn-remove:active {
-transform: translateY(0);
-}
+### **Step 3: File Content Breakdown**
 
-/* Input and Select Styling */
-.jimu-input,
-.jimu-select {
-border-radius: 8px !important;
-border: 2px solid #e9ecef !important;
-transition: all 0.2s ease !important;
-}
+#### **📄 manifest.json**
 
-.jimu-input:focus,
-.jimu-select:focus {
-border-color: #0078d4 !important;
-box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.1) !important;
+```json
+{
+  "name": "drop-pin",
+  "type": "widget",
+  "version": "1.0.0",
+  "exbVersion": "1.14.0",
+  "author": "Custom Widget Developer",
+  "description": "A widget to drop pins on the map with customizable names and colors",
+  "copyright": "",
+  "license": "",
+  "main": "dist/runtime/widget.js",
+  "setting": "dist/setting/setting.js",
+  "icon": "📍",
+  "properties": {
+    "supportInlineEditing": false,
+    "supportRepeat": false,
+    "canCrossFilterDS": false
+  },
+  "defaultConfig": {
+    "useMapWidget": ""
+  },
+  "translatedLocales": ["en"],
+  "dependencies": ["jimu-arcgis"],
+  "hasStyle": true,
+  "hasConfig": true,
+  "hasSettingPage": true,
+  "category": "Map Tools",
+  "layouts": [
+    {
+      "name": "default",
+      "type": "row",
+      "content": []
+    }
+  ]
 }
+```
 
-/* Responsive Design */
-@media (max-width: 768px) {
-.popup-content {
-min-width: 280px;
-max-width: 320px;
-padding: 16px;
-}
+#### **📄 config.ts**
 
-.pin-button {
-width: 40px;
-height: 40px;
-font-size: 18px;
+```typescript
+export interface Config {
+  useMapWidget: string
 }
-}
+```
 
-/* Accessibility */
-.pin-button:focus,
-.btn-save:focus,
-.btn-remove:focus {
-outline: 2px solid #0078d4;
-outline-offset: 2px;
-}
+#### **📄 nls/default.ts**
 
-/* Animation for popup entrance */
-.popup-content {
-animation: popupEnter 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+```typescript
+export default {
+  widgetName: 'Drop a Pin',
+  widgetDescription: 'Drop pins on the map with custom names and colors',
+  selectMapWidget: 'Please select a map widget',
+  dropPinMode: 'Click to enter drop pin mode',
+  cancelDropMode: 'Click to cancel drop pin mode',
+  pinName: 'Pin Name',
+  pinColor: 'Pin Color',
+  coordinates: 'Coordinates',
+  saveChanges: 'Save Changes',
+  removePin: 'Remove Pin',
+  copyCoordinates: 'Click to copy coordinates',
+  instructions: {
+    title: 'Instructions',
+    step1: 'Click the pin button to enter drop mode',
+    step2: 'Click anywhere on the map to drop a pin',
+    step3: 'Edit pin properties in the popup',
+    step4: 'Click existing pins to modify them'
+  }
 }
+```
 
-@keyframes popupEnter {
-0% {
-opacity: 0;
-transform: scale(0.8) translateY(10px);
-}
-100% {
-opacity: 1;
-transform: scale(1) translateY(0);
-}
-}
+## ⚡ Quick Setup Commands
 
-/* Map cursor override */
-.esri-view-root[data-drop-pin-mode=“true”] {
-cursor: crosshair !important;
-}
+### **PowerShell (Windows)**
 
-.esri-view-root[data-drop-pin-mode=“true”] * {
-cursor: crosshair !important;
-}
+```powershell
+# Navigate to widgets folder
+cd "C:\path\to\arcgis-experience-builder\client\your-extensions\widgets"
+
+# Create structure
+New-Item -ItemType Directory -Path "drop-pin\nls", "drop-pin\setting" -Force
+
+# Create files (you'll need to paste content manually)
+New-Item -ItemType File -Path "drop-pin\manifest.json", "drop-pin\config.ts", "drop-pin\widget.tsx", "drop-pin\style.css", "drop-pin\nls\default.ts", "drop-pin\setting\setting.tsx"
+```
+
+### **Bash (Mac/Linux)**
+
+```bash
+# Navigate to widgets folder
+cd /path/to/arcgis-experience-builder/client/your-extensions/widgets
+
+# Create structure
+mkdir -p drop-pin/{nls,setting}
+
+# Create files (you'll need to paste content manually)
+touch drop-pin/{manifest.json,config.ts,widget.tsx,style.css,nls/default.ts,setting/setting.tsx}
+```
+
+## 🔍 Visual Directory Verification
+
+After setup, your structure should look exactly like this:
+
+```
+📁 drop-pin/
+├── 📄 manifest.json          ✅ JSON configuration
+├── 📄 config.ts              ✅ TypeScript config
+├── 📄 widget.tsx             ✅ Main React component (largest file)
+├── 📄 style.css              ✅ CSS styles
+├── 📁 nls/
+│   └── 📄 default.ts         ✅ Localization
+└── 📁 setting/
+    └── 📄 setting.tsx        ✅ Settings panel
+```
+
+## ⚠️ Important Notes
+
+1. **File Names**: Must match exactly (case-sensitive)
+1. **Folder Names**: `nls` and `setting` are required folder names
+1. **Widget Name**: The folder `drop-pin` becomes your widget ID
+1. **File Extensions**: Must be `.tsx` for React components, `.ts` for TypeScript
+1. **Manifest**: Critical for widget registration in Experience Builder
+
+## 🧪 Testing Your Setup
+
+1. **Start Development Server**: Run Experience Builder dev server
+1. **Check Widget Panel**: Look for “Drop a Pin” in Map Tools category
+1. **Add to Experience**: Drag widget to your experience
+1. **Configure**: Set map widget in settings
+1. **Test Functionality**: Click pin button and drop pins on map
+
+Your widget should now be ready to use! 🎉
