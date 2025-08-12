@@ -1,93 +1,223 @@
-.drop-pin-widget {
-padding: 10px;
-background: white;
-border-radius: 4px;
-box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+/** @jsx jsx */
+import { React, jsx, AllWidgetProps } from ‘jimu-core’
+import { JimuMapViewComponent, JimuMapView } from ‘jimu-arcgis’
+import { IMConfig } from ‘../config’
+import Point from ‘esri/geometry/Point’
+import Graphic from ‘esri/Graphic’
+import SimpleMarkerSymbol from ‘esri/symbols/SimpleMarkerSymbol’
+import GraphicsLayer from ‘esri/layers/GraphicsLayer’
+
+interface State {
+jimuMapView: JimuMapView
+isDropMode: boolean
+showPopup: boolean
+selectedGraphic: Graphic
+pinName: string
+coordinates: string
+graphicsLayer: GraphicsLayer
 }
 
-.pin-button {
-width: 40px;
-height: 40px;
-border: none;
-border-radius: 50%;
-background: #0078d4;
-color: white;
-font-size: 18px;
-cursor: pointer;
-display: flex;
-align-items: center;
-justify-content: center;
+export default class Widget extends React.PureComponent<AllWidgetProps<IMConfig>, State> {
+private mapClickHandler: any = null
+private pinCounter = 0
+
+constructor(props) {
+super(props)
+this.state = {
+jimuMapView: null,
+isDropMode: false,
+showPopup: false,
+selectedGraphic: null,
+pinName: ‘’,
+coordinates: ‘’,
+graphicsLayer: new GraphicsLayer({ title: ‘Drop Pins’ })
+}
 }
 
-.pin-button:hover {
-background: #106ebe;
+onActiveViewChange = (jimuMapView: JimuMapView) => {
+if (jimuMapView) {
+jimuMapView.view.map.add(this.state.graphicsLayer)
+this.setState({ jimuMapView })
+}
 }
 
-.pin-button.active {
-background: #28a745;
+toggleDropMode = () => {
+if (this.state.isDropMode) {
+this.exitDropMode()
+} else {
+this.enterDropMode()
+}
 }
 
-.pin-popup {
-background: white;
-border: 1px solid #ccc;
-border-radius: 8px;
-padding: 16px;
-box-shadow: 0 4px 8px rgba(0,0,0,0.2);
-min-width: 250px;
-z-index: 1000;
+enterDropMode = () => {
+this.setState({ isDropMode: true })
+if (this.state.jimuMapView) {
+this.mapClickHandler = this.state.jimuMapView.view.on(‘click’, this.onMapClick)
+this.state.jimuMapView.view.container.style.cursor = ‘crosshair’
+}
 }
 
-.popup-header {
-margin-bottom: 12px;
-font-weight: bold;
+exitDropMode = () => {
+this.setState({ isDropMode: false, showPopup: false })
+if (this.mapClickHandler) {
+this.mapClickHandler.remove()
+this.mapClickHandler = null
+}
+if (this.state.jimuMapView) {
+this.state.jimuMapView.view.container.style.cursor = ‘default’
+}
 }
 
-.form-group {
-margin-bottom: 12px;
+onMapClick = (event) => {
+const point = new Point({
+longitude: event.mapPoint.longitude,
+latitude: event.mapPoint.latitude,
+spatialReference: event.mapPoint.spatialReference
+})
+
+```
+// Check if clicking on existing pin
+this.state.jimuMapView.view.hitTest(event).then((response) => {
+  const existingPin = response.results.find(result => 
+    result.graphic && result.graphic.layer === this.state.graphicsLayer
+  )
+
+  if (existingPin) {
+    this.editPin(existingPin.graphic)
+  } else {
+    this.createPin(point)
+  }
+})
+```
+
 }
 
-.form-group label {
-display: block;
-margin-bottom: 4px;
-font-size: 14px;
+createPin = (point: Point) => {
+this.pinCounter++
+const pinName = `Pin ${this.pinCounter}`
+
+```
+const symbol = new SimpleMarkerSymbol({
+  color: [255, 0, 0],
+  size: 12,
+  outline: { color: [255, 255, 255], width: 2 }
+})
+
+const graphic = new Graphic({
+  geometry: point,
+  symbol: symbol,
+  attributes: { name: pinName, id: Date.now() }
+})
+
+this.state.graphicsLayer.add(graphic)
+this.showPinPopup(graphic, pinName)
+```
+
 }
 
-.form-group input {
-width: 100%;
-padding: 6px;
-border: 1px solid #ccc;
-border-radius: 4px;
+editPin = (graphic: Graphic) => {
+this.showPinPopup(graphic, graphic.attributes.name)
 }
 
-.coordinates {
-background: #f5f5f5;
-padding: 6px;
-border-radius: 4px;
-font-family: monospace;
-font-size: 12px;
-cursor: pointer;
+showPinPopup = (graphic: Graphic, name: string) => {
+const coords = `${graphic.geometry.latitude.toFixed(6)}, ${graphic.geometry.longitude.toFixed(6)}`
+this.setState({
+showPopup: true,
+selectedGraphic: graphic,
+pinName: name,
+coordinates: coords,
+isDropMode: false
+})
+if (this.state.jimuMapView) {
+this.state.jimuMapView.view.container.style.cursor = ‘default’
+}
 }
 
-.button-group {
-display: flex;
-gap: 8px;
-margin-top: 12px;
+updatePinName = (event) => {
+this.setState({ pinName: event.target.value })
 }
 
-.btn {
-padding: 8px 16px;
-border: none;
-border-radius: 4px;
-cursor: pointer;
-flex: 1;
+savePin = () => {
+if (this.state.selectedGraphic) {
+this.state.selectedGraphic.attributes.name = this.state.pinName
+}
+this.setState({ showPopup: false })
 }
 
-.btn-save {
-background: #28a745;
-color: white;
+removePin = () => {
+if (this.state.selectedGraphic) {
+this.state.graphicsLayer.remove(this.state.selectedGraphic)
+}
+this.setState({ showPopup: false })
 }
 
-.btn-remove {
-background: #dc3545;
-color: white;
+copyCoordinates = () => {
+navigator.clipboard?.writeText(this.state.coordinates)
+}
+
+render() {
+const { useMapWidget } = this.props.config
+
+```
+return (
+  <div className="drop-pin-widget">
+    <button 
+      className={`pin-button ${this.state.isDropMode ? 'active' : ''}`}
+      onClick={this.toggleDropMode}
+      title="Drop Pin"
+    >
+      📍
+    </button>
+
+    {useMapWidget && (
+      <JimuMapViewComponent
+        useMapWidgetId={useMapWidget}
+        onActiveViewChange={this.onActiveViewChange}
+      />
+    )}
+
+    {this.state.showPopup && (
+      <div className="pin-popup" style={{
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)'
+      }}>
+        <div className="popup-header">Pin Details</div>
+        
+        <div className="form-group">
+          <label>Name:</label>
+          <input 
+            type="text"
+            value={this.state.pinName}
+            onChange={this.updatePinName}
+          />
+        </div>
+
+        <div className="form-group">
+          <label>Coordinates:</label>
+          <div 
+            className="coordinates"
+            onClick={this.copyCoordinates}
+            title="Click to copy"
+          >
+            {this.state.coordinates}
+          </div>
+        </div>
+
+        <div className="button-group">
+          <button className="btn btn-save" onClick={this.savePin}>
+            Save
+          </button>
+          <button className="btn btn-remove" onClick={this.removePin}>
+            Remove
+          </button>
+        </div>
+      </div>
+    )}
+  </div>
+)
+```
+
+}
 }
