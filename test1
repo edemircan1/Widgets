@@ -1,98 +1,224 @@
-{
-  "name": "drop-pin",
-  "type": "widget",
-  "version": "1.0.0",
-  "exbVersion": "1.13.0",
-  "author": "Custom",
-  "description": "A widget to drop pins on the map and manage their properties",
-  "copyright": "",
-  "license": "MIT",
-  "properties": {},
-  "translatedLocales": ["en"],
-  "defaultSize": {
-    "width": 300,
-    "height": 400
-  },
-  "supportedThemes": ["default"],
-  "hasStyle": true,
-  "hasConfig": true,
-  "hasSettingPage": true,
-  "hasVersionManager": false,
-  "supportRepeat": false,
-  "supportInlineEditing": false,
-  "useDataSources": [
-    {
-      "type": "MAP"
-    }
-  ]
-}
-
-
-============
-
-
-
-import { ImmutableObject } from 'seamless-immutable'
-
-export interface Config {
-  // Add any configuration properties here if needed in the future
-}
-
-export type IMConfig = ImmutableObject<Config>
-
-
-============
-
-
 /** @jsx jsx */
-import { React, jsx, Immutable } from 'jimu-core'
-import { AllWidgetSettingProps } from 'jimu-for-builder'
-import { MapWidgetSelector, SettingSection, SettingRow } from 'jimu-ui/advanced/setting-components'
-import { IMConfig } from '../config'
+import { React, jsx, AllWidgetProps, DataSourceManager } from 'jimu-core'
+import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis'
+import { Button, Alert } from 'jimu-ui'
+import Point from 'esri/geometry/Point'
+import Graphic from 'esri/Graphic'
+import PictureMarkerSymbol from 'esri/symbols/PictureMarkerSymbol'
+import TextSymbol from 'esri/symbols/TextSymbol'
 
-const Setting = (props: AllWidgetSettingProps<IMConfig>) => {
-  const onMapWidgetSelected = (useMapWidgetIds: string[]) => {
-    props.onSettingChange({
-      id: props.id,
-      useMapWidgetIds: useMapWidgetIds
+interface Pin {
+  id: string
+  x: number
+  y: number
+  name: string
+  color: string
+  graphic?: Graphic
+}
+
+const Widget = (props: AllWidgetProps<any>) => {
+  const [jimuMapView, setJimuMapView] = React.useState<JimuMapView>()
+  const [isActive, setIsActive] = React.useState(false)
+  const [pins, setPins] = React.useState<Pin[]>([])
+  const [selectedPin, setSelectedPin] = React.useState<Pin | null>(null)
+  const [showCoords, setShowCoords] = React.useState('')
+  const [clickHandler, setClickHandler] = React.useState<any>(null)
+
+  const createPinSvg = (color: string) => {
+    return `data:image/svg+xml;base64,${btoa(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="32" viewBox="0 0 24 32">
+        <path d="M12 0C5.4 0 0 5.4 0 12c0 8 12 20 12 20s12-12 12-20c0-6.6-5.4-12-12-12z" fill="${color}" stroke="#fff" stroke-width="2"/>
+        <circle cx="12" cy="12" r="4" fill="#fff"/>
+      </svg>
+    `)}`
+  }
+
+  const activeMapView = () => {
+    if (jimuMapView?.view) {
+      if (isActive) {
+        // Deactivate
+        jimuMapView.view.container.style.cursor = 'default'
+        if (clickHandler) {
+          clickHandler.remove()
+          setClickHandler(null)
+        }
+        setIsActive(false)
+      } else {
+        // Activate
+        jimuMapView.view.container.style.cursor = 'crosshair'
+        setIsActive(true)
+        
+        const handler = jimuMapView.view.on('click', (event) => {
+          const point = new Point({
+            longitude: event.mapPoint.longitude,
+            latitude: event.mapPoint.latitude,
+            spatialReference: jimuMapView.view.spatialReference
+          })
+          
+          addPin(point.longitude, point.latitude)
+          
+          // Don't auto-deactivate, let user drop multiple pins
+          // setIsActive(false)
+          // jimuMapView.view.container.style.cursor = 'default'
+        })
+        
+        setClickHandler(handler)
+      }
+    }
+  }
+
+  const addPin = (x: number, y: number) => {
+    const pinId = `pin_${Date.now()}`
+    const pinName = `Pin ${pins.length + 1}`
+    const pinColor = '#ff0000'
+
+    const point = new Point({
+      longitude: x,
+      latitude: y,
+      spatialReference: jimuMapView.view.spatialReference
     })
+
+    const symbol = new PictureMarkerSymbol({
+      url: createPinSvg(pinColor),
+      width: '24px',
+      height: '32px',
+      yoffset: '16px'
+    })
+
+    const graphic = new Graphic({
+      geometry: point,
+      symbol: symbol,
+      attributes: { id: pinId, name: pinName }
+    })
+
+    jimuMapView.view.graphics.add(graphic)
+
+    const newPin: Pin = {
+      id: pinId,
+      x: parseFloat(x.toFixed(6)),
+      y: parseFloat(y.toFixed(6)),
+      name: pinName,
+      color: pinColor,
+      graphic: graphic
+    }
+
+    setPins([...pins, newPin])
+  }
+
+  const removePin = (pinId: string) => {
+    const pin = pins.find(p => p.id === pinId)
+    if (pin && pin.graphic) {
+      jimuMapView.view.graphics.remove(pin.graphic)
+    }
+    setPins(pins.filter(p => p.id !== pinId))
+    setSelectedPin(null)
+  }
+
+  const updatePin = (pinId: string, updates: Partial<Pin>) => {
+    setPins(pins.map(pin => {
+      if (pin.id === pinId) {
+        const updatedPin = { ...pin, ...updates }
+        
+        // Update graphic if color changed
+        if (updates.color && pin.graphic) {
+          const newSymbol = new PictureMarkerSymbol({
+            url: createPinSvg(updates.color),
+            width: '24px',
+            height: '32px',
+            yoffset: '16px'
+          })
+          pin.graphic.symbol = newSymbol
+        }
+        
+        return updatedPin
+      }
+      return pin
+    }))
+  }
+
+  const copyCoordinates = (pin: Pin) => {
+    const coords = `${pin.y}, ${pin.x}`
+    navigator.clipboard.writeText(coords)
+    setShowCoords(`Copied: ${coords}`)
+    setTimeout(() => setShowCoords(''), 2000)
+  }
+
+  const onActiveViewChange = (jmv: JimuMapView) => {
+    if (jmv) {
+      setJimuMapView(jmv)
+    }
   }
 
   return (
-    <div className="widget-setting-drop-pin">
-      <SettingSection title="Map">
-        <SettingRow>
-          <MapWidgetSelector 
-            onSelect={onMapWidgetSelected} 
-            useMapWidgetIds={props.useMapWidgetIds}
-          />
-        </SettingRow>
-      </SettingSection>
+    <div className="widget-drop-pin" style={{ padding: '10px' }}>
+      <div style={{ marginBottom: '10px' }}>
+        <Button 
+          size="sm" 
+          type={isActive ? 'primary' : 'secondary'}
+          onClick={activeMapView}
+          disabled={!jimuMapView}
+        >
+          {isActive ? 'Stop Dropping' : 'Drop Pin'}
+        </Button>
+      </div>
+
+      {showCoords && (
+        <Alert type="success" size="small" style={{ marginBottom: '10px' }}>
+          {showCoords}
+        </Alert>
+      )}
+
+      <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+        {pins.map(pin => (
+          <div key={pin.id} style={{ 
+            border: '1px solid #ccc', 
+            padding: '8px', 
+            marginBottom: '8px', 
+            borderRadius: '4px' 
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={pin.name}
+                onChange={(e) => updatePin(pin.id, { name: e.target.value })}
+                style={{ marginRight: '8px', flex: 1 }}
+              />
+              <input
+                type="color"
+                value={pin.color}
+                onChange={(e) => updatePin(pin.id, { color: e.target.value })}
+                style={{ width: '30px', height: '25px', marginRight: '8px' }}
+              />
+            </div>
+            
+            <div style={{ fontSize: '12px', color: '#666', margin: '4px 0' }}>
+              {pin.y.toFixed(6)}, {pin.x.toFixed(6)}
+            </div>
+            
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <Button size="sm" onClick={() => copyCoordinates(pin)}>
+                Copy Coords
+              </Button>
+              <Button size="sm" type="danger" onClick={() => removePin(pin.id)}>
+                Remove
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {pins.length === 0 && (
+        <div style={{ textAlign: 'center', color: '#666', fontStyle: 'italic' }}>
+          Click "Drop Pin" to add pins to the map
+        </div>
+      )}
+
+      <JimuMapViewComponent 
+        useMapWidgetId={props.useMapWidgetIds?.[0]} 
+        onActiveViewChange={onActiveViewChange}
+      />
     </div>
   )
 }
 
-export default Setting
-
-
-===========
-
-
-.widget-drop-pin {
-  background-color: #fff;
-  border-radius: 4px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-.widget-drop-pin .pin-item {
-  transition: background-color 0.2s ease;
-}
-
-.widget-drop-pin .pin-item:hover {
-  background-color: #f5f5f5;
-}
-
-.widget-drop-pin .coordinates {
-  font-family: monospace;
-  font-size: 11px;
-}
+export default Widget
