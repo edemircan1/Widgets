@@ -49,23 +49,67 @@ const Widget = (props: AllWidgetProps<any>) => {
         setIsActive(true)
         
         const handler = jimuMapView.view.on('click', (event) => {
-          const point = new Point({
-            longitude: event.mapPoint.longitude,
-            latitude: event.mapPoint.latitude,
-            spatialReference: jimuMapView.view.spatialReference
+          // Check if clicking on a pin graphic
+          jimuMapView.view.hitTest(event).then((response) => {
+            const graphicHit = response.results.find(result => 
+              result.type === 'graphic' && 
+              result.graphic.attributes && 
+              result.graphic.attributes.id
+            )
+            
+            if (graphicHit && !isActive) {
+              // User clicked on an existing pin while not in drop mode
+              const pinId = graphicHit.graphic.attributes.id
+              const pin = pins.find(p => p.id === pinId)
+              if (pin) {
+                setSelectedPin(pin)
+              }
+            } else if (isActive && !graphicHit) {
+              // User is in drop mode and clicked on empty space
+              const point = new Point({
+                longitude: event.mapPoint.longitude,
+                latitude: event.mapPoint.latitude,
+                spatialReference: jimuMapView.view.spatialReference
+              })
+              
+              addPin(point.longitude, point.latitude)
+            }
           })
-          
-          addPin(point.longitude, point.latitude)
-          
-          // Don't auto-deactivate, let user drop multiple pins
-          // setIsActive(false)
-          // jimuMapView.view.container.style.cursor = 'default'
         })
         
         setClickHandler(handler)
       }
     }
   }
+
+  // Add click handler for pin selection even when not in drop mode
+  React.useEffect(() => {
+    if (jimuMapView?.view && !isActive) {
+      const handler = jimuMapView.view.on('click', (event) => {
+        jimuMapView.view.hitTest(event).then((response) => {
+          const graphicHit = response.results.find(result => 
+            result.type === 'graphic' && 
+            result.graphic.attributes && 
+            result.graphic.attributes.id
+          )
+          
+          if (graphicHit) {
+            const pinId = graphicHit.graphic.attributes.id
+            const pin = pins.find(p => p.id === pinId)
+            if (pin) {
+              setSelectedPin(pin)
+            }
+          } else {
+            setSelectedPin(null)
+          }
+        })
+      })
+      
+      return () => {
+        handler.remove()
+      }
+    }
+  }, [jimuMapView, isActive, pins])
 
   const addPin = (x: number, y: number) => {
     const pinId = `pin_${Date.now()}`
@@ -169,24 +213,80 @@ const Widget = (props: AllWidgetProps<any>) => {
       )}
 
       <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-        {pins.map(pin => (
-          <div key={pin.id} style={{ 
-            border: '1px solid #ccc', 
+        {selectedPin && (
+          <div style={{ 
+            border: '2px solid #007ac3', 
             padding: '8px', 
             marginBottom: '8px', 
-            borderRadius: '4px' 
+            borderRadius: '4px',
+            backgroundColor: '#f0f8ff'
           }}>
+            <div style={{ fontWeight: 'bold', marginBottom: '4px', color: '#007ac3' }}>
+              Selected Pin
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={selectedPin.name}
+                onChange={(e) => updatePin(selectedPin.id, { name: e.target.value })}
+                style={{ marginRight: '8px', flex: 1 }}
+              />
+              <input
+                type="color"
+                value={selectedPin.color}
+                onChange={(e) => updatePin(selectedPin.id, { color: e.target.value })}
+                style={{ width: '30px', height: '25px', marginRight: '8px' }}
+              />
+            </div>
+            
+            <div style={{ fontSize: '12px', color: '#666', margin: '4px 0' }}>
+              {selectedPin.y.toFixed(6)}, {selectedPin.x.toFixed(6)}
+            </div>
+            
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <Button size="sm" onClick={() => copyCoordinates(selectedPin)}>
+                Copy Coords
+              </Button>
+              <Button size="sm" type="danger" onClick={() => removePin(selectedPin.id)}>
+                Remove
+              </Button>
+              <Button size="sm" onClick={() => setSelectedPin(null)}>
+                Deselect
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {pins.map(pin => (
+          <div 
+            key={pin.id} 
+            style={{ 
+              border: selectedPin?.id === pin.id ? '2px solid #007ac3' : '1px solid #ccc', 
+              padding: '8px', 
+              marginBottom: '8px', 
+              borderRadius: '4px',
+              backgroundColor: selectedPin?.id === pin.id ? '#f0f8ff' : '#fff',
+              cursor: 'pointer'
+            }}
+            onClick={() => setSelectedPin(pin)}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <input
                 type="text"
                 value={pin.name}
-                onChange={(e) => updatePin(pin.id, { name: e.target.value })}
+                onChange={(e) => {
+                  e.stopPropagation()
+                  updatePin(pin.id, { name: e.target.value })
+                }}
                 style={{ marginRight: '8px', flex: 1 }}
               />
               <input
                 type="color"
                 value={pin.color}
-                onChange={(e) => updatePin(pin.id, { color: e.target.value })}
+                onChange={(e) => {
+                  e.stopPropagation()
+                  updatePin(pin.id, { color: e.target.value })
+                }}
                 style={{ width: '30px', height: '25px', marginRight: '8px' }}
               />
             </div>
@@ -196,10 +296,23 @@ const Widget = (props: AllWidgetProps<any>) => {
             </div>
             
             <div style={{ display: 'flex', gap: '4px' }}>
-              <Button size="sm" onClick={() => copyCoordinates(pin)}>
+              <Button 
+                size="sm" 
+                onClick={(e) => {
+                  e.stopPropagation()
+                  copyCoordinates(pin)
+                }}
+              >
                 Copy Coords
               </Button>
-              <Button size="sm" type="danger" onClick={() => removePin(pin.id)}>
+              <Button 
+                size="sm" 
+                type="danger" 
+                onClick={(e) => {
+                  e.stopPropagation()
+                  removePin(pin.id)
+                }}
+              >
                 Remove
               </Button>
             </div>
