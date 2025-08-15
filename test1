@@ -1,96 +1,26 @@
-import { React, AllWidgetProps } from 'jimu-core';
-import { BaseWidget } from 'jimu-core';
-import FeatureLayer from 'esri/layers/FeatureLayer';
+import { React } from 'jimu-core';
+import { BaseWidgetSetting, AllWidgetSettingProps } from 'jimu-for-builder';
+import { MapWidgetSelector, SettingSection } from 'jimu-ui/advanced/setting-components';
 
-export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, any> {
-  
-  private featureLayer: FeatureLayer = null;
-  
-  // URL'i buradan kontrol et
-  private readonly FEATURE_LAYER_URL = "https://services.arcgis.com/your-service-url/FeatureServer/0";
-  
-  // Size ayarları da buradan
-  private readonly SIZE_CONFIG = {
-    baseSize: 1.5,
-    zoomFactor: 0.4,
-    minSize: 0.5,
-    maxSize: 5
-  };
+export default class Setting extends BaseWidgetSetting<AllWidgetSettingProps<any>, any> {
 
-  componentDidMount() {
-    if (this.props.useMapWidgetIds?.length > 0) {
-      this.loadFeatureLayer();
-    }
-  }
-
-  loadFeatureLayer = async () => {
-    try {
-      console.log('Loading feature layer from:', this.FEATURE_LAYER_URL);
-      
-      this.featureLayer = new FeatureLayer({
-        url: this.FEATURE_LAYER_URL,
-        title: "Auto-sized Polygons",
-        // İsteğe bağlı: Custom renderer
-        renderer: this.createInitialRenderer()
-      });
-
-      const jimuMapView = this.props.useMapWidgetIds && 
-        this.props.mapWidgetInstances[this.props.useMapWidgetIds[0]]?.jimuMapView;
-      
-      if (jimuMapView?.view) {
-        jimuMapView.view.map.add(this.featureLayer);
-        this.setupZoomListener(jimuMapView.view);
-        
-        // İlk yükleme için boyut ayarla
-        this.adjustPolygonSize(jimuMapView.view.zoom);
-      }
-    } catch (error) {
-      console.error('Feature Layer yüklenemedi:', error);
-    }
-  }
-
-  createInitialRenderer = () => {
-    return {
-      type: "simple",
-      symbol: {
-        type: "simple-fill",
-        color: [51, 51, 204, 0.3],
-        outline: {
-          color: [51, 51, 204, 0.8],
-          width: this.SIZE_CONFIG.baseSize
-        }
-      }
-    };
-  }
-
-  setupZoomListener = (mapView: any) => {
-    mapView.watch("zoom", (newZoom: number) => {
-      this.adjustPolygonSize(newZoom);
+  onMapWidgetSelected = (useMapWidgetIds: string[]) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      useMapWidgetIds: useMapWidgetIds
     });
   }
 
-  adjustPolygonSize = (zoomLevel: number) => {
-    if (!this.featureLayer) return;
-
-    const { baseSize, zoomFactor, minSize, maxSize } = this.SIZE_CONFIG;
-    
-    // Zoom seviyesine göre size hesapla
-    let calculatedSize = baseSize * Math.max(0.5, (18 - zoomLevel) * zoomFactor);
-    
-    // Min/max limitleri uygula
-    calculatedSize = Math.max(minSize, Math.min(maxSize, calculatedSize));
-    
-    console.log(`Zoom: ${zoomLevel}, Size: ${calculatedSize}`);
-    
-    // Renderer'ı güncelle
-    const renderer = this.featureLayer.renderer.clone();
-    if (renderer.symbol && renderer.symbol.outline) {
-      renderer.symbol.outline.width = calculatedSize;
-      this.featureLayer.renderer = renderer;
-    }
-  }
-
   render() {
-    return null; // Background widget
+    return (
+      <div className="widget-setting-auto-polygon-sizer">
+        <SettingSection>
+          <MapWidgetSelector 
+            useMapWidgetIds={this.props.useMapWidgetIds}
+            onSelect={this.onMapWidgetSelected}
+          />
+        </SettingSection>
+      </div>
+    );
   }
 }
