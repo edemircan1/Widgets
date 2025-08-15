@@ -1,154 +1,156 @@
 import arcpy
 
 class Toolbox(object):
-    def __init__(self):
-        self.label = "Cell Coverage Tools"
-        self.alias = "CellCoverageTools"
-        self.tools = [CellCoverageSelector]
+def **init**(self):
+self.label = “Cell Coverage Tools”
+self.alias = “CellCoverageTools”
+self.tools = [CellCoverageSelector]
 
 class CellCoverageSelector(object):
-    def __init__(self):
-        self.label = "Cell Coverage Selector"
-        self.description = "Select cells by drawing and toggle coverage display"
-        self.canRunInBackground = False
+def **init**(self):
+self.label = “Cell Coverage Selector”
+self.description = “Select cells by drawing and toggle coverage display”
+self.canRunInBackground = False
 
-    def getParameterInfo(self):
-        param0 = arcpy.Parameter(
-            displayName="Cell Layer (Sectors_Testing_4G)",
-            name="cell_layer",
-            datatype="GPFeatureLayer",
-            parameterType="Required",
-            direction="Input"
-        )
-        
-        param1 = arcpy.Parameter(
-            displayName="Coverage Layer (700MHz)", 
-            name="coverage_layer",
-            datatype="GPFeatureLayer",
-            parameterType="Required", 
-            direction="Input"
-        )
-        
-        param2 = arcpy.Parameter(
-            displayName="Selection Area",
-            name="selection_geometry",
-            datatype="GPFeatureSet",
-            parameterType="Required",
-            direction="Input"
-        )
-        
-        param3 = arcpy.Parameter(
-            displayName="Operation",
-            name="operation_type", 
-            datatype="GPString",
-            parameterType="Required",
-            direction="Input"
-        )
-        param3.filter.type = "ValueList"
-        param3.filter.list = ["New Selection", "Clear Selection"]
-        param3.value = "New Selection"
-        
-        param4 = arcpy.Parameter(
-            displayName="Result",
-            name="result_message",
-            datatype="GPString",
-            parameterType="Derived",
-            direction="Output"
-        )
-        
-        return [param0, param1, param2, param3, param4]
+```
+def getParameterInfo(self):
+    param0 = arcpy.Parameter(
+        displayName="Cell Layer (Sectors_Testing_4G)",
+        name="cell_layer",
+        datatype="DEFeatureClass",
+        parameterType="Required",
+        direction="Input"
+    )
+    
+    param1 = arcpy.Parameter(
+        displayName="Coverage Layer (700MHz)", 
+        name="coverage_layer",
+        datatype="DEFeatureClass",
+        parameterType="Required", 
+        direction="Input"
+    )
+    
+    param2 = arcpy.Parameter(
+        displayName="Selection Area",
+        name="selection_geometry",
+        datatype="DEFeatureClass",
+        parameterType="Required",
+        direction="Input"
+    )
+    
+    param3 = arcpy.Parameter(
+        displayName="Operation",
+        name="operation_type", 
+        datatype="GPString",
+        parameterType="Required",
+        direction="Input"
+    )
+    param3.filter.type = "ValueList"
+    param3.filter.list = ["New Selection", "Clear Selection"]
+    param3.value = "New Selection"
+    
+    param4 = arcpy.Parameter(
+        displayName="Result",
+        name="result_message",
+        datatype="GPString",
+        parameterType="Derived",
+        direction="Output"
+    )
+    
+    return [param0, param1, param2, param3, param4]
 
-    def isLicensed(self):
-        return True
+def isLicensed(self):
+    return True
 
-    def updateParameters(self, parameters):
-        return
+def updateParameters(self, parameters):
+    return
 
-    def updateMessages(self, parameters):
-        return
+def updateMessages(self, parameters):
+    return
 
-    def execute(self, parameters, messages):
+def execute(self, parameters, messages):
+    try:
+        arcpy.AddMessage("Starting tool...")
+        
+        cell_layer = parameters[0].valueAsText
+        coverage_layer = parameters[1].valueAsText 
+        selection_geometry = parameters[2].value
+        operation_type = parameters[3].valueAsText
+        
+        arcpy.AddMessage("Operation: " + str(operation_type))
+        
+        cell_lyr = "cell_temp_layer"
+        coverage_lyr = "coverage_temp_layer"
+        
+        if arcpy.Exists(cell_lyr):
+            arcpy.management.Delete(cell_lyr)
+        if arcpy.Exists(coverage_lyr):
+            arcpy.management.Delete(coverage_lyr)
+            
+        arcpy.management.MakeFeatureLayer(cell_layer, cell_lyr)
+        arcpy.management.MakeFeatureLayer(coverage_layer, coverage_lyr)
+        
+        if operation_type == "Clear Selection":
+            arcpy.management.SelectLayerByAttribute(cell_lyr, "CLEAR_SELECTION")
+            arcpy.management.SelectLayerByAttribute(coverage_lyr, "CLEAR_SELECTION")
+            result_msg = "All selections cleared"
+            
+        elif operation_type == "New Selection":
+            arcpy.management.SelectLayerByAttribute(cell_lyr, "CLEAR_SELECTION") 
+            arcpy.management.SelectLayerByAttribute(coverage_lyr, "CLEAR_SELECTION")
+            
+            temp_fc = "in_memory\\temp_selection"
+            if arcpy.Exists(temp_fc):
+                arcpy.management.Delete(temp_fc)
+                
+            arcpy.management.CopyFeatures(selection_geometry, temp_fc)
+            
+            arcpy.AddMessage("Selecting cells...")
+            arcpy.management.SelectLayerByLocation(
+                cell_lyr, 
+                "INTERSECT", 
+                temp_fc,
+                selection_type="NEW_SELECTION"
+            )
+            
+            selected_cell_ids = []
+            with arcpy.da.SearchCursor(cell_lyr, ["CELL"]) as cursor:
+                for row in cursor:
+                    if row[0] is not None:
+                        selected_cell_ids.append(str(row[0]))
+            
+            arcpy.AddMessage("Found " + str(len(selected_cell_ids)) + " cells")
+            
+            if selected_cell_ids:
+                cell_list = "'" + "','".join(selected_cell_ids) + "'"
+                where_clause = "softsectorname IN (" + cell_list + ")"
+                arcpy.AddMessage("Filter: " + where_clause)
+                
+                arcpy.management.SelectLayerByAttribute(
+                    coverage_lyr,
+                    "NEW_SELECTION", 
+                    where_clause
+                )
+                
+                result_msg = "Selected " + str(len(selected_cell_ids)) + " cells"
+            else:
+                result_msg = "No cells found"
+            
+            if arcpy.Exists(temp_fc):
+                arcpy.management.Delete(temp_fc)
+        
+        parameters[4].value = result_msg
+        arcpy.AddMessage("Completed: " + result_msg)
+        
+    except Exception as e:
+        arcpy.AddError("Error: " + str(e))
+    
+    finally:
         try:
-            arcpy.AddMessage("Starting tool...")
-            
-            cell_layer = parameters[0].valueAsText
-            coverage_layer = parameters[1].valueAsText 
-            selection_geometry = parameters[2].value
-            operation_type = parameters[3].valueAsText
-            
-            arcpy.AddMessage("Operation: " + str(operation_type))
-            
-            cell_lyr = "cell_temp_layer"
-            coverage_lyr = "coverage_temp_layer"
-            
             if arcpy.Exists(cell_lyr):
                 arcpy.management.Delete(cell_lyr)
             if arcpy.Exists(coverage_lyr):
                 arcpy.management.Delete(coverage_lyr)
-                
-            arcpy.management.MakeFeatureLayer(cell_layer, cell_lyr)
-            arcpy.management.MakeFeatureLayer(coverage_layer, coverage_lyr)
-            
-            if operation_type == "Clear Selection":
-                arcpy.management.SelectLayerByAttribute(cell_lyr, "CLEAR_SELECTION")
-                arcpy.management.SelectLayerByAttribute(coverage_lyr, "CLEAR_SELECTION")
-                result_msg = "All selections cleared"
-                
-            elif operation_type == "New Selection":
-                arcpy.management.SelectLayerByAttribute(cell_lyr, "CLEAR_SELECTION") 
-                arcpy.management.SelectLayerByAttribute(coverage_lyr, "CLEAR_SELECTION")
-                
-                temp_fc = "in_memory\\temp_selection"
-                if arcpy.Exists(temp_fc):
-                    arcpy.management.Delete(temp_fc)
-                    
-                arcpy.management.CopyFeatures(selection_geometry, temp_fc)
-                
-                arcpy.AddMessage("Selecting cells...")
-                arcpy.management.SelectLayerByLocation(
-                    cell_lyr, 
-                    "INTERSECT", 
-                    temp_fc,
-                    selection_type="NEW_SELECTION"
-                )
-                
-                selected_cell_ids = []
-                with arcpy.da.SearchCursor(cell_lyr, ["CELL"]) as cursor:
-                    for row in cursor:
-                        if row[0] is not None:
-                            selected_cell_ids.append(str(row[0]))
-                
-                arcpy.AddMessage("Found " + str(len(selected_cell_ids)) + " cells")
-                
-                if selected_cell_ids:
-                    cell_list = "'" + "','".join(selected_cell_ids) + "'"
-                    where_clause = "softsectorname IN (" + cell_list + ")"
-                    arcpy.AddMessage("Filter: " + where_clause)
-                    
-                    arcpy.management.SelectLayerByAttribute(
-                        coverage_lyr,
-                        "NEW_SELECTION", 
-                        where_clause
-                    )
-                    
-                    result_msg = "Selected " + str(len(selected_cell_ids)) + " cells"
-                else:
-                    result_msg = "No cells found"
-                
-                if arcpy.Exists(temp_fc):
-                    arcpy.management.Delete(temp_fc)
-            
-            parameters[4].value = result_msg
-            arcpy.AddMessage("Completed: " + result_msg)
-            
-        except Exception as e:
-            arcpy.AddError("Error: " + str(e))
-        
-        finally:
-            try:
-                if arcpy.Exists(cell_lyr):
-                    arcpy.management.Delete(cell_lyr)
-                if arcpy.Exists(coverage_lyr):
-                    arcpy.management.Delete(coverage_lyr)
-            except:
-                pass
+        except:
+            pass
+```
