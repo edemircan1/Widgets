@@ -1,186 +1,28 @@
-import { React, AllWidgetProps } from 'jimu-core';
-import { BaseWidget } from 'jimu-core';
-import FeatureLayer from 'esri/layers/FeatureLayer';
+import { React } from 'jimu-core';
+import { BaseWidgetSetting, AllWidgetSettingProps } from 'jimu-for-builder';
+import { MapWidgetSelector, SettingSection } from 'jimu-ui/advanced/setting-components';
 
-export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, any> {
-  
-  private featureLayer: FeatureLayer = null;
-  
-  // URL'i buradan kontrol et - KENDİ URL'İNİ YAZMANIZ GEREK
-  private readonly FEATURE_LAYER_URL = "https://services.arcgis.com/your-service-url/FeatureServer/0";
-  
-  // Size ayarları
-  private readonly SIZE_CONFIG = {
-    baseSize: 2,
-    zoomFactor: 0.5,
-    minSize: 0.5,
-    maxSize: 8
-  };
+export default class Setting extends BaseWidgetSetting<AllWidgetSettingProps<any>, any> {
 
-  componentDidMount() {
-    console.log('=== AutoPolygonSizer Widget Mounted ===');
-    console.log('useMapWidgetIds:', this.props.useMapWidgetIds);
-    console.log('mapWidgetInstances:', this.props.mapWidgetInstances);
+  onMapWidgetSelected = (useMapWidgetIds: string[]) => {
+    console.log('Map widget selected:', useMapWidgetIds);
     
-    // MapView hazır olana kadar bekle
-    setTimeout(() => {
-      if (this.props.useMapWidgetIds?.length > 0) {
-        this.loadFeatureLayer();
-      } else {
-        console.log('❌ No map widget selected in settings');
-      }
-    }, 2000);
-  }
-
-  componentDidUpdate(prevProps: AllWidgetProps<any>) {
-    console.log('Widget updated');
-    if (prevProps.useMapWidgetIds !== this.props.useMapWidgetIds) {
-      console.log('Map widget selection changed, reloading...');
-      this.loadFeatureLayer();
-    }
-  }
-
-  loadFeatureLayer = async () => {
-    try {
-      console.log('🔄 Loading feature layer from:', this.FEATURE_LAYER_URL);
-      
-      // Feature Layer oluştur
-      this.featureLayer = new FeatureLayer({
-        url: this.FEATURE_LAYER_URL,
-        title: "Auto-sized Polygons",
-        renderer: this.createInitialRenderer()
-      });
-
-      console.log('✅ Feature layer created:', this.featureLayer);
-
-      // MapView'ı al
-      const mapWidgetId = this.props.useMapWidgetIds[0];
-      const jimuMapView = this.props.mapWidgetInstances[mapWidgetId]?.jimuMapView;
-      
-      console.log('🗺️ MapWidget ID:', mapWidgetId);
-      console.log('🗺️ JimuMapView:', jimuMapView);
-      
-      if (jimuMapView?.view) {
-        console.log('✅ MapView found, adding layer...');
-        
-        // Layer'ı map'e ekle
-        jimuMapView.view.map.add(this.featureLayer);
-        console.log('✅ Layer added to map');
-        
-        // Zoom listener'ı kur
-        this.setupZoomListener(jimuMapView.view);
-        
-        // İlk boyut ayarını yap
-        const currentZoom = jimuMapView.view.zoom;
-        console.log('🔍 Initial zoom level:', currentZoom);
-        this.adjustPolygonSize(currentZoom);
-        
-      } else {
-        console.log('❌ MapView not found or not ready');
-      }
-      
-    } catch (error) {
-      console.error('❌ Feature Layer loading error:', error);
-    }
-  }
-
-  createInitialRenderer = () => {
-    const renderer = {
-      type: "simple",
-      symbol: {
-        type: "simple-fill",
-        color: [51, 150, 204, 0.4],
-        outline: {
-          color: [51, 150, 204, 1],
-          width: this.SIZE_CONFIG.baseSize,
-          style: "solid"
-        }
-      }
-    };
-    
-    console.log('🎨 Created initial renderer:', renderer);
-    return renderer;
-  }
-
-  setupZoomListener = (mapView: any) => {
-    console.log('👂 Setting up zoom listener...');
-    console.log('🔍 Current zoom level:', mapView.zoom);
-    
-    mapView.watch("zoom", (newZoom: number, oldZoom: number) => {
-      console.log(`🔍 ZOOM CHANGED: ${oldZoom} → ${newZoom}`);
-      this.adjustPolygonSize(newZoom);
+    this.props.onSettingChange({
+      id: this.props.id,
+      useMapWidgetIds: useMapWidgetIds
     });
-    
-    console.log('✅ Zoom listener setup complete');
-  }
-
-  adjustPolygonSize = (zoomLevel: number) => {
-    console.log('🔧 === ADJUSTING POLYGON SIZE ===');
-    console.log('🔍 Zoom level:', zoomLevel);
-    console.log('📐 Feature layer:', this.featureLayer);
-    
-    if (!this.featureLayer) {
-      console.log('❌ No feature layer found!');
-      return;
-    }
-
-    // Size hesapla
-    const { baseSize, zoomFactor, minSize, maxSize } = this.SIZE_CONFIG;
-    let calculatedSize = baseSize * Math.max(0.5, (18 - zoomLevel) * zoomFactor);
-    
-    // Min/max limitleri uygula
-    calculatedSize = Math.max(minSize, Math.min(maxSize, calculatedSize));
-    
-    console.log('📏 Calculated size:', calculatedSize);
-    console.log('📐 Size config:', this.SIZE_CONFIG);
-    
-    // Mevcut renderer'ı kontrol et
-    const currentRenderer = this.featureLayer.renderer;
-    console.log('🎨 Current renderer:', currentRenderer);
-    console.log('🎨 Current renderer type:', currentRenderer?.type);
-    
-    if (currentRenderer) {
-      // Renderer'ı klonla
-      const newRenderer = currentRenderer.clone();
-      console.log('🎨 Cloned renderer:', newRenderer);
-      
-      // Symbol'u kontrol et ve güncelle
-      if (newRenderer.symbol) {
-        console.log('🎨 Current symbol:', newRenderer.symbol);
-        
-        if (newRenderer.symbol.outline) {
-          const oldWidth = newRenderer.symbol.outline.width;
-          newRenderer.symbol.outline.width = calculatedSize;
-          
-          console.log(`📏 Outline width: ${oldWidth} → ${calculatedSize}`);
-          
-          // Renderer'ı ata
-          this.featureLayer.renderer = newRenderer;
-          console.log('✅ Renderer updated successfully');
-          
-          // Doğrulama
-          setTimeout(() => {
-            const verifyRenderer = this.featureLayer.renderer;
-            console.log('🔍 Verification - New renderer outline width:', 
-              verifyRenderer?.symbol?.outline?.width);
-          }, 100);
-          
-        } else {
-          console.log('❌ No outline found in symbol!');
-          console.log('🎨 Symbol structure:', newRenderer.symbol);
-        }
-      } else {
-        console.log('❌ No symbol found in renderer!');
-      }
-    } else {
-      console.log('❌ No renderer found on feature layer!');
-    }
-    
-    console.log('🔧 === SIZE ADJUSTMENT COMPLETE ===');
   }
 
   render() {
-    // Background widget - UI yok
-    return null;
+    return (
+      <div className="widget-setting-auto-polygon-sizer">
+        <SettingSection>
+          <MapWidgetSelector 
+            useMapWidgetIds={this.props.useMapWidgetIds}
+            onSelect={this.onMapWidgetSelected}
+          />
+        </SettingSection>
+      </div>
+    );
   }
 }
