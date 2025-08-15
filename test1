@@ -1,659 +1,96 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
-from datetime import datetime, timedelta
-import warnings
-warnings.filterwarnings('ignore')
+import { React, AllWidgetProps } from 'jimu-core';
+import { BaseWidget } from 'jimu-core';
+import FeatureLayer from 'esri/layers/FeatureLayer';
 
-# Anomaly Detection Libraries
-from sklearn.ensemble import IsolationForest
-from sklearn.svm import OneClassSVM
-from sklearn.preprocessing import StandardScaler
-from scipy import stats
-import pyod
-from pyod.models.knn import KNN
-from pyod.models.lof import LOF
-from pyod.models.auto_encoder import AutoEncoder
+export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, any> {
+  
+  private featureLayer: FeatureLayer = null;
+  
+  // URL'i buradan kontrol et
+  private readonly FEATURE_LAYER_URL = "https://services.arcgis.com/your-service-url/FeatureServer/0";
+  
+  // Size ayarları da buradan
+  private readonly SIZE_CONFIG = {
+    baseSize: 1.5,
+    zoomFactor: 0.4,
+    minSize: 0.5,
+    maxSize: 5
+  };
 
-st.set_page_config(
-    page_title="KPI Anomaly Detection Tool",
-    page_icon="📊",
-    layout="wide"
-)
-
-class AnomalyDetector:
-    def __init__(self):
-        self.models = {
-            'Isolation Forest': IsolationForest(contamination=0.1, random_state=42),
-            'One-Class SVM': OneClassSVM(nu=0.1),
-            'Local Outlier Factor': LOF(contamination=0.1),
-            'K-Nearest Neighbors': KNN(contamination=0.1),
-            'Z-Score': None,  # Statistical method
-            'Modified Z-Score': None,  # Statistical method
-        }
-        self.scaler = StandardScaler()
-    
-    def statistical_anomalies(self, data, method='z_score', threshold=3):
-        """Detect anomalies using statistical methods"""
-        if method == 'z_score':
-            z_scores = np.abs(stats.zscore(data))
-            return z_scores > threshold
-        elif method == 'modified_z_score':
-            median = np.median(data)
-            mad = np.median(np.abs(data - median))
-            modified_z_scores = 0.6745 * (data - median) / mad
-            return np.abs(modified_z_scores) > threshold
-    
-    def detect_anomalies(self, data, kpi_name, contamination=0.1):
-        """Run multiple anomaly detection algorithms"""
-        results = {}
-        
-        # Prepare data
-        X = data.values.reshape(-1, 1)
-        X_scaled = self.scaler.fit_transform(X)
-        
-        for name, model in self.models.items():
-            if name in ['Z-Score', 'Modified Z-Score']:
-                method = 'z_score' if name == 'Z-Score' else 'modified_z_score'
-                anomalies = self.statistical_anomalies(X.flatten(), method=method)
-                results[name] = {
-                    'anomalies': anomalies,
-                    'scores': np.abs(stats.zscore(X.flatten())) if name == 'Z-Score' else np.abs(0.6745 * (X.flatten() - np.median(X.flatten())) / np.median(np.abs(X.flatten() - np.median(X.flatten()))))
-                }
-            else:
-                try:
-                    if name == 'Isolation Forest':
-                        model.set_params(contamination=contamination)
-                        predictions = model.fit_predict(X_scaled)
-                        scores = model.decision_function(X_scaled)
-                    elif name == 'One-Class SVM':
-                        model.set_params(nu=contamination)
-                        predictions = model.fit_predict(X_scaled)
-                        scores = model.decision_function(X_scaled)
-                    else:  # PyOD models
-                        model.contamination = contamination
-                        model.fit(X_scaled)
-                        predictions = model.labels_
-                        scores = model.decision_scores_
-                        predictions = np.where(predictions == 1, -1, 1)  # Convert to sklearn format
-                    
-                    anomalies = predictions == -1
-                    results[name] = {
-                        'anomalies': anomalies,
-                        'scores': scores
-                    }
-                except Exception as e:
-                    st.warning(f"Error with {name}: {str(e)}")
-                    continue
-        
-        return results
-
-def load_default_kpi_configs():
-    """Load default KPI configurations"""
-    return {
-        'RSRP': {'min_value': -110, 'max_value': -70, 'direction': 'downward', 'threshold_pct': 10},
-        'RSRQ': {'min_value': -15, 'max_value': -3, 'direction': 'downward', 'threshold_pct': 10},
-        'SINR': {'min_value': -5, 'max_value': 30, 'direction': 'downward', 'threshold_pct': 15},
-        'THROUGHPUT_DL': {'min_value': 1, 'max_value': 100, 'direction': 'downward', 'threshold_pct': 20},
-        'THROUGHPUT_UL': {'min_value': 0.5, 'max_value': 50, 'direction': 'downward', 'threshold_pct': 20},
-        'LATENCY': {'min_value': 1, 'max_value': 50, 'direction': 'upward', 'threshold_pct': 25},
-        'PACKET_LOSS': {'min_value': 0, 'max_value': 5, 'direction': 'upward', 'threshold_pct': 30},
+  componentDidMount() {
+    if (this.props.useMapWidgetIds?.length > 0) {
+      this.loadFeatureLayer();
     }
+  }
 
-def main():
-    st.title("📊 KPI Anomaly Detection Tool")
-    st.markdown("### Comprehensive anomaly detection for telecom KPI data")
-    
-    # Initialize session state
-    if 'data' not in st.session_state:
-        st.session_state.data = None
-    if 'kpi_configs' not in st.session_state:
-        st.session_state.kpi_configs = load_default_kpi_configs()
-    
-    # Sidebar for configuration
-    st.sidebar.header("Configuration")
-    
-    # File upload
-    st.sidebar.subheader("1. Data Upload")
-    uploaded_file = st.file_uploader(
-        "Upload your Excel/CSV file",
-        type=['xlsx', 'xls', 'csv'],
-        help="File should contain EUTRANCELLFDD, DATETIME, and KPI columns"
-    )
-    
-    if uploaded_file is not None:
-        try:
-            if uploaded_file.name.endswith('.csv'):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-            
-            # Validate required columns
-            required_cols = ['EUTRANCELLFDD', 'DATETIME']
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            
-            if missing_cols:
-                st.error(f"Missing required columns: {missing_cols}")
-                return
-            
-            # Convert DATETIME
-            df['DATETIME'] = pd.to_datetime(df['DATETIME'])
-            
-            # Get KPI columns (exclude required columns)
-            kpi_columns = [col for col in df.columns if col not in required_cols]
-            
-            if not kpi_columns:
-                st.error("No KPI columns found in the data")
-                return
-            
-            st.session_state.data = df
-            st.success(f"Data loaded successfully! Shape: {df.shape}")
-            st.info(f"KPI columns found: {', '.join(kpi_columns)}")
-            
-        except Exception as e:
-            st.error(f"Error loading file: {str(e)}")
-            return
-    
-    if st.session_state.data is not None:
-        df = st.session_state.data
-        kpi_columns = [col for col in df.columns if col not in ['EUTRANCELLFDD', 'DATETIME']]
-        
-        # KPI Configuration Section
-        st.sidebar.subheader("2. KPI Configuration")
-        
-        # Use default configurations or allow custom
-        use_defaults = st.sidebar.checkbox("Use default KPI configurations", value=True)
-        
-        if not use_defaults:
-            st.sidebar.markdown("**Configure each KPI:**")
-            for kpi in kpi_columns:
-                with st.sidebar.expander(f"Configure {kpi}"):
-                    if kpi not in st.session_state.kpi_configs:
-                        st.session_state.kpi_configs[kpi] = {
-                            'min_value': df[kpi].min(), 
-                            'max_value': df[kpi].max(), 
-                            'direction': 'downward', 
-                            'threshold_pct': 10
-                        }
-                    
-                    config = st.session_state.kpi_configs[kpi]
-                    config['min_value'] = st.number_input(f"Min acceptable value for {kpi}", value=config['min_value'], key=f"min_{kpi}")
-                    config['max_value'] = st.number_input(f"Max acceptable value for {kpi}", value=config['max_value'], key=f"max_{kpi}")
-                    config['direction'] = st.selectbox(f"Anomaly direction for {kpi}", ['downward', 'upward'], 
-                                                      index=0 if config['direction'] == 'downward' else 1, key=f"dir_{kpi}")
-                    config['threshold_pct'] = st.slider(f"Degradation threshold % for {kpi}", 1, 50, config['threshold_pct'], key=f"thresh_{kpi}")
-        
-        # Analysis Date Selection
-        st.sidebar.subheader("3. Analysis Period")
-        min_date = df['DATETIME'].min().date()
-        max_date = df['DATETIME'].max().date()
-        
-        analysis_start_date = st.sidebar.date_input(
-            "Analysis start date",
-            value=min_date + timedelta(days=7),
-            min_value=min_date,
-            max_value=max_date
-        )
-        
-        # Model Configuration
-        st.sidebar.subheader("4. Model Configuration")
-        contamination = st.sidebar.slider("Expected contamination rate", 0.01, 0.3, 0.1, 0.01)
-        selected_cells = st.sidebar.multiselect(
-            "Select cells to analyze (leave empty for all)",
-            options=df['EUTRANCELLFDD'].unique(),
-            default=[]
-        )
-        
-        if not selected_cells:
-            selected_cells = df['EUTRANCELLFDD'].unique()
-        
-        # Run Analysis Button
-        if st.sidebar.button("🔍 Run Anomaly Detection", type="primary"):
-            run_anomaly_detection(df, kpi_columns, analysis_start_date, contamination, selected_cells)
+  loadFeatureLayer = async () => {
+    try {
+      console.log('Loading feature layer from:', this.FEATURE_LAYER_URL);
+      
+      this.featureLayer = new FeatureLayer({
+        url: this.FEATURE_LAYER_URL,
+        title: "Auto-sized Polygons",
+        // İsteğe bağlı: Custom renderer
+        renderer: this.createInitialRenderer()
+      });
 
-def run_anomaly_detection(df, kpi_columns, analysis_start_date, contamination, selected_cells):
-    """Run comprehensive anomaly detection"""
-    
-    st.header("🔍 Anomaly Detection Results")
-    
-    # Filter data
-    analysis_data = df[
-        (df['DATETIME'].dt.date >= analysis_start_date) & 
-        (df['EUTRANCELLFDD'].isin(selected_cells))
-    ].copy()
-    
-    if analysis_data.empty:
-        st.error("No data available for the selected criteria")
-        return
-    
-    st.info(f"Analyzing {len(analysis_data)} records from {len(selected_cells)} cells")
-    
-    # Initialize detector
-    detector = AnomalyDetector()
-    
-    # Progress bar
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    all_results = {}
-    model_performance = {}
-    
-    total_steps = len(kpi_columns) * len(selected_cells)
-    current_step = 0
-    
-    # Process each KPI for each cell
-    for kpi in kpi_columns:
-        if kpi in st.session_state.kpi_configs:
-            kpi_config = st.session_state.kpi_configs[kpi]
-            all_results[kpi] = {}
-            
-            for cell in selected_cells:
-                current_step += 1
-                progress_bar.progress(current_step / total_steps)
-                status_text.text(f"Processing {kpi} for cell {cell}...")
-                
-                # Get cell-specific data with datetime
-                cell_mask = analysis_data['EUTRANCELLFDD'] == cell
-                cell_full_data = analysis_data[cell_mask].copy()
-                cell_data = cell_full_data[kpi].dropna()
-                cell_datetime = cell_full_data['DATETIME'].values
-                
-                if len(cell_data) < 10:  # Minimum data points
-                    continue
-                
-                # Calculate baseline (average of first 7 days or 20% of data, whichever is larger)
-                baseline_size = max(min(len(cell_data), 7), int(len(cell_data) * 0.2))
-                baseline_avg = cell_data.iloc[:baseline_size].mean()
-                
-                # Apply proper threshold logic
-                degradation_mask = np.zeros(len(cell_data), dtype=bool)
-                acceptable_mask = np.zeros(len(cell_data), dtype=bool)
-                
-                for i, value in enumerate(cell_data):
-                    # Check degradation from baseline
-                    if kpi_config['direction'] == 'downward':
-                        # For downward anomalies, check if value degraded by threshold % from baseline
-                        degradation_threshold = baseline_avg * (1 - kpi_config['threshold_pct']/100)
-                        degradation_mask[i] = value < degradation_threshold
-                        # Also check if below minimum acceptable value
-                        acceptable_mask[i] = value < kpi_config['min_value']
-                    else:  # upward anomalies
-                        # For upward anomalies, check if value increased by threshold % from baseline
-                        degradation_threshold = baseline_avg * (1 + kpi_config['threshold_pct']/100)
-                        degradation_mask[i] = value > degradation_threshold
-                        # Also check if above maximum acceptable value
-                        acceptable_mask[i] = value > kpi_config['max_value']
-                
-                # Combined threshold anomalies (degradation OR outside acceptable range)
-                threshold_mask = degradation_mask | acceptable_mask
-                
-                # Run ML anomaly detection
-                anomaly_results = detector.detect_anomalies(cell_data, kpi, contamination)
-                
-                # Store detailed results
-                combined_results = {}
-                for model_name, result in anomaly_results.items():
-                    # Only flag ML anomalies that also meet our business logic
-                    ml_business_anomalies = result['anomalies'] & threshold_mask
-                    
-                    combined_results[model_name] = {
-                        'anomalies': threshold_mask | ml_business_anomalies,  # Final anomalies
-                        'ml_anomalies': result['anomalies'],  # Pure ML anomalies
-                        'threshold_anomalies': threshold_mask,  # Business logic anomalies
-                        'degradation_anomalies': degradation_mask,  # Degradation from baseline
-                        'acceptable_range_anomalies': acceptable_mask,  # Outside acceptable range
-                        'ml_business_anomalies': ml_business_anomalies,  # ML + Business logic
-                        'scores': result['scores'],
-                        'baseline_avg': baseline_avg,
-                        'degradation_threshold': degradation_threshold if 'degradation_threshold' in locals() else None
-                    }
-                
-                all_results[kpi][cell] = {
-                    'data': cell_data,
-                    'datetime': cell_datetime[:len(cell_data)],  # Ensure same length
-                    'results': combined_results,
-                    'config': kpi_config
-                }
-    
-    progress_bar.progress(1.0)
-    status_text.text("Analysis complete!")
-    
-    # Store results in session state to prevent disappearing
-    st.session_state.analysis_results = all_results
-    st.session_state.analyzed_kpis = kpi_columns
-    st.session_state.analyzed_cells = selected_cells
-    
-    # Display Results
-    display_results(all_results, kpi_columns, selected_cells)
+      const jimuMapView = this.props.useMapWidgetIds && 
+        this.props.mapWidgetInstances[this.props.useMapWidgetIds[0]]?.jimuMapView;
+      
+      if (jimuMapView?.view) {
+        jimuMapView.view.map.add(this.featureLayer);
+        this.setupZoomListener(jimuMapView.view);
+        
+        // İlk yükleme için boyut ayarla
+        this.adjustPolygonSize(jimuMapView.view.zoom);
+      }
+    } catch (error) {
+      console.error('Feature Layer yüklenemedi:', error);
+    }
+  }
 
-def display_results(all_results, kpi_columns, selected_cells):
-    """Display comprehensive results"""
-    
-    # Summary Statistics
-    st.subheader("📈 Summary Statistics")
-    
-    summary_data = []
-    model_names = None
-    
-    for kpi in kpi_columns:
-        if kpi in all_results:
-            for cell in selected_cells:
-                if cell in all_results[kpi]:
-                    cell_results = all_results[kpi][cell]['results']
-                    if model_names is None:
-                        model_names = list(cell_results.keys())
-                    
-                    for model_name in model_names:
-                        if model_name in cell_results:
-                            total_points = len(cell_results[model_name]['anomalies'])
-                            anomaly_count = sum(cell_results[model_name]['anomalies'])
-                            ml_anomaly_count = sum(cell_results[model_name]['ml_anomalies'])
-                            threshold_anomaly_count = sum(cell_results[model_name]['threshold_anomalies'])
-                            degradation_anomaly_count = sum(cell_results[model_name]['degradation_anomalies'])
-                            acceptable_range_anomaly_count = sum(cell_results[model_name]['acceptable_range_anomalies'])
-                            ml_business_anomaly_count = sum(cell_results[model_name]['ml_business_anomalies'])
-                            
-                            summary_data.append({
-                                'KPI': kpi,
-                                'Cell': cell,
-                                'Model': model_name,
-                                'Total Points': total_points,
-                                'Final Anomalies': anomaly_count,
-                                'ML Anomalies': ml_anomaly_count,
-                                'Business Logic Anomalies': threshold_anomaly_count,
-                                'Degradation Anomalies': degradation_anomaly_count,
-                                'Out of Range Anomalies': acceptable_range_anomaly_count,
-                                'ML + Business Anomalies': ml_business_anomaly_count,
-                                'Anomaly Rate (%)': round((anomaly_count / total_points) * 100, 2) if total_points > 0 else 0
-                            })
-    
-    if summary_data:
-        summary_df = pd.DataFrame(summary_data)
-        
-        # Model Comparison
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("**Anomaly Detection Summary by Model**")
-            model_summary = summary_df.groupby('Model').agg({
-                'Final Anomalies': 'sum',
-                'ML Anomalies': 'sum',
-                'Business Logic Anomalies': 'sum',
-                'Degradation Anomalies': 'sum',
-                'Out of Range Anomalies': 'sum',
-                'Total Points': 'sum'
-            }).reset_index()
-            model_summary['Overall Anomaly Rate (%)'] = round(
-                (model_summary['Final Anomalies'] / model_summary['Total Points']) * 100, 2
-            )
-            st.dataframe(model_summary, use_container_width=True)
-        
-        with col2:
-            # Visualization of model performance
-            fig = px.bar(
-                model_summary, 
-                x='Model', 
-                y='Overall Anomaly Rate (%)',
-                title="Final Anomaly Detection Rate by Model",
-                color='Overall Anomaly Rate (%)',
-                color_continuous_scale='Reds'
-            )
-            st.plotly_chart(fig, use_container_width=True)
-        
-    # Use session state to maintain results across interactions
-    if 'analysis_results' in st.session_state:
-        display_detailed_analysis()
+  createInitialRenderer = () => {
+    return {
+      type: "simple",
+      symbol: {
+        type: "simple-fill",
+        color: [51, 51, 204, 0.3],
+        outline: {
+          color: [51, 51, 204, 0.8],
+          width: this.SIZE_CONFIG.baseSize
+        }
+      }
+    };
+  }
 
-def display_detailed_analysis():
-    """Display detailed analysis that persists across dropdown selections"""
-    all_results = st.session_state.analysis_results
-    kpi_columns = st.session_state.analyzed_kpis
-    selected_cells = st.session_state.analyzed_cells
-    
-    # Detailed KPI Analysis
-    st.subheader("🔍 Detailed KPI Analysis")
-    
-    # Create unique keys for dropdowns to maintain state
-    selected_kpi = st.selectbox(
-        "Select KPI for detailed analysis", 
-        kpi_columns, 
-        key="detailed_kpi_selector"
-    )
-    selected_cell = st.selectbox(
-        "Select Cell for detailed analysis", 
-        selected_cells, 
-        key="detailed_cell_selector"
-    )
-    
-    if selected_kpi in all_results and selected_cell in all_results[selected_kpi]:
-        cell_data = all_results[selected_kpi][selected_cell]
-        
-        # Display KPI configuration info
-        config = cell_data['config']
-        baseline_avg = list(cell_data['results'].values())[0]['baseline_avg']
-        
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Baseline Average", f"{baseline_avg:.2f}")
-        with col2:
-            st.metric("Min Acceptable", f"{config['min_value']}")
-        with col3:
-            st.metric("Max Acceptable", f"{config['max_value']}")
-        with col4:
-            st.metric("Threshold %", f"{config['threshold_pct']}%")
-        
-        # Create time series plot
-        fig = make_subplots(
-            rows=3, cols=1,
-            subplot_titles=[
-                f"{selected_kpi} Time Series with Anomalies", 
-                "Anomaly Detection Comparison",
-                "Anomaly Type Breakdown"
-            ],
-            vertical_spacing=0.08,
-            row_heights=[0.5, 0.25, 0.25]
-        )
-        
-        # Time series data
-        dates = pd.to_datetime(cell_data['datetime'])
-        values = cell_data['data'].values
-        
-        # Add normal data
-        fig.add_trace(
-            go.Scatter(
-                x=dates,
-                y=values,
-                mode='lines+markers',
-                name=f'{selected_kpi}',
-                line=dict(color='blue', width=2),
-                marker=dict(size=4)
-            ),
-            row=1, col=1
-        )
-        
-        # Add reference lines
-        fig.add_hline(
-            y=config['min_value'],
-            line_dash="dash",
-            line_color="orange",
-            annotation_text=f"Min Acceptable: {config['min_value']}",
-            row=1, col=1
-        )
-        fig.add_hline(
-            y=config['max_value'],
-            line_dash="dash",
-            line_color="orange",
-            annotation_text=f"Max Acceptable: {config['max_value']}",
-            row=1, col=1
-        )
-        fig.add_hline(
-            y=baseline_avg,
-            line_dash="dot",
-            line_color="green",
-            annotation_text=f"Baseline: {baseline_avg:.2f}",
-            row=1, col=1
-        )
-        
-        # Add degradation threshold line
-        first_result = list(cell_data['results'].values())[0]
-        if first_result['degradation_threshold'] is not None:
-            fig.add_hline(
-                y=first_result['degradation_threshold'],
-                line_dash="dash",
-                line_color="red",
-                annotation_text=f"Degradation Threshold: {first_result['degradation_threshold']:.2f}",
-                row=1, col=1
-            )
-        
-        # Model comparison and anomaly type breakdown
-        model_comparison = []
-        anomaly_types = []
-        colors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple']
-        
-        for i, (model_name, result) in enumerate(cell_data['results'].items()):
-            # Add different types of anomalies to time series
-            color = colors[i % len(colors)]
-            
-            # Business Logic Anomalies (main ones we care about)
-            business_mask = result['threshold_anomalies']
-            if any(business_mask):
-                business_dates = dates[business_mask]
-                business_values = values[business_mask]
-                
-                fig.add_trace(
-                    go.Scatter(
-                        x=business_dates,
-                        y=business_values,
-                        mode='markers',
-                        name=f'{model_name} Business Anomalies',
-                        marker=dict(
-                            size=10,
-                            color=color,
-                            symbol='diamond',
-                            line=dict(width=2, color='black')
-                        )
-                    ),
-                    row=1, col=1
-                )
-            
-            # ML Only Anomalies (for comparison)
-            ml_only_mask = result['ml_anomalies'] & ~result['threshold_anomalies']
-            if any(ml_only_mask):
-                ml_dates = dates[ml_only_mask]
-                ml_values = values[ml_only_mask]
-                
-                fig.add_trace(
-                    go.Scatter(
-                        x=ml_dates,
-                        y=ml_values,
-                        mode='markers',
-                        name=f'{model_name} ML Only',
-                        marker=dict(
-                            size=6,
-                            color=color,
-                            symbol='x',
-                            opacity=0.6
-                        )
-                    ),
-                    row=1, col=1
-                )
-            
-            # Collect data for comparison charts
-            model_comparison.append({
-                'Model': model_name,
-                'Final Anomalies': sum(result['anomalies']),
-                'Business Logic': sum(result['threshold_anomalies']),
-                'ML Only': sum(result['ml_anomalies'])
-            })
-            
-            anomaly_types.append({
-                'Model': model_name,
-                'Degradation': sum(result['degradation_anomalies']),
-                'Out of Range': sum(result['acceptable_range_anomalies']),
-                'ML + Business': sum(result['ml_business_anomalies'])
-            })
-        
-        # Add model comparison bar chart
-        comp_df = pd.DataFrame(model_comparison)
-        for i, (_, row) in enumerate(comp_df.iterrows()):
-            fig.add_trace(
-                go.Bar(
-                    x=[row['Model']],
-                    y=[row['Final Anomalies']],
-                    name=f'Final - {row["Model"]}',
-                    marker_color=colors[i % len(colors)],
-                    showlegend=False
-                ),
-                row=2, col=1
-            )
-        
-        # Add anomaly type breakdown
-        types_df = pd.DataFrame(anomaly_types)
-        for i, (_, row) in enumerate(types_df.iterrows()):
-            fig.add_trace(
-                go.Bar(
-                    x=[row['Model']],
-                    y=[row['Degradation']],
-                    name=f'Degradation - {row["Model"]}',
-                    marker_color='lightcoral',
-                    showlegend=False
-                ),
-                row=3, col=1
-            )
-            fig.add_trace(
-                go.Bar(
-                    x=[row['Model']],
-                    y=[row['Out of Range']],
-                    name=f'Out of Range - {row["Model"]}',
-                    marker_color='lightblue',
-                    showlegend=False
-                ),
-                row=3, col=1
-            )
-        
-        fig.update_layout(
-            height=1000,
-            title_text=f"Comprehensive Anomaly Analysis: {selected_kpi} - {selected_cell}",
-            showlegend=True
-        )
-        
-        fig.update_xaxes(title_text="Date", row=1, col=1)
-        fig.update_yaxes(title_text=selected_kpi, row=1, col=1)
-        fig.update_xaxes(title_text="Models", row=2, col=1)
-        fig.update_yaxes(title_text="Final Anomaly Count", row=2, col=1)
-        fig.update_xaxes(title_text="Models", row=3, col=1)
-        fig.update_yaxes(title_text="Count by Type", row=3, col=1)
-        
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Detailed statistics table
-        st.markdown("**Detailed Results for Selected Cell**")
-        detailed_stats = []
-        for model_name, result in cell_data['results'].items():
-            detailed_stats.append({
-                'Model': model_name,
-                'Total Data Points': len(result['anomalies']),
-                'Final Anomalies': sum(result['anomalies']),
-                'Business Logic Anomalies': sum(result['threshold_anomalies']),
-                'Degradation Anomalies': sum(result['degradation_anomalies']),
-                'Out of Range Anomalies': sum(result['acceptable_range_anomalies']),
-                'ML Anomalies': sum(result['ml_anomalies']),
-                'ML + Business Combined': sum(result['ml_business_anomalies']),
-                'Business Logic Rate (%)': round((sum(result['threshold_anomalies']) / len(result['anomalies'])) * 100, 2),
-                'Avg ML Score': round(np.mean(np.abs(result['scores'])), 4)
-            })
-        
-        detailed_df = pd.DataFrame(detailed_stats)
-        st.dataframe(detailed_df, use_container_width=True)
-        
-        # Anomaly Details
-        st.markdown("**Anomaly Detection Logic Explanation**")
-        st.info(f"""
-        **Business Logic Anomalies** are flagged when:
-        1. **Degradation**: Value degrades by {
+  setupZoomListener = (mapView: any) => {
+    mapView.watch("zoom", (newZoom: number) => {
+      this.adjustPolygonSize(newZoom);
+    });
+  }
 
-if __name__ == "__main__":
-    main()
+  adjustPolygonSize = (zoomLevel: number) => {
+    if (!this.featureLayer) return;
+
+    const { baseSize, zoomFactor, minSize, maxSize } = this.SIZE_CONFIG;
+    
+    // Zoom seviyesine göre size hesapla
+    let calculatedSize = baseSize * Math.max(0.5, (18 - zoomLevel) * zoomFactor);
+    
+    // Min/max limitleri uygula
+    calculatedSize = Math.max(minSize, Math.min(maxSize, calculatedSize));
+    
+    console.log(`Zoom: ${zoomLevel}, Size: ${calculatedSize}`);
+    
+    // Renderer'ı güncelle
+    const renderer = this.featureLayer.renderer.clone();
+    if (renderer.symbol && renderer.symbol.outline) {
+      renderer.symbol.outline.width = calculatedSize;
+      this.featureLayer.renderer = renderer;
+    }
+  }
+
+  render() {
+    return null; // Background widget
+  }
+}
