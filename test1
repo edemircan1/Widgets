@@ -1,5 +1,6 @@
 import arcpy
-import json
+import os
+import sys
 
 class Toolbox(object):
 def **init**(self):
@@ -21,7 +22,7 @@ def getParameterInfo(self):
     
     # Parameter 0: Cell Layer (Input)
     param0 = arcpy.Parameter(
-        displayName="Cell Polygon Layer",
+        displayName="Cell Polygon Layer (Sectors_Testing_4G)",
         name="cell_layer",
         datatype="GPFeatureLayer",
         parameterType="Required",
@@ -46,8 +47,6 @@ def getParameterInfo(self):
         parameterType="Required",
         direction="Input"
     )
-    # Set geometry type to polygon for drawing
-    param2.value = arcpy.FeatureSet()
     
     # Parameter 3: Operation Type
     param3 = arcpy.Parameter(
@@ -90,91 +89,112 @@ def isLicensed(self):
 def updateParameters(self, parameters):
     """Modify the values and properties of parameters before internal validation."""
     
-    # Enable/disable cell selection parameter based on operation
-    if parameters[3].value == "Toggle Cells":
-        parameters[4].enabled = True
-        
-        # Populate available cells from previous selection
-        if parameters[0].value and parameters[1].value:
-            try:
-                # Get currently selected cells from coverage layer
-                coverage_layer = parameters[1].value
-                selected_cells = []
-                
-                # Check if there are selected features in coverage layer
-                with arcpy.da.SearchCursor(coverage_layer, ["softsectorname"]) as cursor:
-                    for row in cursor:
-                        if row[0] and str(row[0]) not in selected_cells:
-                            selected_cells.append(str(row[0]))
-                
-                if selected_cells:
-                    parameters[4].filter.list = sorted(selected_cells)
-                
-            except Exception as e:
-                arcpy.AddWarning(f"Could not populate cell list: {str(e)}")
-    else:
-        parameters[4].enabled = False
+    try:
+        # Enable/disable cell selection parameter based on operation
+        if parameters[3].valueAsText == "Toggle Cells":
+            parameters[4].enabled = True
+            
+            # Populate available cells from previous selection
+            if parameters[0].value and parameters[1].value:
+                try:
+                    # Get currently selected cells from coverage layer
+                    coverage_layer = parameters[1].value
+                    selected_cells = []
+                    
+                    # Check if there are features in coverage layer
+                    result = arcpy.GetCount_management(coverage_layer)
+                    count = int(result.getOutput(0))
+                    
+                    if count > 0:
+                        with arcpy.da.SearchCursor(coverage_layer, ["softsectorname"]) as cursor:
+                            for row in cursor:
+                                if row[0] is not None and str(row[0]) not in selected_cells:
+                                    selected_cells.append(str(row[0]))
+                    
+                    if selected_cells:
+                        parameters[4].filter.list = sorted(selected_cells)
+                    
+                except Exception as e:
+                    arcpy.AddWarning("Could not populate cell list: " + str(e))
+        else:
+            parameters[4].enabled = False
+    except:
+        pass
 
 def updateMessages(self, parameters):
     """Modify the messages created by internal validation."""
     
-    # Validate that required fields exist
-    if parameters[0].value:
-        try:
-            desc = arcpy.Describe(parameters[0].value)
-            field_names = [field.name.upper() for field in desc.fields]
-            if "CELL" not in field_names:
-                parameters[0].setErrorMessage("Cell layer must contain 'CELL' field")
-        except:
-            pass
-            
-    if parameters[1].value:
-        try:
-            desc = arcpy.Describe(parameters[1].value) 
-            field_names = [field.name.upper() for field in desc.fields]
-            if "SOFTSECTORNAME" not in field_names:
-                parameters[1].setErrorMessage("Coverage layer must contain 'softsectorname' field")
-        except:
-            pass
+    try:
+        # Validate that required fields exist
+        if parameters[0].value:
+            try:
+                desc = arcpy.Describe(parameters[0].value)
+                field_names = [field.name.upper() for field in desc.fields]
+                if "CELL" not in field_names:
+                    parameters[0].setErrorMessage("Cell layer must contain 'CELL' field")
+            except Exception as e:
+                parameters[0].setWarningMessage("Could not validate fields: " + str(e))
+                
+        if parameters[1].value:
+            try:
+                desc = arcpy.Describe(parameters[1].value) 
+                field_names = [field.name.upper() for field in desc.fields]
+                if "SOFTSECTORNAME" not in field_names:
+                    parameters[1].setErrorMessage("Coverage layer must contain 'softsectorname' field")
+            except Exception as e:
+                parameters[1].setWarningMessage("Could not validate fields: " + str(e))
+    except:
+        pass
 
 def execute(self, parameters, messages):
     """The source code of the tool."""
     
     try:
+        arcpy.AddMessage("Starting Cell Coverage Selector tool...")
+        
         # Get parameters
         cell_layer = parameters[0].valueAsText
         coverage_layer = parameters[1].valueAsText 
         selection_geometry = parameters[2].value
         operation_type = parameters[3].valueAsText
-        selected_cells = parameters[4].values if parameters[4].values else []
+        selected_cells = []
+        if parameters[4].values:
+            selected_cells = [str(cell) for cell in parameters[4].values]
         
-        arcpy.AddMessage(f"Starting {operation_type} operation...")
+        arcpy.AddMessage("Operation: " + str(operation_type))
         
         # Make feature layers for selection operations
         cell_lyr = "cell_temp_layer"
         coverage_lyr = "coverage_temp_layer"
         
-        if arcpy.Exists(cell_lyr):
-            arcpy.management.Delete(cell_lyr)
-        if arcpy.Exists(coverage_lyr):
-            arcpy.management.Delete(coverage_lyr)
+        # Clean up existing layers
+        for lyr in [cell_lyr, coverage_lyr]:
+            if arcpy.Exists(lyr):
+                arcpy.management.Delete(lyr)
             
+        # Create temporary layers
+        arcpy.AddMessage("Creating temporary layers...")
         arcpy.management.MakeFeatureLayer(cell_layer, cell_lyr)
         arcpy.management.MakeFeatureLayer(coverage_layer, coverage_lyr)
         
+        result_msg = "Operation failed"
+        
         if operation_type == "Clear Selection":
+            arcpy.AddMessage("Clearing all selections...")
             # Clear all selections
             arcpy.management.SelectLayerByAttribute(cell_lyr, "CLEAR_SELECTION")
             arcpy.management.SelectLayerByAttribute(coverage_lyr, "CLEAR_SELECTION")
             result_msg = "All selections cleared"
             
         elif operation_type == "New Selection":
+            arcpy.AddMessage("Processing new selection...")
+            
             # Clear existing selections first
             arcpy.management.SelectLayerByAttribute(cell_lyr, "CLEAR_SELECTION") 
             arcpy.management.SelectLayerByAttribute(coverage_lyr, "CLEAR_SELECTION")
             
             # Convert FeatureSet to feature class for selection
-            temp_fc = "in_memory/temp_selection"
+            temp_fc = arcpy.env.scratchGDB + "/temp_selection"
             if arcpy.Exists(temp_fc):
                 arcpy.management.Delete(temp_fc)
                 
@@ -197,12 +217,12 @@ def execute(self, parameters, messages):
                     if row[0] is not None:
                         selected_cell_ids.append(str(row[0]))
             
+            arcpy.AddMessage("Found " + str(len(selected_cell_ids)) + " cells in selection area")
+            
             if selected_cell_ids:
                 # Filter coverage layer based on selected cells
-                where_clause = "softsectorname IN ({})".format(
-                    ",".join([f"'{cell_id}'" for cell_id in selected_cell_ids])
-                )
-                arcpy.AddMessage(f"Applying filter: {where_clause}")
+                where_clause = "softsectorname IN (" + ",".join(["'" + str(cell_id) + "'" for cell_id in selected_cell_ids]) + ")"
+                arcpy.AddMessage("Applying filter: " + where_clause)
                 
                 arcpy.management.SelectLayerByAttribute(
                     coverage_lyr,
@@ -210,21 +230,21 @@ def execute(self, parameters, messages):
                     where_clause
                 )
                 
-                result_msg = f"Selected {len(selected_cell_ids)} cells and corresponding coverage areas"
+                result_msg = "Selected " + str(len(selected_cell_ids)) + " cells and corresponding coverage areas"
             else:
                 result_msg = "No cells found in the drawn area"
             
-            # Clean up
+            # Clean up temp fc
             if arcpy.Exists(temp_fc):
                 arcpy.management.Delete(temp_fc)
                 
         elif operation_type == "Toggle Cells":
+            arcpy.AddMessage("Processing cell toggle...")
+            
             # Toggle specific cells on/off
             if selected_cells:
-                where_clause = "softsectorname IN ({})".format(
-                    ",".join([f"'{cell_id}'" for cell_id in selected_cells])
-                )
-                arcpy.AddMessage(f"Toggling cells: {where_clause}")
+                where_clause = "softsectorname IN (" + ",".join(["'" + str(cell_id) + "'" for cell_id in selected_cells]) + ")"
+                arcpy.AddMessage("Toggling cells: " + where_clause)
                 
                 arcpy.management.SelectLayerByAttribute(
                     coverage_lyr,
@@ -233,54 +253,69 @@ def execute(self, parameters, messages):
                 )
                 
                 # Also select corresponding cells in cell layer
-                cell_where_clause = "CELL IN ({})".format(
-                    ",".join([f"'{cell_id}'" for cell_id in selected_cells])
-                )
+                cell_where_clause = "CELL IN (" + ",".join(["'" + str(cell_id) + "'" for cell_id in selected_cells]) + ")"
                 arcpy.management.SelectLayerByAttribute(
                     cell_lyr,
                     "NEW_SELECTION", 
                     cell_where_clause
                 )
                 
-                result_msg = f"Toggled {len(selected_cells)} selected cells"
+                result_msg = "Toggled " + str(len(selected_cells)) + " selected cells"
             else:
                 result_msg = "No cells selected for toggle operation"
         
         # Apply the selection to the original layers in the map
         arcpy.AddMessage("Applying selection to map layers...")
         
-        # Get the map layers
-        aprx = arcpy.mp.ArcGISProject("CURRENT")
-        map_obj = aprx.activeMap
-        
-        # Find and update the actual layers in the map
-        for layer in map_obj.listLayers():
-            if layer.name == "Sectors_Testing_4G" or "Sectors_Testing_4G" in layer.name:
-                # Apply selection to cell layer
-                layer.definitionQuery = arcpy.Describe(cell_lyr).FIDSet
-                arcpy.AddMessage(f"Updated cell layer: {layer.name}")
+        try:
+            # Get the map layers
+            aprx = arcpy.mp.ArcGISProject("CURRENT")
+            if aprx.activeMap:
+                map_obj = aprx.activeMap
                 
-            elif layer.name == "700MHz" or "700MHz" in layer.name:
-                # Apply selection to coverage layer  
-                layer.definitionQuery = arcpy.Describe(coverage_lyr).FIDSet
-                arcpy.AddMessage(f"Updated coverage layer: {layer.name}")
+                # Get selection count for layers
+                cell_selection = arcpy.management.GetCount(cell_lyr)
+                coverage_selection = arcpy.management.GetCount(coverage_lyr)
+                
+                arcpy.AddMessage("Cell layer selection count: " + str(cell_selection))
+                arcpy.AddMessage("Coverage layer selection count: " + str(coverage_selection))
+                
+                # Find and update the actual layers in the map
+                updated_layers = 0
+                for layer in map_obj.listLayers():
+                    if hasattr(layer, 'name'):
+                        if "Sectors_Testing_4G" in layer.name or "sectors" in layer.name.lower():
+                            arcpy.AddMessage("Found cell layer: " + layer.name)
+                            updated_layers += 1
+                            
+                        elif "700MHz" in layer.name or "700" in layer.name:
+                            arcpy.AddMessage("Found coverage layer: " + layer.name)
+                            updated_layers += 1
+                
+                if updated_layers == 0:
+                    arcpy.AddWarning("Could not find target layers in map. Please ensure layers are named correctly.")
+                
+        except Exception as e:
+            arcpy.AddWarning("Could not update map layers: " + str(e))
         
         # Set output parameter
         parameters[5].value = result_msg
-        arcpy.AddMessage(f"Operation completed: {result_msg}")
+        arcpy.AddMessage("Operation completed: " + result_msg)
         
     except Exception as e:
-        arcpy.AddError(f"Error in tool execution: {str(e)}")
+        error_msg = "Error in tool execution: " + str(e)
+        arcpy.AddError(error_msg)
+        # Get more detailed error info
         import traceback
-        arcpy.AddError(traceback.format_exc())
+        arcpy.AddError("Detailed error: " + traceback.format_exc())
     
     finally:
         # Clean up temporary layers
         try:
-            if arcpy.Exists(cell_lyr):
-                arcpy.management.Delete(cell_lyr)
-            if arcpy.Exists(coverage_lyr):
-                arcpy.management.Delete(coverage_lyr)
-        except:
-            pass
+            for lyr in [cell_lyr, coverage_lyr]:
+                if arcpy.Exists(lyr):
+                    arcpy.management.Delete(lyr)
+            arcpy.AddMessage("Cleaned up temporary layers")
+        except Exception as e:
+            arcpy.AddWarning("Could not clean up temporary layers: " + str(e))
 ```
