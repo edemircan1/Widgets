@@ -2,22 +2,35 @@ import { React, AllWidgetProps } from 'jimu-core';
 import { BaseWidget } from 'jimu-core';
 import FeatureLayer from 'esri/layers/FeatureLayer';
 import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
+import { NumericInput, Button, Label } from 'jimu-ui';
 
-export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, any> {
+interface State {
+  showTestUI: boolean;
+  baseSize: number;
+  zoomFactor: number;
+  minSize: number;
+  maxSize: number;
+}
+
+export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, State> {
   
   private featureLayer: FeatureLayer = null;
   private jimuMapView: JimuMapView = null;
   
   // URL'i buradan kontrol et - KENDİ URL'İNİ YAZMANIZ GEREK
   private readonly FEATURE_LAYER_URL = "https://services.arcgis.com/your-service-url/FeatureServer/0";
-  
-  // Size ayarları
-  private readonly SIZE_CONFIG = {
-    baseSize: 2,
-    zoomFactor: 0.5,
-    minSize: 0.5,
-    maxSize: 8
-  };
+
+  constructor(props) {
+    super(props);
+    
+    this.state = {
+      showTestUI: true, // Test için UI göster
+      baseSize: 2,
+      zoomFactor: 0.3,  // Düşük değer = yumuşak geçiş
+      minSize: 0.5,
+      maxSize: 6
+    };
+  }
 
   // MapView hazır olduğunda tetiklenen callback
   activeViewChangeHandler = (jimuMapView: JimuMapView) => {
@@ -26,7 +39,6 @@ export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, an
     if (jimuMapView) {
       this.jimuMapView = jimuMapView;
       
-      // MapView tamamen yüklendiğinde layer'ı ekle
       jimuMapView.whenJimuMapViewLoaded().then(() => {
         console.log('✅ MapView fully loaded');
         this.loadFeatureLayer();
@@ -38,7 +50,6 @@ export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, an
     try {
       console.log('🔄 Loading feature layer from:', this.FEATURE_LAYER_URL);
       
-      // Feature Layer oluştur
       this.featureLayer = new FeatureLayer({
         url: this.FEATURE_LAYER_URL,
         title: "Auto-sized Polygons",
@@ -50,20 +61,15 @@ export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, an
       if (this.jimuMapView?.view) {
         console.log('✅ Adding layer to map...');
         
-        // Layer'ı map'e ekle
         this.jimuMapView.view.map.add(this.featureLayer);
         console.log('✅ Layer added to map');
         
-        // Zoom listener'ı kur
         this.setupZoomListener(this.jimuMapView.view);
         
         // İlk boyut ayarını yap
         const currentZoom = this.jimuMapView.view.zoom;
         console.log('🔍 Initial zoom level:', currentZoom);
         this.adjustPolygonSize(currentZoom);
-        
-      } else {
-        console.log('❌ MapView not ready');
       }
       
     } catch (error) {
@@ -79,7 +85,7 @@ export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, an
         color: [51, 150, 204, 0.4],
         outline: {
           color: [51, 150, 204, 1],
-          width: this.SIZE_CONFIG.baseSize,
+          width: this.state.baseSize,
           style: "solid"
         }
       }
@@ -110,12 +116,18 @@ export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, an
       return;
     }
 
-    // Size hesapla
-    const { baseSize, zoomFactor, minSize, maxSize } = this.SIZE_CONFIG;
-    let calculatedSize = baseSize * Math.max(0.5, (18 - zoomLevel) * zoomFactor);
+    const { baseSize, zoomFactor, minSize, maxSize } = this.state;
+    
+    // DÜZELTME: Zoom IN = objeler küçük, Zoom OUT = objeler büyük
+    // Yüksek zoom (yakın) = küçük objeler
+    // Düşük zoom (uzak) = büyük objeler
+    let calculatedSize = baseSize * Math.pow(2, (10 - zoomLevel) * zoomFactor);
+    
+    // Min/max limitleri uygula
     calculatedSize = Math.max(minSize, Math.min(maxSize, calculatedSize));
     
-    console.log('📏 Calculated size:', calculatedSize);
+    console.log(`📏 Zoom: ${zoomLevel} → Size: ${calculatedSize.toFixed(2)}`);
+    console.log(`📐 Formula: ${baseSize} * 2^((10-${zoomLevel}) * ${zoomFactor})`);
     
     const currentRenderer = this.featureLayer.renderer;
     
@@ -126,7 +138,7 @@ export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, an
         const oldWidth = newRenderer.symbol.outline.width;
         newRenderer.symbol.outline.width = calculatedSize;
         
-        console.log(`📏 Outline width: ${oldWidth} → ${calculatedSize}`);
+        console.log(`📏 Outline width: ${oldWidth.toFixed(2)} → ${calculatedSize.toFixed(2)}`);
         
         this.featureLayer.renderer = newRenderer;
         console.log('✅ Renderer updated successfully');
@@ -134,19 +146,132 @@ export default class AutoPolygonSizer extends BaseWidget<AllWidgetProps<any>, an
     }
   }
 
+  // Test UI Event Handlers
+  onParameterChange = (param: keyof State, value: number) => {
+    this.setState({ [param]: value } as any, () => {
+      // Parametreler değişince hemen güncelle
+      if (this.jimuMapView?.view) {
+        this.adjustPolygonSize(this.jimuMapView.view.zoom);
+      }
+    });
+  }
+
+  onApplySettings = () => {
+    if (this.jimuMapView?.view) {
+      console.log('🔄 Applying new settings:', this.state);
+      this.adjustPolygonSize(this.jimuMapView.view.zoom);
+    }
+  }
+
+  onHideTestUI = () => {
+    this.setState({ showTestUI: false });
+  }
+
   render() {
-    // MapView bileşeni ekliyoruz
     if (!this.props.useMapWidgetIds || this.props.useMapWidgetIds.length === 0) {
       console.log('❌ No map widget selected');
       return <div>Please select a map in widget settings</div>;
     }
 
     return (
-      <div style={{ width: '100%', height: '100%', position: 'absolute', visibility: 'hidden' }}>
-        <JimuMapViewComponent 
-          useMapWidgetId={this.props.useMapWidgetIds[0]}
-          onActiveViewChange={this.activeViewChangeHandler}
-        />
+      <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+        {/* Invisible MapView bileşeni */}
+        <div style={{ position: 'absolute', visibility: 'hidden', width: '100%', height: '100%' }}>
+          <JimuMapViewComponent 
+            useMapWidgetId={this.props.useMapWidgetIds[0]}
+            onActiveViewChange={this.activeViewChangeHandler}
+          />
+        </div>
+
+        {/* Test UI */}
+        {this.state.showTestUI && (
+          <div style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            background: 'white',
+            padding: '15px',
+            borderRadius: '5px',
+            boxShadow: '0 2px 10px rgba(0,0,0,0.3)',
+            zIndex: 1000,
+            minWidth: '250px'
+          }}>
+            <div style={{ marginBottom: '10px', fontWeight: 'bold' }}>
+              Polygon Size Test Controls
+            </div>
+            
+            <div style={{ marginBottom: '10px' }}>
+              <Label>Base Size: {this.state.baseSize}</Label>
+              <NumericInput 
+                value={this.state.baseSize}
+                onChange={(value) => this.onParameterChange('baseSize', value)}
+                min={0.1}
+                max={10}
+                step={0.1}
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '10px' }}>
+              <Label>Zoom Factor: {this.state.zoomFactor}</Label>
+              <NumericInput 
+                value={this.state.zoomFactor}
+                onChange={(value) => this.onParameterChange('zoomFactor', value)}
+                min={0.1}
+                max={1}
+                step={0.05}
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '10px' }}>
+              <Label>Min Size: {this.state.minSize}</Label>
+              <NumericInput 
+                value={this.state.minSize}
+                onChange={(value) => this.onParameterChange('minSize', value)}
+                min={0.1}
+                max={5}
+                step={0.1}
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '15px' }}>
+              <Label>Max Size: {this.state.maxSize}</Label>
+              <NumericInput 
+                value={this.state.maxSize}
+                onChange={(value) => this.onParameterChange('maxSize', value)}
+                min={1}
+                max={20}
+                step={0.5}
+                style={{ width: '100%' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <Button 
+                onClick={this.onApplySettings}
+                size="sm"
+                type="primary"
+              >
+                Apply
+              </Button>
+              <Button 
+                onClick={this.onHideTestUI}
+                size="sm"
+                type="secondary"
+              >
+                Hide Controls
+              </Button>
+            </div>
+
+            {this.jimuMapView?.view && (
+              <div style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
+                Current Zoom: {this.jimuMapView.view.zoom?.toFixed(1)}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     );
   }
