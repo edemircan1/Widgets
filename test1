@@ -196,41 +196,49 @@ const Widget = (props: AllWidgetProps<any>) => {
   }
 
   const setupPopupHandlers = (pin: Pin) => {
-    const copyBtn = document.getElementById(`copy-coords-${pin.id}`)
-    const updateBtn = document.getElementById(`update-pin-${pin.id}`)
-    const deleteBtn = document.getElementById(`delete-pin-${pin.id}`)
+    // Use a more reliable method to find and setup handlers
+    const checkAndSetupHandlers = () => {
+      const copyBtn = document.getElementById(`copy-coords-${pin.id}`)
+      const updateBtn = document.getElementById(`update-pin-${pin.id}`)
+      const deleteBtn = document.getElementById(`delete-pin-${pin.id}`)
 
-    if (copyBtn) {
-      copyBtn.onclick = () => {
-        const coords = `${pin.y}, ${pin.x}`
-        navigator.clipboard.writeText(coords)
-        setShowCoords(`Copied: ${coords}`)
-        setTimeout(() => setShowCoords(''), 2000)
-        jimuMapView.view.popup.close()
-      }
-    }
-
-    if (updateBtn) {
-      updateBtn.onclick = () => {
-        const nameInput = document.getElementById(`pin-name-${pin.id}`) as HTMLInputElement
-        const colorInput = document.getElementById(`pin-color-${pin.id}`) as HTMLInputElement
-        
-        if (nameInput && colorInput) {
-          updatePin(pin.id, {
-            name: nameInput.value,
-            color: colorInput.value
-          })
+      if (copyBtn) {
+        copyBtn.onclick = () => {
+          const coords = `${pin.y}, ${pin.x}`
+          navigator.clipboard.writeText(coords)
+          setShowCoords(`Copied: ${coords}`)
+          setTimeout(() => setShowCoords(''), 2000)
+          jimuMapView.view.popup.close()
         }
-        jimuMapView.view.popup.close()
+      }
+
+      if (updateBtn) {
+        updateBtn.onclick = () => {
+          const nameInput = document.getElementById(`pin-name-${pin.id}`) as HTMLInputElement
+          const colorInput = document.getElementById(`pin-color-${pin.id}`) as HTMLInputElement
+          
+          if (nameInput && colorInput) {
+            updatePin(pin.id, {
+              name: nameInput.value,
+              color: colorInput.value
+            })
+          }
+          jimuMapView.view.popup.close()
+        }
+      }
+
+      if (deleteBtn) {
+        deleteBtn.onclick = () => {
+          removePin(pin.id)
+          jimuMapView.view.popup.close()
+        }
       }
     }
 
-    if (deleteBtn) {
-      deleteBtn.onclick = () => {
-        removePin(pin.id)
-        jimuMapView.view.popup.close()
-      }
-    }
+    // Try multiple times to ensure DOM is ready
+    setTimeout(checkAndSetupHandlers, 100)
+    setTimeout(checkAndSetupHandlers, 300)
+    setTimeout(checkAndSetupHandlers, 500)
   }
 
   const updatePin = (pinId: string, updates: Partial<Pin>) => {
@@ -280,32 +288,39 @@ const Widget = (props: AllWidgetProps<any>) => {
     setPins(pins.filter(p => p.id !== pinId))
   }
 
-  // Setup popup handlers when view popup opens
+  // Setup click handler for graphics to open popup
   React.useEffect(() => {
     if (jimuMapView?.view) {
-      const handler = jimuMapView.view.popup.on('trigger-action', (event) => {
-        // Handle popup actions if needed
-      })
-
-      // Listen for popup open events
-      const openHandler = jimuMapView.view.popup.watch('visible', (visible) => {
-        if (visible && jimuMapView.view.popup.selectedFeature) {
-          const feature = jimuMapView.view.popup.selectedFeature
-          if (feature.attributes && feature.attributes.id) {
-            const pin = pins.find(p => p.id === feature.attributes.id)
-            if (pin) {
-              setTimeout(() => setupPopupHandlers(pin), 200)
+      const handler = jimuMapView.view.on('click', (event) => {
+        if (!isActive) {
+          jimuMapView.view.hitTest(event).then((response) => {
+            const graphicHit = response.results.find(result => 
+              result.type === 'graphic' && 
+              result.graphic.attributes && 
+              result.graphic.attributes.id
+            )
+            
+            if (graphicHit) {
+              const pin = pins.find(p => p.id === graphicHit.graphic.attributes.id)
+              if (pin) {
+                // Open popup manually
+                jimuMapView.view.popup.open({
+                  features: [graphicHit.graphic],
+                  location: event.mapPoint
+                })
+                // Setup handlers after popup opens
+                setTimeout(() => setupPopupHandlers(pin), 200)
+              }
             }
-          }
+          })
         }
       })
 
       return () => {
         handler.remove()
-        openHandler.remove()
       }
     }
-  }, [jimuMapView, pins])
+  }, [jimuMapView, isActive, pins])
 
   const onActiveViewChange = (jmv: JimuMapView) => {
     if (jmv) {
