@@ -1,85 +1,342 @@
-getAdjustedBounds = ({ data, pixelWidth, pixelHeight }) => {
-    const statistics = data.statistics
-    const minX = 0
-    //get min max from ground statistics
-    let maxX = statistics.maxDistance
-    maxX = convertSingle(maxX, data.effectiveUnits.distance, this.props.selectedLinearUnit)
-    let minY = statistics.minElevation
-    minY = convertSingle(minY, data.effectiveUnits.elevation, this.props.selectedElevationUnit)
-    let maxY = statistics.maxElevation
-    maxY = convertSingle(maxY, data.effectiveUnits.elevation, this.props.selectedElevationUnit)
-    
-    //calculate min max based on all the profiles (TOWER SCALING DAHİL)
-    for (const layerId in this._minMaxOfEachProfile) {
-      if (this._minMaxOfEachProfile[layerId].max > maxY) {
-        maxY = this._minMaxOfEachProfile[layerId].max
-      }
-      if (this._minMaxOfEachProfile[layerId].min < minY) {
-        minY = this._minMaxOfEachProfile[layerId].min
-      }
-    }
+/** @jsx jsx */
+import { React, jsx, AllWidgetProps, DataSourceManager } from 'jimu-core'
+import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis'
+import { Button, Alert } from 'jimu-ui'
+import Point from 'esri/geometry/Point'
+import Graphic from 'esri/Graphic'
+import PictureMarkerSymbol from 'esri/symbols/PictureMarkerSymbol'
+import TextSymbol from 'esri/symbols/TextSymbol'
+import PopupTemplate from 'esri/PopupTemplate'
 
-    // YENİ EKLENEN: TOWER DATA SCALING
-    if (this.props.towerData && this.props.towerData.length > 0) {
-      console.log('🗼 Including tower data in chart scaling...')
-      
-      this.props.towerData.forEach(tower => {
-        // Tower top elevation'ları scaling'e dahil et
-        const towerTopElevation = convertSingle(tower.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit)
-        const terrainElevation = convertSingle(tower.terrainElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit)
+interface Pin {
+  id: string
+  x: number
+  y: number
+  name: string
+  color: string
+  graphic?: Graphic
+  labelGraphic?: Graphic
+}
+
+const Widget = (props: AllWidgetProps<any>) => {
+  const [jimuMapView, setJimuMapView] = React.useState<JimuMapView>()
+  const [isActive, setIsActive] = React.useState(false)
+  const [pins, setPins] = React.useState<Pin[]>([])
+  const [showCoords, setShowCoords] = React.useState('')
+  const [clickHandler, setClickHandler] = React.useState<any>(null)
+
+  const createPinSvg = (color: string) => {
+    return `data:image/svg+xml;base64,${btoa(`
+      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="32" viewBox="0 0 24 32">
+        <path d="M12 0C5.4 0 0 5.4 0 12c0 8 12 20 12 20s12-12 12-20c0-6.6-5.4-12-12-12z" fill="${color}" stroke="#fff" stroke-width="2"/>
+        <circle cx="12" cy="12" r="4" fill="#fff"/>
+      </svg>
+    `)}`
+  }
+
+  const createLabelGraphic = (point: Point, name: string) => {
+    const labelSymbol = new TextSymbol({
+      text: name,
+      color: '#000',
+      font: {
+        size: 10,
+        family: 'Arial',
+        weight: 'bold'
+      },
+      backgroundColor: 'rgba(255, 255, 255, 0.8)',
+      borderLineColor: '#666',
+      borderLineSize: 1,
+      yoffset: -25
+    })
+
+    return new Graphic({
+      geometry: point,
+      symbol: labelSymbol
+    })
+  }
+
+  const createPopupContent = (pin: Pin) => {
+    return `
+      <div style="padding: 10px; min-width: 200px;">
+        <div style="margin-bottom: 10px;">
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Name:</label>
+          <input type="text" id="pin-name-${pin.id}" value="${pin.name}" 
+                 style="width: 100%; padding: 5px; border: 1px solid #ccc; border-radius: 3px;">
+        </div>
         
-        if (towerTopElevation > maxY) {
-          maxY = towerTopElevation
-          console.log(`🗼 Updated maxY to ${maxY.toFixed(1)} from tower at ${tower.distance.toFixed(1)}m`)
-        }
+        <div style="margin-bottom: 10px;">
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Color:</label>
+          <input type="color" id="pin-color-${pin.id}" value="${pin.color}" 
+                 style="width: 50px; height: 30px; border: none; border-radius: 3px;">
+        </div>
         
-        if (terrainElevation < minY) {
-          minY = terrainElevation
+        <div style="margin-bottom: 10px;">
+          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Coordinates:</label>
+          <div style="font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 5px; border-radius: 3px;">
+            ${pin.y.toFixed(6)}, ${pin.x.toFixed(6)}
+          </div>
+        </div>
+        
+        <div style="display: flex; gap: 5px; margin-top: 15px;">
+          <button id="copy-coords-${pin.id}" 
+                  style="padding: 5px 10px; background: #007ac3; color: white; border: none; border-radius: 3px; cursor: pointer;">
+            Copy Coords
+          </button>
+          <button id="update-pin-${pin.id}" 
+                  style="padding: 5px 10px; background: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer;">
+            Update
+          </button>
+          <button id="delete-pin-${pin.id}" 
+                  style="padding: 5px 10px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;">
+            Delete
+          </button>
+        </div>
+      </div>
+    `
+  }
+
+  const activeMapView = () => {
+    if (jimuMapView?.view) {
+      if (isActive) {
+        // Remove all pins and deactivate
+        pins.forEach(pin => {
+          if (pin.graphic) jimuMapView.view.graphics.remove(pin.graphic)
+          if (pin.labelGraphic) jimuMapView.view.graphics.remove(pin.labelGraphic)
+        })
+        setPins([])
+        
+        jimuMapView.view.container.style.cursor = 'default'
+        if (clickHandler) {
+          clickHandler.remove()
+          setClickHandler(null)
         }
-      })
-
-      // Arrow layer için ekstra padding (tower'ların üzerinde olacak)
-      if (this.props.towerData.length >= 2) {
-        const arrowPadding = convertSingle(50, 'meters', this.props.selectedElevationUnit) // 50m extra padding
-        maxY += arrowPadding
-        console.log(`↔️ Added arrow padding: ${arrowPadding.toFixed(1)} units. New maxY: ${maxY.toFixed(1)}`)
+        setIsActive(false)
+      } else {
+        // Activate
+        jimuMapView.view.container.style.cursor = 'crosshair'
+        setIsActive(true)
+        
+        const handler = jimuMapView.view.on('click', (event) => {
+          jimuMapView.view.hitTest(event).then((response) => {
+            const graphicHit = response.results.find(result => 
+              result.type === 'graphic' && 
+              result.graphic.attributes && 
+              result.graphic.attributes.id
+            )
+            
+            if (!graphicHit) {
+              // User clicked on empty space - add new pin
+              const point = new Point({
+                longitude: event.mapPoint.longitude,
+                latitude: event.mapPoint.latitude,
+                spatialReference: jimuMapView.view.spatialReference
+              })
+              
+              addPin(point.longitude, point.latitude)
+            }
+          })
+        })
+        
+        setClickHandler(handler)
       }
-    }
-
-    // Make sure our ranges are not too small.
-    const rangeX = Math.max(maxX - minX, 0.001)
-    let rangeY = Math.max(maxY - minY, 0.001)
-
-    if (data.dynamicElevationRange) {
-      // Convert to elevation units so that all values are compatible.
-      const rangeXInElevationUnits = convertSingle(rangeX, this.props.selectedLinearUnit, this.props.selectedElevationUnit)
-      // Make sure the Y axis is not too small in relation to the X axis.
-      rangeY = Math.max(rangeY, rangeXInElevationUnits / 300)
-    }
-
-    // Apply some padding at the top and bottom so the chart lines don't align with the axes.
-    minY = minY - 0.05 * rangeY // Biraz daha padding
-    maxY = minY + rangeY + 0.1 * rangeY // Üstte daha fazla padding (arrow'lar için)
-
-    // Adjust the Y axis such that we obtain guides and labels at 'nice' locations.
-    const yMinMax = niceScale(minY, maxY, 10)
-    rangeY = yMinMax[1] - yMinMax[0]
-
-    console.log(`📊 Final chart bounds: X[${minX.toFixed(1)} - ${(minX + rangeX).toFixed(1)}], Y[${minY.toFixed(1)} - ${(minY + rangeY).toFixed(1)}]`)
-
-    if (this.props.isUniformChartScalingEnable) {
-      return this.getUniformBounds({
-        bounds: { minX, maxX, minY, maxY },
-        pixelWidth,
-        pixelHeight,
-        centered: true
-      })
-    }
-
-    return {
-      minX,
-      maxX: minX + rangeX,
-      minY,
-      maxY: minY + rangeY
     }
   }
+
+  const addPin = (x: number, y: number) => {
+    const pinId = `pin_${Date.now()}`
+    const pinName = `Pin ${pins.length + 1}`
+    const pinColor = '#ff0000'
+
+    const point = new Point({
+      longitude: x,
+      latitude: y,
+      spatialReference: jimuMapView.view.spatialReference
+    })
+
+    const symbol = new PictureMarkerSymbol({
+      url: createPinSvg(pinColor),
+      width: '24px',
+      height: '32px',
+      yoffset: '16px'
+    })
+
+    const newPin: Pin = {
+      id: pinId,
+      x: parseFloat(x.toFixed(6)),
+      y: parseFloat(y.toFixed(6)),
+      name: pinName,
+      color: pinColor
+    }
+
+    const popupTemplate = new PopupTemplate({
+      title: 'Pin Options',
+      content: createPopupContent(newPin)
+    })
+
+    const graphic = new Graphic({
+      geometry: point,
+      symbol: symbol,
+      attributes: { id: pinId, name: pinName },
+      popupTemplate: popupTemplate
+    })
+
+    const labelGraphic = createLabelGraphic(point, pinName)
+
+    jimuMapView.view.graphics.addMany([graphic, labelGraphic])
+
+    newPin.graphic = graphic
+    newPin.labelGraphic = labelGraphic
+
+    setPins([...pins, newPin])
+
+    // Set up popup event handlers
+    setTimeout(() => {
+      setupPopupHandlers(newPin)
+    }, 100)
+  }
+
+  const setupPopupHandlers = (pin: Pin) => {
+    const copyBtn = document.getElementById(`copy-coords-${pin.id}`)
+    const updateBtn = document.getElementById(`update-pin-${pin.id}`)
+    const deleteBtn = document.getElementById(`delete-pin-${pin.id}`)
+
+    if (copyBtn) {
+      copyBtn.onclick = () => {
+        const coords = `${pin.y}, ${pin.x}`
+        navigator.clipboard.writeText(coords)
+        setShowCoords(`Copied: ${coords}`)
+        setTimeout(() => setShowCoords(''), 2000)
+        jimuMapView.view.popup.close()
+      }
+    }
+
+    if (updateBtn) {
+      updateBtn.onclick = () => {
+        const nameInput = document.getElementById(`pin-name-${pin.id}`) as HTMLInputElement
+        const colorInput = document.getElementById(`pin-color-${pin.id}`) as HTMLInputElement
+        
+        if (nameInput && colorInput) {
+          updatePin(pin.id, {
+            name: nameInput.value,
+            color: colorInput.value
+          })
+        }
+        jimuMapView.view.popup.close()
+      }
+    }
+
+    if (deleteBtn) {
+      deleteBtn.onclick = () => {
+        removePin(pin.id)
+        jimuMapView.view.popup.close()
+      }
+    }
+  }
+
+  const updatePin = (pinId: string, updates: Partial<Pin>) => {
+    setPins(pins.map(pin => {
+      if (pin.id === pinId) {
+        const updatedPin = { ...pin, ...updates }
+        
+        // Update graphic color if changed
+        if (updates.color && pin.graphic) {
+          const newSymbol = new PictureMarkerSymbol({
+            url: createPinSvg(updates.color),
+            width: '24px',
+            height: '32px',
+            yoffset: '16px'
+          })
+          pin.graphic.symbol = newSymbol
+        }
+
+        // Update label if name changed
+        if (updates.name && pin.labelGraphic && pin.graphic) {
+          jimuMapView.view.graphics.remove(pin.labelGraphic)
+          const newLabelGraphic = createLabelGraphic(pin.graphic.geometry as Point, updates.name)
+          jimuMapView.view.graphics.add(newLabelGraphic)
+          updatedPin.labelGraphic = newLabelGraphic
+        }
+
+        // Update popup content
+        if (pin.graphic) {
+          pin.graphic.popupTemplate = new PopupTemplate({
+            title: 'Pin Options',
+            content: createPopupContent(updatedPin)
+          })
+        }
+        
+        return updatedPin
+      }
+      return pin
+    }))
+  }
+
+  const removePin = (pinId: string) => {
+    const pin = pins.find(p => p.id === pinId)
+    if (pin) {
+      if (pin.graphic) jimuMapView.view.graphics.remove(pin.graphic)
+      if (pin.labelGraphic) jimuMapView.view.graphics.remove(pin.labelGraphic)
+    }
+    setPins(pins.filter(p => p.id !== pinId))
+  }
+
+  // Setup popup handlers when view popup opens
+  React.useEffect(() => {
+    if (jimuMapView?.view) {
+      jimuMapView.view.popup.watch('selectedFeature', (feature) => {
+        if (feature && feature.attributes && feature.attributes.id) {
+          const pin = pins.find(p => p.id === feature.attributes.id)
+          if (pin) {
+            setTimeout(() => setupPopupHandlers(pin), 100)
+          }
+        }
+      })
+    }
+  }, [jimuMapView, pins])
+
+  const onActiveViewChange = (jmv: JimuMapView) => {
+    if (jmv) {
+      setJimuMapView(jmv)
+    }
+  }
+
+  return (
+    <div className="widget-drop-pin" style={{ padding: '10px' }}>
+      <div style={{ marginBottom: '10px' }}>
+        <Button 
+          size="sm" 
+          type={isActive ? 'danger' : 'primary'}
+          onClick={activeMapView}
+          disabled={!jimuMapView}
+        >
+          {isActive ? 'Remove All Pins' : 'Start Dropping Pins'}
+        </Button>
+      </div>
+
+      {showCoords && (
+        <Alert type="success" size="small" style={{ marginBottom: '10px' }}>
+          {showCoords}
+        </Alert>
+      )}
+
+      {isActive && (
+        <div style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
+          Click anywhere on the map to drop a pin. Click existing pins to edit them.
+        </div>
+      )}
+
+      {!isActive && pins.length > 0 && (
+        <div style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
+          {pins.length} pin{pins.length !== 1 ? 's' : ''} on map. Click pins to edit them.
+        </div>
+      )}
+
+      <JimuMapViewComponent 
+        useMapWidgetId={props.useMapWidgetIds?.[0]} 
+        onActiveViewChange={onActiveViewChange}
+      />
+    </div>
+  )
+}
+
+export default Widget
