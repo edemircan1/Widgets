@@ -1,156 +1,227 @@
-import arcpy
+// YENİ METOD - Improved tower series with distance arrows
+  addTowerColumnSeries = (ctx) => {
+    if (!this.props.towerData || this.props.towerData.length === 0) {
+      return null
+    }
 
-class Toolbox(object):
-def **init**(self):
-self.label = “Cell Coverage Tools”
-self.alias = “CellCoverageTools”
-self.tools = [CellCoverageSelector]
+    console.log('🗼 Processing tower data for unique USIDs')
 
-class CellCoverageSelector(object):
-def **init**(self):
-self.label = “Cell Coverage Selector”
-self.description = “Select cells by drawing and toggle coverage display”
-self.canRunInBackground = False
-
-```
-def getParameterInfo(self):
-    param0 = arcpy.Parameter(
-        displayName="Cell Layer (Sectors_Testing_4G)",
-        name="cell_layer",
-        datatype="DEFeatureClass",
-        parameterType="Required",
-        direction="Input"
-    )
+    // Her USID için tek tower location bul
+    const uniqueTowerMap = new Map()
     
-    param1 = arcpy.Parameter(
-        displayName="Coverage Layer (700MHz)", 
-        name="coverage_layer",
-        datatype="DEFeatureClass",
-        parameterType="Required", 
-        direction="Input"
-    )
-    
-    param2 = arcpy.Parameter(
-        displayName="Selection Area",
-        name="selection_geometry",
-        datatype="DEFeatureClass",
-        parameterType="Required",
-        direction="Input"
-    )
-    
-    param3 = arcpy.Parameter(
-        displayName="Operation",
-        name="operation_type", 
-        datatype="GPString",
-        parameterType="Required",
-        direction="Input"
-    )
-    param3.filter.type = "ValueList"
-    param3.filter.list = ["New Selection", "Clear Selection"]
-    param3.value = "New Selection"
-    
-    param4 = arcpy.Parameter(
-        displayName="Result",
-        name="result_message",
-        datatype="GPString",
-        parameterType="Derived",
-        direction="Output"
-    )
-    
-    return [param0, param1, param2, param3, param4]
+    this.props.towerData.forEach(tower => {
+      tower.towers.forEach(towerInfo => {
+        const usid = towerInfo.usid
+        
+        if (!uniqueTowerMap.has(usid)) {
+          uniqueTowerMap.set(usid, {
+            usid: usid,
+            distance: tower.distance,
+            terrainElevation: tower.terrainElevation,
+            totalElevation: tower.totalElevation,
+            heightFt: towerInfo.heightFt,
+            heightMeters: towerInfo.heightMeters,
+            azimuth: towerInfo.azimuth || 'N/A',
+            face: towerInfo.face || 'N/A'
+          })
+        }
+      })
+    })
 
-def isLicensed(self):
-    return True
-
-def updateParameters(self, parameters):
-    return
-
-def updateMessages(self, parameters):
-    return
-
-def execute(self, parameters, messages):
-    try:
-        arcpy.AddMessage("Starting tool...")
-        
-        cell_layer = parameters[0].valueAsText
-        coverage_layer = parameters[1].valueAsText 
-        selection_geometry = parameters[2].value
-        operation_type = parameters[3].valueAsText
-        
-        arcpy.AddMessage("Operation: " + str(operation_type))
-        
-        cell_lyr = "cell_temp_layer"
-        coverage_lyr = "coverage_temp_layer"
-        
-        if arcpy.Exists(cell_lyr):
-            arcpy.management.Delete(cell_lyr)
-        if arcpy.Exists(coverage_lyr):
-            arcpy.management.Delete(coverage_lyr)
-            
-        arcpy.management.MakeFeatureLayer(cell_layer, cell_lyr)
-        arcpy.management.MakeFeatureLayer(coverage_layer, coverage_lyr)
-        
-        if operation_type == "Clear Selection":
-            arcpy.management.SelectLayerByAttribute(cell_lyr, "CLEAR_SELECTION")
-            arcpy.management.SelectLayerByAttribute(coverage_lyr, "CLEAR_SELECTION")
-            result_msg = "All selections cleared"
-            
-        elif operation_type == "New Selection":
-            arcpy.management.SelectLayerByAttribute(cell_lyr, "CLEAR_SELECTION") 
-            arcpy.management.SelectLayerByAttribute(coverage_lyr, "CLEAR_SELECTION")
-            
-            temp_fc = "in_memory\\temp_selection"
-            if arcpy.Exists(temp_fc):
-                arcpy.management.Delete(temp_fc)
-                
-            arcpy.management.CopyFeatures(selection_geometry, temp_fc)
-            
-            arcpy.AddMessage("Selecting cells...")
-            arcpy.management.SelectLayerByLocation(
-                cell_lyr, 
-                "INTERSECT", 
-                temp_fc,
-                selection_type="NEW_SELECTION"
-            )
-            
-            selected_cell_ids = []
-            with arcpy.da.SearchCursor(cell_lyr, ["CELL"]) as cursor:
-                for row in cursor:
-                    if row[0] is not None:
-                        selected_cell_ids.append(str(row[0]))
-            
-            arcpy.AddMessage("Found " + str(len(selected_cell_ids)) + " cells")
-            
-            if selected_cell_ids:
-                cell_list = "'" + "','".join(selected_cell_ids) + "'"
-                where_clause = "softsectorname IN (" + cell_list + ")"
-                arcpy.AddMessage("Filter: " + where_clause)
-                
-                arcpy.management.SelectLayerByAttribute(
-                    coverage_lyr,
-                    "NEW_SELECTION", 
-                    where_clause
-                )
-                
-                result_msg = "Selected " + str(len(selected_cell_ids)) + " cells"
-            else:
-                result_msg = "No cells found"
-            
-            if arcpy.Exists(temp_fc):
-                arcpy.management.Delete(temp_fc)
-        
-        parameters[4].value = result_msg
-        arcpy.AddMessage("Completed: " + result_msg)
-        
-    except Exception as e:
-        arcpy.AddError("Error: " + str(e))
+    const uniqueTowerArray = Array.from(uniqueTowerMap.values())
     
-    finally:
-        try:
-            if arcpy.Exists(cell_lyr):
-                arcpy.management.Delete(cell_lyr)
-            if arcpy.Exists(coverage_lyr):
-                arcpy.management.Delete(coverage_lyr)
-        except:
-            pass
-```
+    // Distance'a göre sırala
+    uniqueTowerArray.sort((a, b) => a.distance - b.distance)
+
+    // Chart data'ya dönüştür
+    const towerChartData = uniqueTowerArray.map(tower => ({
+      x: convertSingle(tower.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit),
+      terrainY: convertSingle(tower.terrainElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
+      towerTopY: convertSingle(tower.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
+      towerHeight: convertSingle(tower.heightMeters, 'meters', this.props.selectedElevationUnit),
+      usid: tower.usid,
+      heightInfo: `${tower.heightFt.toFixed(1)}ft (${tower.heightMeters.toFixed(1)}m)`,
+      azimuth: tower.azimuth,
+      face: tower.face
+    }))
+
+    // Tower Column Series
+    const towerColumnSeries = ColumnSeries.new(ctx.chart.root, {
+      name: '🗼 Cell Towers',
+      valueXField: 'x',
+      openValueYField: 'terrainY',
+      valueYField: 'towerTopY',
+      xAxis: ctx.xAxis,
+      yAxis: ctx.yAxis,
+      legendLabelText: '{name}',
+      fill: colorAm5('#0066cc'),
+      stroke: colorAm5('#0044aa'),
+      cornerRadiusBL: 0,
+      cornerRadiusBR: 0,
+      cornerRadiusTL: 3,
+      cornerRadiusTR: 3
+    })
+
+    // Column styling
+    towerColumnSeries.columns.template.setAll({
+      width: 12,
+      fillOpacity: 0.85,
+      strokeWidth: 2,
+      strokeOpacity: 1,
+      // SADECE COLUMN ÜZERİNDE TOOLTIP AKTIF
+      cursorOverStyle: 'pointer'
+    })
+
+    // Hover effects
+    towerColumnSeries.columns.template.states.create('hover', {
+      fillOpacity: 1,
+      scale: 1.15,
+      fill: colorAm5('#0088ff')
+    })
+
+    // TOOLTIP SADECE COLUMN'DA
+    towerColumnSeries.columns.template.set('tooltip', TooltipAm5.new(ctx.chart.root, {
+      labelText: `🗼 Cell Tower
+USID: {usid}
+Height: {heightInfo}
+Azimuth: {azimuth}°
+Face: {face}
+
+📍 Location
+Distance: {x} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedLinearUnit)?.abbreviation)}
+Terrain: {terrainY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}
+Total: {towerTopY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}`,
+      pointerOrientation: 'vertical'
+    }))
+
+    towerColumnSeries.data.setAll(towerChartData)
+
+    // MESAFE ARROWS - Sadece 2+ tower varsa
+    if (uniqueTowerArray.length >= 2) {
+      this.addTowerDistanceArrows(ctx, uniqueTowerArray)
+    }
+
+    console.log(`🗼 ${uniqueTowerArray.length} unique towers added to chart`)
+
+    return towerColumnSeries
+  }
+
+  // YENİ METOD - Tower'lar arası mesafe okları
+  addTowerDistanceArrows = (ctx, towerArray) => {
+    const arrows = []
+    
+    // Her tower çifti için mesafe arrow'u oluştur
+    for (let i = 0; i < towerArray.length - 1; i++) {
+      const tower1 = towerArray[i]
+      const tower2 = towerArray[i + 1]
+      
+      const distance1 = convertSingle(tower1.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit)
+      const distance2 = convertSingle(tower2.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit)
+      const distanceBetween = Math.abs(distance2 - distance1)
+      
+      // Arrow data point
+      const arrowData = {
+        x1: distance1,
+        x2: distance2,
+        xMid: (distance1 + distance2) / 2,
+        y: Math.max(
+          convertSingle(tower1.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
+          convertSingle(tower2.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit)
+        ) + 20, // Tower'ların üzerinde
+        distance: distanceBetween,
+        tower1USID: tower1.usid,
+        tower2USID: tower2.usid,
+        distanceText: `${distanceBetween.toFixed(1)} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedLinearUnit)?.abbreviation)}`
+      }
+      
+      arrows.push(arrowData)
+    }
+
+    // Line Series for arrows
+    const arrowSeries = LineSeriesAm5.new(ctx.chart.root, {
+      name: '↔️ Tower Distances',
+      valueXField: 'xMid',
+      valueYField: 'y',
+      xAxis: ctx.xAxis,
+      yAxis: ctx.yAxis,
+      stroke: colorAm5('#FF6B35'),
+      strokeWidth: 2,
+      strokeDasharray: [5, 3]
+    })
+
+    // Distance labels için bullet
+    arrowSeries.bullets.push(() => {
+      const container = ContainerAm5.new(ctx.chart.root, {
+        centerX: p50,
+        centerY: p50
+      })
+
+      // Background rectangle
+      const bg = RectangleAm5.new(ctx.chart.root, {
+        fill: colorAm5('#FF6B35'),
+        fillOpacity: 0.9,
+        cornerRadiusTL: 4,
+        cornerRadiusTR: 4,
+        cornerRadiusBL: 4,
+        cornerRadiusBR: 4,
+        width: 80,
+        height: 20
+      })
+
+      // Distance text
+      const label = LabelAm5.new(ctx.chart.root, {
+        text: '{distanceText}',
+        centerX: p50,
+        centerY: p50,
+        fontSize: 10,
+        fontWeight: '600',
+        fill: colorAm5('#FFFFFF')
+      })
+
+      container.children.push(bg)
+      container.children.push(label)
+
+      return BulletAm5.new(ctx.chart.root, {
+        sprite: container
+      })
+    })
+
+    // Arrow line için özel data oluştur
+    const arrowLineData = []
+    arrows.forEach(arrow => {
+      // Sol ok ucu
+      arrowLineData.push({
+        xMid: arrow.x1,
+        y: arrow.y,
+        distanceText: '◄'
+      })
+      // Orta mesafe label
+      arrowLineData.push({
+        xMid: arrow.xMid,
+        y: arrow.y,
+        distanceText: arrow.distanceText
+      })
+      // Sağ ok ucu  
+      arrowLineData.push({
+        xMid: arrow.x2,
+        y: arrow.y,
+        distanceText: '►'
+      })
+    })
+
+    // Arrow tooltip
+    arrowSeries.set('tooltip', TooltipAm5.new(ctx.chart.root, {
+      labelText: `↔️ Distance Between Towers
+{tower1USID} ↔ {tower2USID}
+Distance: {distanceText}`,
+      pointerOrientation: 'horizontal'
+    }))
+
+    // LEGEND'DEN GİZLE
+    this._seriesToBeHiddenInLegend.push(arrowSeries.uid)
+
+    arrowSeries.data.setAll(arrowLineData)
+    ctx.chart.series.push(arrowSeries)
+
+    console.log(`↔️ Added ${arrows.length} distance arrows between towers`)
+  }
