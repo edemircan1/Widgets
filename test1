@@ -6,7 +6,6 @@ import Point from 'esri/geometry/Point'
 import Graphic from 'esri/Graphic'
 import PictureMarkerSymbol from 'esri/symbols/PictureMarkerSymbol'
 import TextSymbol from 'esri/symbols/TextSymbol'
-import PopupTemplate from 'esri/PopupTemplate'
 
 interface Pin {
   id: string
@@ -15,13 +14,13 @@ interface Pin {
   name: string
   color: string
   graphic?: Graphic
-  labelGraphic?: Graphic
 }
 
 const Widget = (props: AllWidgetProps<any>) => {
   const [jimuMapView, setJimuMapView] = React.useState<JimuMapView>()
   const [isActive, setIsActive] = React.useState(false)
   const [pins, setPins] = React.useState<Pin[]>([])
+  const [selectedPin, setSelectedPin] = React.useState<Pin | null>(null)
   const [showCoords, setShowCoords] = React.useState('')
   const [clickHandler, setClickHandler] = React.useState<any>(null)
 
@@ -34,77 +33,10 @@ const Widget = (props: AllWidgetProps<any>) => {
     `)}`
   }
 
-  const createLabelGraphic = (point: Point, name: string) => {
-    const labelSymbol = new TextSymbol({
-      text: name,
-      color: '#000',
-      font: {
-        size: 10,
-        family: 'Arial',
-        weight: 'bold'
-      },
-      backgroundColor: 'rgba(255, 255, 255, 0.8)',
-      borderLineColor: '#666',
-      borderLineSize: 1,
-      yoffset: -25
-    })
-
-    return new Graphic({
-      geometry: point,
-      symbol: labelSymbol
-    })
-  }
-
-  const createPopupContent = (pin: Pin) => {
-    return `
-      <div style="padding: 10px; min-width: 200px;">
-        <div style="margin-bottom: 10px;">
-          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Name:</label>
-          <input type="text" id="pin-name-${pin.id}" value="${pin.name}" 
-                 style="width: 100%; padding: 5px; border: 1px solid #ccc; border-radius: 3px;">
-        </div>
-        
-        <div style="margin-bottom: 10px;">
-          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Color:</label>
-          <input type="color" id="pin-color-${pin.id}" value="${pin.color}" 
-                 style="width: 50px; height: 30px; border: none; border-radius: 3px;">
-        </div>
-        
-        <div style="margin-bottom: 10px;">
-          <label style="display: block; margin-bottom: 5px; font-weight: bold;">Coordinates:</label>
-          <div style="font-family: monospace; font-size: 12px; background: #f5f5f5; padding: 5px; border-radius: 3px;">
-            ${pin.y.toFixed(6)}, ${pin.x.toFixed(6)}
-          </div>
-        </div>
-        
-        <div style="display: flex; gap: 5px; margin-top: 15px;">
-          <button id="copy-coords-${pin.id}" 
-                  style="padding: 5px 10px; background: #007ac3; color: white; border: none; border-radius: 3px; cursor: pointer;">
-            Copy Coords
-          </button>
-          <button id="update-pin-${pin.id}" 
-                  style="padding: 5px 10px; background: #28a745; color: white; border: none; border-radius: 3px; cursor: pointer;">
-            Update
-          </button>
-          <button id="delete-pin-${pin.id}" 
-                  style="padding: 5px 10px; background: #dc3545; color: white; border: none; border-radius: 3px; cursor: pointer;">
-            Delete
-          </button>
-        </div>
-      </div>
-    `
-  }
-
   const activeMapView = () => {
     if (jimuMapView?.view) {
       if (isActive) {
-        // Remove all pins and deactivate
-        pins.forEach(pin => {
-          if (pin.graphic) jimuMapView.view.graphics.remove(pin.graphic)
-          if (pin.labelGraphic) jimuMapView.view.graphics.remove(pin.labelGraphic)
-        })
-        setPins([])
-        
+        // Deactivate
         jimuMapView.view.container.style.cursor = 'default'
         if (clickHandler) {
           clickHandler.remove()
@@ -117,24 +49,15 @@ const Widget = (props: AllWidgetProps<any>) => {
         setIsActive(true)
         
         const handler = jimuMapView.view.on('click', (event) => {
-          jimuMapView.view.hitTest(event).then((response) => {
-            const graphicHit = response.results.find(result => 
-              result.type === 'graphic' && 
-              result.graphic.attributes && 
-              result.graphic.attributes.id
-            )
-            
-            if (!graphicHit) {
-              // User clicked on empty space - add new pin
-              const point = new Point({
-                longitude: event.mapPoint.longitude,
-                latitude: event.mapPoint.latitude,
-                spatialReference: jimuMapView.view.spatialReference
-              })
-              
-              addPin(point.longitude, point.latitude)
-            }
+          event.stopPropagation()
+          
+          const point = new Point({
+            longitude: event.mapPoint.longitude,
+            latitude: event.mapPoint.latitude,
+            spatialReference: jimuMapView.view.spatialReference
           })
+          
+          addPin(point.longitude, point.latitude)
         })
         
         setClickHandler(handler)
@@ -142,111 +65,69 @@ const Widget = (props: AllWidgetProps<any>) => {
     }
   }
 
-  const addPin = (x: number, y: number) => {
-    const pinId = `pin_${Date.now()}`
-    const pinName = `Pin ${pins.length + 1}`
-    const pinColor = '#ff0000'
-
-    const point = new Point({
-      longitude: x,
-      latitude: y,
-      spatialReference: jimuMapView.view.spatialReference
-    })
-
-    const symbol = new PictureMarkerSymbol({
-      url: createPinSvg(pinColor),
-      width: '24px',
-      height: '32px',
-      yoffset: '16px'
-    })
-
-    const newPin: Pin = {
-      id: pinId,
-      x: parseFloat(x.toFixed(6)),
-      y: parseFloat(y.toFixed(6)),
-      name: pinName,
-      color: pinColor
-    }
-
-    const popupTemplate = new PopupTemplate({
-      title: 'Pin Options',
-      content: createPopupContent(newPin)
-    })
-
-    const graphic = new Graphic({
-      geometry: point,
-      symbol: symbol,
-      attributes: { id: pinId, name: pinName },
-      popupTemplate: popupTemplate
-    })
-
-    const labelGraphic = createLabelGraphic(point, pinName)
-
-    jimuMapView.view.graphics.addMany([graphic, labelGraphic])
-
-    newPin.graphic = graphic
-    newPin.labelGraphic = labelGraphic
-
-    setPins([...pins, newPin])
-
-    // Set up popup event handlers
-    setTimeout(() => {
-      setupPopupHandlers(newPin)
-    }, 100)
+  const getRandomColor = () => {
+    const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffa500', '#800080', '#ffc0cb', '#90ee90']
+    return colors[Math.floor(Math.random() * colors.length)]
   }
 
-  const setupPopupHandlers = (pin: Pin) => {
-    // Use a more reliable method to find and setup handlers
-    const checkAndSetupHandlers = () => {
-      const copyBtn = document.getElementById(`copy-coords-${pin.id}`)
-      const updateBtn = document.getElementById(`update-pin-${pin.id}`)
-      const deleteBtn = document.getElementById(`delete-pin-${pin.id}`)
+  const addPin = (x: number, y: number) => {
+    const pinId = `pin_${Date.now()}`
+    const pinColor = getRandomColor()
+    
+    setPins(currentPins => {
+      const pinName = `Pin ${currentPins.length + 1}`
+      
+      const point = new Point({
+        longitude: x,
+        latitude: y,
+        spatialReference: jimuMapView.view.spatialReference
+      })
 
-      if (copyBtn) {
-        copyBtn.onclick = () => {
-          const coords = `${pin.y}, ${pin.x}`
-          navigator.clipboard.writeText(coords)
-          setShowCoords(`Copied: ${coords}`)
-          setTimeout(() => setShowCoords(''), 2000)
-          jimuMapView.view.popup.close()
-        }
+      const symbol = new PictureMarkerSymbol({
+        url: createPinSvg(pinColor),
+        width: '24px',
+        height: '32px',
+        yoffset: '16px'
+      })
+
+      const graphic = new Graphic({
+        geometry: point,
+        symbol: symbol,
+        attributes: { id: pinId, name: pinName }
+      })
+
+      jimuMapView.view.graphics.add(graphic)
+
+      const newPin: Pin = {
+        id: pinId,
+        x: parseFloat(x.toFixed(6)),
+        y: parseFloat(y.toFixed(6)),
+        name: pinName,
+        color: pinColor,
+        graphic: graphic
       }
 
-      if (updateBtn) {
-        updateBtn.onclick = () => {
-          const nameInput = document.getElementById(`pin-name-${pin.id}`) as HTMLInputElement
-          const colorInput = document.getElementById(`pin-color-${pin.id}`) as HTMLInputElement
-          
-          if (nameInput && colorInput) {
-            updatePin(pin.id, {
-              name: nameInput.value,
-              color: colorInput.value
-            })
-          }
-          jimuMapView.view.popup.close()
-        }
-      }
+      return [...currentPins, newPin]
+    })
+  }
 
-      if (deleteBtn) {
-        deleteBtn.onclick = () => {
-          removePin(pin.id)
-          jimuMapView.view.popup.close()
-        }
+  const removePin = (pinId: string) => {
+    setPins(currentPins => {
+      const pin = currentPins.find(p => p.id === pinId)
+      if (pin && pin.graphic) {
+        jimuMapView.view.graphics.remove(pin.graphic)
       }
-    }
-
-    // Try multiple times to ensure DOM is ready
-    setTimeout(checkAndSetupHandlers, 100)
-    setTimeout(checkAndSetupHandlers, 300)
-    setTimeout(checkAndSetupHandlers, 500)
+      return currentPins.filter(p => p.id !== pinId)
+    })
+    setSelectedPin(null)
   }
 
   const updatePin = (pinId: string, updates: Partial<Pin>) => {
-    setPins(pins.map(pin => {
+    setPins(currentPins => currentPins.map(pin => {
       if (pin.id === pinId) {
         const updatedPin = { ...pin, ...updates }
         
-        // Update graphic color if changed
+        // Update graphic if color changed
         if (updates.color && pin.graphic) {
           const newSymbol = new PictureMarkerSymbol({
             url: createPinSvg(updates.color),
@@ -256,22 +137,6 @@ const Widget = (props: AllWidgetProps<any>) => {
           })
           pin.graphic.symbol = newSymbol
         }
-
-        // Update label if name changed
-        if (updates.name && pin.labelGraphic && pin.graphic) {
-          jimuMapView.view.graphics.remove(pin.labelGraphic)
-          const newLabelGraphic = createLabelGraphic(pin.graphic.geometry as Point, updates.name)
-          jimuMapView.view.graphics.add(newLabelGraphic)
-          updatedPin.labelGraphic = newLabelGraphic
-        }
-
-        // Update popup content
-        if (pin.graphic) {
-          pin.graphic.popupTemplate = new PopupTemplate({
-            title: 'Pin Options',
-            content: createPopupContent(updatedPin)
-          })
-        }
         
         return updatedPin
       }
@@ -279,48 +144,12 @@ const Widget = (props: AllWidgetProps<any>) => {
     }))
   }
 
-  const removePin = (pinId: string) => {
-    const pin = pins.find(p => p.id === pinId)
-    if (pin) {
-      if (pin.graphic) jimuMapView.view.graphics.remove(pin.graphic)
-      if (pin.labelGraphic) jimuMapView.view.graphics.remove(pin.labelGraphic)
-    }
-    setPins(pins.filter(p => p.id !== pinId))
+  const copyCoordinates = (pin: Pin) => {
+    const coords = `${pin.y}, ${pin.x}`
+    navigator.clipboard.writeText(coords)
+    setShowCoords(`Copied: ${coords}`)
+    setTimeout(() => setShowCoords(''), 2000)
   }
-
-  // Setup click handler for graphics to open popup
-  React.useEffect(() => {
-    if (jimuMapView?.view) {
-      const handler = jimuMapView.view.on('click', (event) => {
-        if (!isActive) {
-          jimuMapView.view.hitTest(event).then((response) => {
-            const graphicHit = response.results.find(result => 
-              result.type === 'graphic' && 
-              result.graphic.attributes && 
-              result.graphic.attributes.id
-            )
-            
-            if (graphicHit) {
-              const pin = pins.find(p => p.id === graphicHit.graphic.attributes.id)
-              if (pin) {
-                // Open popup manually
-                jimuMapView.view.popup.open({
-                  features: [graphicHit.graphic],
-                  location: event.mapPoint
-                })
-                // Setup handlers after popup opens
-                setTimeout(() => setupPopupHandlers(pin), 200)
-              }
-            }
-          })
-        }
-      })
-
-      return () => {
-        handler.remove()
-      }
-    }
-  }, [jimuMapView, isActive, pins])
 
   const onActiveViewChange = (jmv: JimuMapView) => {
     if (jmv) {
@@ -333,11 +162,11 @@ const Widget = (props: AllWidgetProps<any>) => {
       <div style={{ marginBottom: '10px' }}>
         <Button 
           size="sm" 
-          type={isActive ? 'danger' : 'primary'}
+          type={isActive ? 'primary' : 'secondary'}
           onClick={activeMapView}
           disabled={!jimuMapView}
         >
-          {isActive ? 'Remove All Pins' : 'Start Dropping Pins'}
+          {isActive ? 'Stop Dropping' : 'Drop Pin'}
         </Button>
       </div>
 
@@ -347,15 +176,48 @@ const Widget = (props: AllWidgetProps<any>) => {
         </Alert>
       )}
 
-      {isActive && (
-        <div style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
-          Click anywhere on the map to drop a pin. Click existing pins to edit them.
-        </div>
-      )}
+      <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
+        {pins.map(pin => (
+          <div key={pin.id} style={{ 
+            border: '1px solid #ccc', 
+            padding: '8px', 
+            marginBottom: '8px', 
+            borderRadius: '4px' 
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <input
+                type="text"
+                value={pin.name}
+                onChange={(e) => updatePin(pin.id, { name: e.target.value })}
+                style={{ marginRight: '8px', flex: 1 }}
+              />
+              <input
+                type="color"
+                value={pin.color}
+                onChange={(e) => updatePin(pin.id, { color: e.target.value })}
+                style={{ width: '30px', height: '25px', marginRight: '8px' }}
+              />
+            </div>
+            
+            <div style={{ fontSize: '12px', color: '#666', margin: '4px 0' }}>
+              {pin.y.toFixed(6)}, {pin.x.toFixed(6)}
+            </div>
+            
+            <div style={{ display: 'flex', gap: '4px' }}>
+              <Button size="sm" onClick={() => copyCoordinates(pin)}>
+                Copy Coords
+              </Button>
+              <Button size="sm" type="danger" onClick={() => removePin(pin.id)}>
+                Remove
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
 
-      {!isActive && pins.length > 0 && (
-        <div style={{ fontSize: '12px', color: '#666', fontStyle: 'italic' }}>
-          {pins.length} pin{pins.length !== 1 ? 's' : ''} on map. Click pins to edit them.
+      {pins.length === 0 && (
+        <div style={{ textAlign: 'center', color: '#666', fontStyle: 'italic' }}>
+          Click "Drop Pin" to add pins to the map
         </div>
       )}
 
