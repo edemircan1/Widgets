@@ -1,227 +1,85 @@
-// YENİ METOD - Improved tower series with distance arrows
-  addTowerColumnSeries = (ctx) => {
-    if (!this.props.towerData || this.props.towerData.length === 0) {
-      return null
+getAdjustedBounds = ({ data, pixelWidth, pixelHeight }) => {
+    const statistics = data.statistics
+    const minX = 0
+    //get min max from ground statistics
+    let maxX = statistics.maxDistance
+    maxX = convertSingle(maxX, data.effectiveUnits.distance, this.props.selectedLinearUnit)
+    let minY = statistics.minElevation
+    minY = convertSingle(minY, data.effectiveUnits.elevation, this.props.selectedElevationUnit)
+    let maxY = statistics.maxElevation
+    maxY = convertSingle(maxY, data.effectiveUnits.elevation, this.props.selectedElevationUnit)
+    
+    //calculate min max based on all the profiles (TOWER SCALING DAHİL)
+    for (const layerId in this._minMaxOfEachProfile) {
+      if (this._minMaxOfEachProfile[layerId].max > maxY) {
+        maxY = this._minMaxOfEachProfile[layerId].max
+      }
+      if (this._minMaxOfEachProfile[layerId].min < minY) {
+        minY = this._minMaxOfEachProfile[layerId].min
+      }
     }
 
-    console.log('🗼 Processing tower data for unique USIDs')
-
-    // Her USID için tek tower location bul
-    const uniqueTowerMap = new Map()
-    
-    this.props.towerData.forEach(tower => {
-      tower.towers.forEach(towerInfo => {
-        const usid = towerInfo.usid
+    // YENİ EKLENEN: TOWER DATA SCALING
+    if (this.props.towerData && this.props.towerData.length > 0) {
+      console.log('🗼 Including tower data in chart scaling...')
+      
+      this.props.towerData.forEach(tower => {
+        // Tower top elevation'ları scaling'e dahil et
+        const towerTopElevation = convertSingle(tower.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit)
+        const terrainElevation = convertSingle(tower.terrainElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit)
         
-        if (!uniqueTowerMap.has(usid)) {
-          uniqueTowerMap.set(usid, {
-            usid: usid,
-            distance: tower.distance,
-            terrainElevation: tower.terrainElevation,
-            totalElevation: tower.totalElevation,
-            heightFt: towerInfo.heightFt,
-            heightMeters: towerInfo.heightMeters,
-            azimuth: towerInfo.azimuth || 'N/A',
-            face: towerInfo.face || 'N/A'
-          })
+        if (towerTopElevation > maxY) {
+          maxY = towerTopElevation
+          console.log(`🗼 Updated maxY to ${maxY.toFixed(1)} from tower at ${tower.distance.toFixed(1)}m`)
+        }
+        
+        if (terrainElevation < minY) {
+          minY = terrainElevation
         }
       })
-    })
 
-    const uniqueTowerArray = Array.from(uniqueTowerMap.values())
-    
-    // Distance'a göre sırala
-    uniqueTowerArray.sort((a, b) => a.distance - b.distance)
-
-    // Chart data'ya dönüştür
-    const towerChartData = uniqueTowerArray.map(tower => ({
-      x: convertSingle(tower.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit),
-      terrainY: convertSingle(tower.terrainElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
-      towerTopY: convertSingle(tower.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
-      towerHeight: convertSingle(tower.heightMeters, 'meters', this.props.selectedElevationUnit),
-      usid: tower.usid,
-      heightInfo: `${tower.heightFt.toFixed(1)}ft (${tower.heightMeters.toFixed(1)}m)`,
-      azimuth: tower.azimuth,
-      face: tower.face
-    }))
-
-    // Tower Column Series
-    const towerColumnSeries = ColumnSeries.new(ctx.chart.root, {
-      name: '🗼 Cell Towers',
-      valueXField: 'x',
-      openValueYField: 'terrainY',
-      valueYField: 'towerTopY',
-      xAxis: ctx.xAxis,
-      yAxis: ctx.yAxis,
-      legendLabelText: '{name}',
-      fill: colorAm5('#0066cc'),
-      stroke: colorAm5('#0044aa'),
-      cornerRadiusBL: 0,
-      cornerRadiusBR: 0,
-      cornerRadiusTL: 3,
-      cornerRadiusTR: 3
-    })
-
-    // Column styling
-    towerColumnSeries.columns.template.setAll({
-      width: 12,
-      fillOpacity: 0.85,
-      strokeWidth: 2,
-      strokeOpacity: 1,
-      // SADECE COLUMN ÜZERİNDE TOOLTIP AKTIF
-      cursorOverStyle: 'pointer'
-    })
-
-    // Hover effects
-    towerColumnSeries.columns.template.states.create('hover', {
-      fillOpacity: 1,
-      scale: 1.15,
-      fill: colorAm5('#0088ff')
-    })
-
-    // TOOLTIP SADECE COLUMN'DA
-    towerColumnSeries.columns.template.set('tooltip', TooltipAm5.new(ctx.chart.root, {
-      labelText: `🗼 Cell Tower
-USID: {usid}
-Height: {heightInfo}
-Azimuth: {azimuth}°
-Face: {face}
-
-📍 Location
-Distance: {x} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedLinearUnit)?.abbreviation)}
-Terrain: {terrainY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}
-Total: {towerTopY} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedElevationUnit)?.abbreviation)}`,
-      pointerOrientation: 'vertical'
-    }))
-
-    towerColumnSeries.data.setAll(towerChartData)
-
-    // MESAFE ARROWS - Sadece 2+ tower varsa
-    if (uniqueTowerArray.length >= 2) {
-      this.addTowerDistanceArrows(ctx, uniqueTowerArray)
-    }
-
-    console.log(`🗼 ${uniqueTowerArray.length} unique towers added to chart`)
-
-    return towerColumnSeries
-  }
-
-  // YENİ METOD - Tower'lar arası mesafe okları
-  addTowerDistanceArrows = (ctx, towerArray) => {
-    const arrows = []
-    
-    // Her tower çifti için mesafe arrow'u oluştur
-    for (let i = 0; i < towerArray.length - 1; i++) {
-      const tower1 = towerArray[i]
-      const tower2 = towerArray[i + 1]
-      
-      const distance1 = convertSingle(tower1.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit)
-      const distance2 = convertSingle(tower2.distance, this.props.profileResult.effectiveUnits.distance, this.props.selectedLinearUnit)
-      const distanceBetween = Math.abs(distance2 - distance1)
-      
-      // Arrow data point
-      const arrowData = {
-        x1: distance1,
-        x2: distance2,
-        xMid: (distance1 + distance2) / 2,
-        y: Math.max(
-          convertSingle(tower1.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit),
-          convertSingle(tower2.totalElevation, this.props.profileResult.effectiveUnits.elevation, this.props.selectedElevationUnit)
-        ) + 20, // Tower'ların üzerinde
-        distance: distanceBetween,
-        tower1USID: tower1.usid,
-        tower2USID: tower2.usid,
-        distanceText: `${distanceBetween.toFixed(1)} ${this.nls(this.props.unitOptions.find(u => u.value === this.props.selectedLinearUnit)?.abbreviation)}`
+      // Arrow layer için ekstra padding (tower'ların üzerinde olacak)
+      if (this.props.towerData.length >= 2) {
+        const arrowPadding = convertSingle(50, 'meters', this.props.selectedElevationUnit) // 50m extra padding
+        maxY += arrowPadding
+        console.log(`↔️ Added arrow padding: ${arrowPadding.toFixed(1)} units. New maxY: ${maxY.toFixed(1)}`)
       }
-      
-      arrows.push(arrowData)
     }
 
-    // Line Series for arrows
-    const arrowSeries = LineSeriesAm5.new(ctx.chart.root, {
-      name: '↔️ Tower Distances',
-      valueXField: 'xMid',
-      valueYField: 'y',
-      xAxis: ctx.xAxis,
-      yAxis: ctx.yAxis,
-      stroke: colorAm5('#FF6B35'),
-      strokeWidth: 2,
-      strokeDasharray: [5, 3]
-    })
+    // Make sure our ranges are not too small.
+    const rangeX = Math.max(maxX - minX, 0.001)
+    let rangeY = Math.max(maxY - minY, 0.001)
 
-    // Distance labels için bullet
-    arrowSeries.bullets.push(() => {
-      const container = ContainerAm5.new(ctx.chart.root, {
-        centerX: p50,
-        centerY: p50
+    if (data.dynamicElevationRange) {
+      // Convert to elevation units so that all values are compatible.
+      const rangeXInElevationUnits = convertSingle(rangeX, this.props.selectedLinearUnit, this.props.selectedElevationUnit)
+      // Make sure the Y axis is not too small in relation to the X axis.
+      rangeY = Math.max(rangeY, rangeXInElevationUnits / 300)
+    }
+
+    // Apply some padding at the top and bottom so the chart lines don't align with the axes.
+    minY = minY - 0.05 * rangeY // Biraz daha padding
+    maxY = minY + rangeY + 0.1 * rangeY // Üstte daha fazla padding (arrow'lar için)
+
+    // Adjust the Y axis such that we obtain guides and labels at 'nice' locations.
+    const yMinMax = niceScale(minY, maxY, 10)
+    rangeY = yMinMax[1] - yMinMax[0]
+
+    console.log(`📊 Final chart bounds: X[${minX.toFixed(1)} - ${(minX + rangeX).toFixed(1)}], Y[${minY.toFixed(1)} - ${(minY + rangeY).toFixed(1)}]`)
+
+    if (this.props.isUniformChartScalingEnable) {
+      return this.getUniformBounds({
+        bounds: { minX, maxX, minY, maxY },
+        pixelWidth,
+        pixelHeight,
+        centered: true
       })
+    }
 
-      // Background rectangle
-      const bg = RectangleAm5.new(ctx.chart.root, {
-        fill: colorAm5('#FF6B35'),
-        fillOpacity: 0.9,
-        cornerRadiusTL: 4,
-        cornerRadiusTR: 4,
-        cornerRadiusBL: 4,
-        cornerRadiusBR: 4,
-        width: 80,
-        height: 20
-      })
-
-      // Distance text
-      const label = LabelAm5.new(ctx.chart.root, {
-        text: '{distanceText}',
-        centerX: p50,
-        centerY: p50,
-        fontSize: 10,
-        fontWeight: '600',
-        fill: colorAm5('#FFFFFF')
-      })
-
-      container.children.push(bg)
-      container.children.push(label)
-
-      return BulletAm5.new(ctx.chart.root, {
-        sprite: container
-      })
-    })
-
-    // Arrow line için özel data oluştur
-    const arrowLineData = []
-    arrows.forEach(arrow => {
-      // Sol ok ucu
-      arrowLineData.push({
-        xMid: arrow.x1,
-        y: arrow.y,
-        distanceText: '◄'
-      })
-      // Orta mesafe label
-      arrowLineData.push({
-        xMid: arrow.xMid,
-        y: arrow.y,
-        distanceText: arrow.distanceText
-      })
-      // Sağ ok ucu  
-      arrowLineData.push({
-        xMid: arrow.x2,
-        y: arrow.y,
-        distanceText: '►'
-      })
-    })
-
-    // Arrow tooltip
-    arrowSeries.set('tooltip', TooltipAm5.new(ctx.chart.root, {
-      labelText: `↔️ Distance Between Towers
-{tower1USID} ↔ {tower2USID}
-Distance: {distanceText}`,
-      pointerOrientation: 'horizontal'
-    }))
-
-    // LEGEND'DEN GİZLE
-    this._seriesToBeHiddenInLegend.push(arrowSeries.uid)
-
-    arrowSeries.data.setAll(arrowLineData)
-    ctx.chart.series.push(arrowSeries)
-
-    console.log(`↔️ Added ${arrows.length} distance arrows between towers`)
+    return {
+      minX,
+      maxX: minX + rangeX,
+      minY,
+      maxY: minY + rangeY
+    }
   }
