@@ -1,4 +1,14 @@
-/** @jsx jsx */
+React.useEffect(() => {
+    if (jimuMapView?.view && pins.length > 0 && !isActive && !moveMode) {
+      enablePinSelection()
+    }
+    
+    return () => {
+      if (dragHandler && typeof dragHandler !== 'object') {
+        dragHandler.remove?.()
+      }
+    }
+  }, [jimuMapView, pins.length, isActive, moveMode])/** @jsx jsx */
 import { React, jsx, AllWidgetProps, DataSourceManager } from 'jimu-core'
 import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis'
 import { Button, Alert } from 'jimu-ui'
@@ -43,7 +53,10 @@ const Widget = (props: AllWidgetProps<any>) => {
           clickHandler.remove()
           setClickHandler(null)
         }
-        disableDragAndDrop()
+        if (dragHandler && typeof dragHandler !== 'object') {
+          dragHandler.remove()
+          setDragHandler(null)
+        }
         setIsActive(false)
       } else {
         // Activate
@@ -69,95 +82,113 @@ const Widget = (props: AllWidgetProps<any>) => {
 
   const [dragHandler, setDragHandler] = React.useState<any>(null)
 
-  const enableDragAndDrop = () => {
+  const enablePinSelection = () => {
     if (jimuMapView?.view && !dragHandler) {
-      let dragGraphic: Graphic | null = null
-      let dragLabelGraphic: Graphic | null = null
-      let dragPinId: string | null = null
-
-      const pointerDownHandler = jimuMapView.view.on('pointer-down', (event) => {
+      const handler = jimuMapView.view.on('click', (event) => {
+        if (isActive || moveMode) return // Don't interfere with pin dropping or move mode
+        
         jimuMapView.view.hitTest(event).then((response) => {
           if (response.results.length > 0) {
             const graphic = response.results[0].graphic
             const pin = pins.find(p => p.graphic === graphic)
             
             if (pin) {
-              dragGraphic = pin.graphic
-              dragLabelGraphic = pin.labelGraphic
-              dragPinId = pin.id
-              jimuMapView.view.container.style.cursor = 'move'
               event.stopPropagation()
+              setPinPopup({
+                pin: pin,
+                x: event.x,
+                y: event.y
+              })
             }
+          } else {
+            setPinPopup(null)
           }
         })
       })
+      
+      setDragHandler(handler)
+    }
+  }
 
-      const pointerMoveHandler = jimuMapView.view.on('pointer-move', (event) => {
-        if (dragGraphic && dragLabelGraphic && dragPinId) {
+  const enableMoveMode = (pin: Pin) => {
+    if (!jimuMapView?.view) return
+    
+    setMoveMode(true)
+    setPinPopup(null)
+    
+    // Disable map navigation
+    jimuMapView.view.navigation.momentumEnabled = false
+    jimuMapView.view.navigation.mouseWheelZoomEnabled = false
+    jimuMapView.view.navigation.browserTouchPanEnabled = false
+    jimuMapView.view.container.style.cursor = 'move'
+    
+    let isDragging = false
+    
+    const moveHandler = jimuMapView.view.on('pointer-move', (event) => {
+      if (isDragging && pin.graphic && pin.labelGraphic) {
+        const point = jimuMapView.view.toMap({ x: event.x, y: event.y })
+        pin.graphic.geometry = point
+        pin.labelGraphic.geometry = point
+      }
+    })
+    
+    const downHandler = jimuMapView.view.on('pointer-down', (event) => {
+      jimuMapView.view.hitTest(event).then((response) => {
+        const clickedPin = response.results.find(r => r.graphic === pin.graphic)
+        if (clickedPin) {
+          isDragging = true
           event.stopPropagation()
-          
-          const point = jimuMapView.view.toMap({
-            x: event.x,
-            y: event.y
-          })
-
-          // Update pin position
-          dragGraphic.geometry = point
-          // Update label position
-          dragLabelGraphic.geometry = point
         }
       })
-
-      const pointerUpHandler = jimuMapView.view.on('pointer-up', (event) => {
-        if (dragGraphic && dragPinId) {
-          event.stopPropagation()
-          
-          const point = dragGraphic.geometry as Point
-          
-          // Update pin coordinates in state
-          setPins(currentPins => currentPins.map(pin => {
-            if (pin.id === dragPinId) {
-              return {
-                ...pin,
-                x: parseFloat(point.longitude.toFixed(6)),
-                y: parseFloat(point.latitude.toFixed(6))
-              }
-            }
-            return pin
-          }))
-          
-          jimuMapView.view.container.style.cursor = isActive ? 'crosshair' : 'default'
-        }
+    })
+    
+    const upHandler = jimuMapView.view.on('pointer-up', (event) => {
+      if (isDragging && pin.graphic) {
+        const point = pin.graphic.geometry as Point
         
-        dragGraphic = null
-        dragLabelGraphic = null
-        dragPinId = null
-      })
-
-      setDragHandler({ pointerDownHandler, pointerMoveHandler, pointerUpHandler })
-    }
+        // Update coordinates
+        setPins(currentPins => currentPins.map(p => {
+          if (p.id === pin.id) {
+            return {
+              ...p,
+              x: parseFloat(point.longitude.toFixed(6)),
+              y: parseFloat(point.latitude.toFixed(6))
+            }
+          }
+          return p
+        }))
+        
+        // Exit move mode
+        exitMoveMode()
+      }
+      isDragging = false
+    })
+    
+    // Store handlers for cleanup
+    setDragHandler({ moveHandler, downHandler, upHandler })
   }
-
-  const disableDragAndDrop = () => {
-    if (dragHandler) {
-      dragHandler.pointerDownHandler?.remove()
-      dragHandler.pointerMoveHandler?.remove()
-      dragHandler.pointerUpHandler?.remove()
-      setDragHandler(null)
-    }
-  }
-
-  React.useEffect(() => {
-    if (jimuMapView?.view && pins.length > 0) {
-      enableDragAndDrop()
-    } else {
-      disableDragAndDrop()
+  
+  const exitMoveMode = () => {
+    setMoveMode(false)
+    
+    if (jimuMapView?.view) {
+      // Re-enable map navigation
+      jimuMapView.view.navigation.momentumEnabled = true
+      jimuMapView.view.navigation.mouseWheelZoomEnabled = true
+      jimuMapView.view.navigation.browserTouchPanEnabled = true
+      jimuMapView.view.container.style.cursor = isActive ? 'crosshair' : 'default'
     }
     
-    return () => {
-      disableDragAndDrop()
+    // Clean up move handlers
+    if (dragHandler && typeof dragHandler === 'object') {
+      dragHandler.moveHandler?.remove()
+      dragHandler.downHandler?.remove()
+      dragHandler.upHandler?.remove()
     }
-  }, [jimuMapView, pins.length, isActive])
+    
+    // Re-enable pin selection
+    enablePinSelection()
+  }
 
   const getRandomColor = () => {
     const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffa500', '#800080', '#ffc0cb', '#90ee90']
@@ -236,6 +267,7 @@ const Widget = (props: AllWidgetProps<any>) => {
   }
 
   const removePin = (pinId: string) => {
+    setPinPopup(null)
     setPins(currentPins => {
       const pin = currentPins.find(p => p.id === pinId)
       if (pin) {
@@ -246,14 +278,7 @@ const Widget = (props: AllWidgetProps<any>) => {
           jimuMapView.view.graphics.remove(pin.labelGraphic)
         }
       }
-      const newPins = currentPins.filter(p => p.id !== pinId)
-      
-      // Disable drag if no pins left
-      if (newPins.length === 0) {
-        disableDragAndDrop()
-      }
-      
-      return newPins
+      return currentPins.filter(p => p.id !== pinId)
     })
     setSelectedPin(null)
   }
@@ -317,10 +342,21 @@ const Widget = (props: AllWidgetProps<any>) => {
           size="sm" 
           type={isActive ? 'primary' : 'secondary'}
           onClick={activeMapView}
-          disabled={!jimuMapView}
+          disabled={!jimuMapView || moveMode}
         >
           {isActive ? 'Stop Dropping' : 'Drop Pin'}
         </Button>
+        
+        {moveMode && (
+          <Button 
+            size="sm" 
+            type="danger"
+            onClick={exitMoveMode}
+            style={{ marginLeft: '8px' }}
+          >
+            Exit Move Mode
+          </Button>
+        )}
       </div>
 
       {showCoords && (
@@ -371,7 +407,58 @@ const Widget = (props: AllWidgetProps<any>) => {
       {pins.length === 0 && (
         <div style={{ textAlign: 'center', color: '#666', fontStyle: 'italic' }}>
           Click "Drop Pin" to add pins to the map.<br/>
-          <small>Drag pins to move them around!</small>
+          <small>Click on pins to get options including move!</small>
+        </div>
+      )}
+
+      {/* Pin Popup */}
+      {pinPopup && (
+        <div style={{
+          position: 'absolute',
+          left: pinPopup.x + 10,
+          top: pinPopup.y - 10,
+          backgroundColor: 'white',
+          border: '1px solid #ccc',
+          borderRadius: '4px',
+          padding: '8px',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+          zIndex: 1000,
+          minWidth: '120px'
+        }}>
+          <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
+            {pinPopup.pin.name}
+          </div>
+          <div style={{ fontSize: '11px', color: '#666', marginBottom: '8px' }}>
+            {pinPopup.pin.y.toFixed(6)}, {pinPopup.pin.x.toFixed(6)}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <Button 
+              size="sm" 
+              onClick={() => enableMoveMode(pinPopup.pin)}
+            >
+              Move Pin
+            </Button>
+            <Button 
+              size="sm" 
+              onClick={() => copyCoordinates(pinPopup.pin)}
+            >
+              Copy Coords
+            </Button>
+            <Button 
+              size="sm" 
+              type="danger" 
+              onClick={() => removePin(pinPopup.pin.id)}
+            >
+              Remove
+            </Button>
+            <Button 
+              size="sm" 
+              type="secondary" 
+              onClick={() => setPinPopup(null)}
+            >
+              Cancel
+            </Button>
+          </div>
         </div>
       )}
 
