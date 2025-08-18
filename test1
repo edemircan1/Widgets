@@ -14,6 +14,7 @@ interface Pin {
   name: string
   color: string
   graphic?: Graphic
+  labelGraphic?: Graphic
 }
 
 const Widget = (props: AllWidgetProps<any>) => {
@@ -70,6 +71,32 @@ const Widget = (props: AllWidgetProps<any>) => {
     return colors[Math.floor(Math.random() * colors.length)]
   }
 
+  const createLabelGraphic = (point: Point, text: string, color: string) => {
+    const labelPoint = new Point({
+      longitude: point.longitude,
+      latitude: point.latitude,
+      spatialReference: point.spatialReference
+    })
+
+    const textSymbol = new TextSymbol({
+      text: text,
+      color: '#000000',
+      haloColor: '#ffffff',
+      haloSize: '2px',
+      font: {
+        size: 12,
+        family: 'Arial',
+        weight: 'bold'
+      },
+      yoffset: -20 // Position above the pin
+    })
+
+    return new Graphic({
+      geometry: labelPoint,
+      symbol: textSymbol
+    })
+  }
+
   const addPin = (x: number, y: number) => {
     const pinId = `pin_${Date.now()}`
     const pinColor = getRandomColor()
@@ -96,7 +123,10 @@ const Widget = (props: AllWidgetProps<any>) => {
         attributes: { id: pinId, name: pinName }
       })
 
+      const labelGraphic = createLabelGraphic(point, pinName, pinColor)
+
       jimuMapView.view.graphics.add(graphic)
+      jimuMapView.view.graphics.add(labelGraphic)
 
       const newPin: Pin = {
         id: pinId,
@@ -104,7 +134,8 @@ const Widget = (props: AllWidgetProps<any>) => {
         y: parseFloat(y.toFixed(6)),
         name: pinName,
         color: pinColor,
-        graphic: graphic
+        graphic: graphic,
+        labelGraphic: labelGraphic
       }
 
       return [...currentPins, newPin]
@@ -114,8 +145,13 @@ const Widget = (props: AllWidgetProps<any>) => {
   const removePin = (pinId: string) => {
     setPins(currentPins => {
       const pin = currentPins.find(p => p.id === pinId)
-      if (pin && pin.graphic) {
-        jimuMapView.view.graphics.remove(pin.graphic)
+      if (pin) {
+        if (pin.graphic) {
+          jimuMapView.view.graphics.remove(pin.graphic)
+        }
+        if (pin.labelGraphic) {
+          jimuMapView.view.graphics.remove(pin.labelGraphic)
+        }
       }
       return currentPins.filter(p => p.id !== pinId)
     })
@@ -136,6 +172,23 @@ const Widget = (props: AllWidgetProps<any>) => {
             yoffset: '16px'
           })
           pin.graphic.symbol = newSymbol
+        }
+        
+        // Update label if name changed
+        if (updates.name && pin.labelGraphic) {
+          const newTextSymbol = new TextSymbol({
+            text: updates.name,
+            color: '#000000',
+            haloColor: '#ffffff',
+            haloSize: '2px',
+            font: {
+              size: 12,
+              family: 'Arial',
+              weight: 'bold'
+            },
+            yoffset: -20
+          })
+          pin.labelGraphic.symbol = newTextSymbol
         }
         
         return updatedPin
