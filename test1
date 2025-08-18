@@ -43,6 +43,7 @@ const Widget = (props: AllWidgetProps<any>) => {
           clickHandler.remove()
           setClickHandler(null)
         }
+        disableDragAndDrop()
         setIsActive(false)
       } else {
         // Activate
@@ -65,6 +66,98 @@ const Widget = (props: AllWidgetProps<any>) => {
       }
     }
   }
+
+  const [dragHandler, setDragHandler] = React.useState<any>(null)
+
+  const enableDragAndDrop = () => {
+    if (jimuMapView?.view && !dragHandler) {
+      let dragGraphic: Graphic | null = null
+      let dragLabelGraphic: Graphic | null = null
+      let dragPinId: string | null = null
+
+      const pointerDownHandler = jimuMapView.view.on('pointer-down', (event) => {
+        jimuMapView.view.hitTest(event).then((response) => {
+          if (response.results.length > 0) {
+            const graphic = response.results[0].graphic
+            const pin = pins.find(p => p.graphic === graphic)
+            
+            if (pin) {
+              dragGraphic = pin.graphic
+              dragLabelGraphic = pin.labelGraphic
+              dragPinId = pin.id
+              jimuMapView.view.container.style.cursor = 'move'
+              event.stopPropagation()
+            }
+          }
+        })
+      })
+
+      const pointerMoveHandler = jimuMapView.view.on('pointer-move', (event) => {
+        if (dragGraphic && dragLabelGraphic && dragPinId) {
+          event.stopPropagation()
+          
+          const point = jimuMapView.view.toMap({
+            x: event.x,
+            y: event.y
+          })
+
+          // Update pin position
+          dragGraphic.geometry = point
+          // Update label position
+          dragLabelGraphic.geometry = point
+        }
+      })
+
+      const pointerUpHandler = jimuMapView.view.on('pointer-up', (event) => {
+        if (dragGraphic && dragPinId) {
+          event.stopPropagation()
+          
+          const point = dragGraphic.geometry as Point
+          
+          // Update pin coordinates in state
+          setPins(currentPins => currentPins.map(pin => {
+            if (pin.id === dragPinId) {
+              return {
+                ...pin,
+                x: parseFloat(point.longitude.toFixed(6)),
+                y: parseFloat(point.latitude.toFixed(6))
+              }
+            }
+            return pin
+          }))
+          
+          jimuMapView.view.container.style.cursor = isActive ? 'crosshair' : 'default'
+        }
+        
+        dragGraphic = null
+        dragLabelGraphic = null
+        dragPinId = null
+      })
+
+      setDragHandler({ pointerDownHandler, pointerMoveHandler, pointerUpHandler })
+    }
+  }
+
+  const disableDragAndDrop = () => {
+    if (dragHandler) {
+      dragHandler.pointerDownHandler?.remove()
+      dragHandler.pointerMoveHandler?.remove()
+      dragHandler.pointerUpHandler?.remove()
+      setDragHandler(null)
+    }
+  }
+
+  React.useEffect(() => {
+    if (jimuMapView?.view && pins.length > 0) {
+      enableDragAndDrop()
+    } else {
+      disableDragAndDrop()
+    }
+    
+    return () => {
+      disableDragAndDrop()
+    }
+  }, [jimuMapView, pins.length, isActive])
 
   const getRandomColor = () => {
     const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffa500', '#800080', '#ffc0cb', '#90ee90']
@@ -153,7 +246,14 @@ const Widget = (props: AllWidgetProps<any>) => {
           jimuMapView.view.graphics.remove(pin.labelGraphic)
         }
       }
-      return currentPins.filter(p => p.id !== pinId)
+      const newPins = currentPins.filter(p => p.id !== pinId)
+      
+      // Disable drag if no pins left
+      if (newPins.length === 0) {
+        disableDragAndDrop()
+      }
+      
+      return newPins
     })
     setSelectedPin(null)
   }
@@ -270,7 +370,8 @@ const Widget = (props: AllWidgetProps<any>) => {
 
       {pins.length === 0 && (
         <div style={{ textAlign: 'center', color: '#666', fontStyle: 'italic' }}>
-          Click "Drop Pin" to add pins to the map
+          Click "Drop Pin" to add pins to the map.<br/>
+          <small>Drag pins to move them around!</small>
         </div>
       )}
 
