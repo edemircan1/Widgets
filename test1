@@ -1,41 +1,174 @@
-import { ImmutableObject } from 'seamless-immutable'
+import { React, Immutable } from 'jimu-core'
+import { BaseWidgetSetting, AllWidgetSettingProps } from 'jimu-for-builder'
+import { 
+  MapWidgetSelector, 
+  SettingSection, 
+  SettingRow, 
+  ColorPicker,
+  NumericInput,
+  Switch,
+  TextInput,
+  Select,
+  Option
+} from 'jimu-ui/advanced/setting-components'
+import { IMConfig } from '../config'
 
-export interface Config {
-  defaultRadius: number
-  showBearings: boolean
-  showDistances: boolean
-  angleIncrement: number
-  lineWidth: number
-  colors: {
-    northLine: string
-    measurementLine: string
-    dynamicLine: string
-    protractorCircle: string
-  }
-  telecomSettings: {
-    antennaTypes: string[]
-    frequencyBands: string[]
-    coveragePatterns: string[]
-  }
+interface State {
+  mapWidgetId: string
 }
 
-export type IMConfig = ImmutableObject<Config>
-
-export const defaultConfig: IMConfig = {
-  defaultRadius: 1000,
-  showBearings: true,
-  showDistances: true,
-  angleIncrement: 5,
-  lineWidth: 2,
-  colors: {
-    northLine: '#00FF00',
-    measurementLine: '#FFA500',
-    dynamicLine: '#FF00FF',
-    protractorCircle: '#808080'
-  },
-  telecomSettings: {
-    antennaTypes: ['Omnidirectional', 'Directional', 'Sector', 'Yagi', 'Panel'],
-    frequencyBands: ['700MHz', '850MHz', '1900MHz', '2100MHz', '2600MHz', '3500MHz'],
-    coveragePatterns: ['360°', '120°', '90°', '60°', '30°']
+export default class Setting extends BaseWidgetSetting<AllWidgetSettingProps<IMConfig>, State> {
+  constructor(props) {
+    super(props)
+    this.state = {
+      mapWidgetId: this.props.useMapWidgetIds?.[0] || ''
+    }
   }
-}
+
+  onMapWidgetSelected = (useMapWidgetIds: string[]) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      useMapWidgetIds: useMapWidgetIds
+    })
+    this.setState({ mapWidgetId: useMapWidgetIds[0] || '' })
+  }
+
+  onConfigChange = (key: string | string[], value: any) => {
+    const config = this.props.config || {}
+    let newConfig
+    
+    if (Array.isArray(key)) {
+      newConfig = config.setIn(key, value)
+    } else {
+      newConfig = config.set(key, value)
+    }
+    
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: newConfig
+    })
+  }
+
+  render() {
+    const { config } = this.props
+    const { mapWidgetId } = this.state
+
+    return (
+      <div className="widget-setting-protractor">
+        <SettingSection className="map-selector-section" title="Map">
+          <SettingRow>
+            <MapWidgetSelector
+              onSelect={this.onMapWidgetSelected}
+              useMapWidgetIds={this.props.useMapWidgetIds}
+            />
+          </SettingRow>
+        </SettingSection>
+
+        <SettingSection title="Protractor Settings">
+          <SettingRow label="Default Radius (meters)">
+            <NumericInput
+              value={config?.defaultRadius || 1000}
+              min={100}
+              max={10000}
+              step={100}
+              onChange={(value) => this.onConfigChange('defaultRadius', value)}
+            />
+          </SettingRow>
+
+          <SettingRow label="Show Bearings">
+            <Switch
+              checked={config?.showBearings ?? true}
+              onChange={(checked) => this.onConfigChange('showBearings', checked)}
+            />
+          </SettingRow>
+
+          <SettingRow label="Show Distances">
+            <Switch
+              checked={config?.showDistances ?? true}
+              onChange={(checked) => this.onConfigChange('showDistances', checked)}
+            />
+          </SettingRow>
+
+          <SettingRow label="Angle Increment (degrees)">
+            <Select
+              value={config?.angleIncrement || 5}
+              onChange={(e) => this.onConfigChange('angleIncrement', parseInt(e.target.value))}
+            >
+              <Option value={1}>1°</Option>
+              <Option value={5}>5°</Option>
+              <Option value={10}>10°</Option>
+              <Option value={15}>15°</Option>
+              <Option value={30}>30°</Option>
+            </Select>
+          </SettingRow>
+
+          <SettingRow label="Line Width">
+            <NumericInput
+              value={config?.lineWidth || 2}
+              min={1}
+              max={10}
+              step={1}
+              onChange={(value) => this.onConfigChange('lineWidth', value)}
+            />
+          </SettingRow>
+        </SettingSection>
+
+        <SettingSection title="Colors">
+          <SettingRow label="North Reference Line">
+            <ColorPicker
+              color={config?.colors?.northLine || '#00FF00'}
+              onChange={(color) => this.onConfigChange(['colors', 'northLine'], color)}
+            />
+          </SettingRow>
+
+          <SettingRow label="Measurement Lines">
+            <ColorPicker
+              color={config?.colors?.measurementLine || '#FFA500'}
+              onChange={(color) => this.onConfigChange(['colors', 'measurementLine'], color)}
+            />
+          </SettingRow>
+
+          <SettingRow label="Dynamic Line">
+            <ColorPicker
+              color={config?.colors?.dynamicLine || '#FF00FF'}
+              onChange={(color) => this.onConfigChange(['colors', 'dynamicLine'], color)}
+            />
+          </SettingRow>
+
+          <SettingRow label="Protractor Circle">
+            <ColorPicker
+              color={config?.colors?.protractorCircle || '#808080'}
+              onChange={(color) => this.onConfigChange(['colors', 'protractorCircle'], color)}
+            />
+          </SettingRow>
+        </SettingSection>
+
+        <SettingSection title="Telecom Industry Settings">
+          <SettingRow label="Default Antenna Type">
+            <Select
+              value={config?.telecomSettings?.antennaTypes?.[0] || 'Omnidirectional'}
+              onChange={(e) => {
+                const newTypes = [...(config?.telecomSettings?.antennaTypes || [])]
+                newTypes[0] = e.target.value
+                this.onConfigChange(['telecomSettings', 'antennaTypes'], newTypes)
+              }}
+            >
+              <Option value="Omnidirectional">Omnidirectional</Option>
+              <Option value="Directional">Directional</Option>
+              <Option value="Sector">Sector</Option>
+              <Option value="Yagi">Yagi</Option>
+              <Option value="Panel">Panel</Option>
+              <Option value="Parabolic">Parabolic</Option>
+            </Select>
+          </SettingRow>
+
+          <SettingRow label="Primary Frequency Band">
+            <Select
+              value={config?.telecomSettings?.frequencyBands?.[0] || '2100MHz'}
+              onChange={(e) => {
+                const newBands = [...(config?.telecomSettings?.frequencyBands || [])]
+                newBands[0] = e.target.value
+                this.onConfigChange(['telecomSettings', 'frequencyBands'], newBands)
+              }}
+            >
+              <Option value="700MHz">700MHz (
