@@ -1,473 +1,496 @@
-React.useEffect(() => {
-    if (jimuMapView?.view && pins.length > 0 && !isActive && !moveMode) {
-      enablePinSelection()
-    }
-    
-    return () => {
-      if (dragHandler && typeof dragHandler !== 'object') {
-        dragHandler.remove?.()
-      }
-    }
-  }, [jimuMapView, pins.length, isActive, moveMode])/** @jsx jsx */
-import { React, jsx, AllWidgetProps, DataSourceManager } from 'jimu-core'
+import { React, AllWidgetProps } from 'jimu-core'
 import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis'
-import { Button, Alert } from 'jimu-ui'
-import Point from 'esri/geometry/Point'
+import { Button, Icon } from 'jimu-ui'
 import Graphic from 'esri/Graphic'
-import PictureMarkerSymbol from 'esri/symbols/PictureMarkerSymbol'
+import GraphicsLayer from 'esri/layers/GraphicsLayer'
+import Point from 'esri/geometry/Point'
+import Polyline from 'esri/geometry/Polyline'
+import SimpleLineSymbol from 'esri/symbols/SimpleLineSymbol'
+import SimpleMarkerSymbol from 'esri/symbols/SimpleMarkerSymbol'
 import TextSymbol from 'esri/symbols/TextSymbol'
+import * as geometryEngine from 'esri/geometry/geometryEngine'
 
-interface Pin {
-  id: string
-  x: number
-  y: number
-  name: string
-  color: string
-  graphic?: Graphic
-  labelGraphic?: Graphic
+interface WidgetState {
+  isActive: boolean
+  centerPoint: Point | null
+  isDragging: boolean
+  currentAngle: number
+  measurements: Array<{
+    angle: number
+    bearing: string
+    distance?: number
+  }>
 }
 
-const Widget = (props: AllWidgetProps<any>) => {
-  const [jimuMapView, setJimuMapView] = React.useState<JimuMapView>()
-  const [isActive, setIsActive] = React.useState(false)
-  const [pins, setPins] = React.useState<Pin[]>([])
-  const [selectedPin, setSelectedPin] = React.useState<Pin | null>(null)
-  const [showCoords, setShowCoords] = React.useState('')
-  const [clickHandler, setClickHandler] = React.useState<any>(null)
+export default class ProtractorWidget extends React.PureComponent<AllWidgetProps<any>, WidgetState> {
+  private mapView: __esri.MapView | __esri.SceneView = null
+  private graphicsLayer: GraphicsLayer = null
+  private clickHandler: __esri.Handle = null
+  private pointerMoveHandler: __esri.Handle = null
+  private pointerUpHandler: __esri.Handle = null
 
-  const createPinSvg = (color: string) => {
-    return `data:image/svg+xml;base64,${btoa(`
-      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="32" viewBox="0 0 24 32">
-        <path d="M12 0C5.4 0 0 5.4 0 12c0 8 12 20 12 20s12-12 12-20c0-6.6-5.4-12-12-12z" fill="${color}" stroke="#fff" stroke-width="2"/>
-        <circle cx="12" cy="12" r="4" fill="#fff"/>
-      </svg>
-    `)}`
+  constructor(props) {
+    super(props)
+    this.state = {
+      isActive: false,
+      centerPoint: null,
+      isDragging: false,
+      currentAngle: 0,
+      measurements: []
+    }
   }
 
-  const activeMapView = () => {
-    if (jimuMapView?.view) {
-      if (isActive) {
-        // Deactivate
-        jimuMapView.view.container.style.cursor = 'default'
-        if (clickHandler) {
-          clickHandler.remove()
-          setClickHandler(null)
-        }
-        if (dragHandler && typeof dragHandler !== 'object') {
-          dragHandler.remove()
-          setDragHandler(null)
-        }
-        setIsActive(false)
-      } else {
-        // Activate
-        jimuMapView.view.container.style.cursor = 'crosshair'
-        setIsActive(true)
-        
-        const handler = jimuMapView.view.on('click', (event) => {
-          event.stopPropagation()
-          
-          const point = new Point({
-            longitude: event.mapPoint.longitude,
-            latitude: event.mapPoint.latitude,
-            spatialReference: jimuMapView.view.spatialReference
-          })
-          
-          addPin(point.longitude, point.latitude)
-        })
-        
-        setClickHandler(handler)
+  componentDidMount() {
+    this.initializeGraphicsLayer()
+  }
+
+  componentWillUnmount() {
+    this.deactivateProtractor()
+  }
+
+  private initializeGraphicsLayer = () => {
+    this.graphicsLayer = new GraphicsLayer({
+      id: 'protractor-layer',
+      title: 'Telecom Protractor'
+    })
+  }
+
+  private onActiveViewChange = (jmv: JimuMapView) => {
+    if (jmv) {
+      this.mapView = jmv.view
+      if (this.graphicsLayer && !this.mapView.map.findLayerById('protractor-layer')) {
+        this.mapView.map.add(this.graphicsLayer)
       }
     }
   }
 
-  const [dragHandler, setDragHandler] = React.useState<any>(null)
+  private activateProtractor = () => {
+    if (!this.mapView) return
 
-  const enablePinSelection = () => {
-    if (jimuMapView?.view && !dragHandler) {
-      const handler = jimuMapView.view.on('click', (event) => {
-        if (isActive || moveMode) return // Don't interfere with pin dropping or move mode
-        
-        jimuMapView.view.hitTest(event).then((response) => {
-          if (response.results.length > 0) {
-            const graphic = response.results[0].graphic
-            const pin = pins.find(p => p.graphic === graphic)
-            
-            if (pin) {
-              event.stopPropagation()
-              setPinPopup({
-                pin: pin,
-                x: event.x,
-                y: event.y
-              })
-            }
-          } else {
-            setPinPopup(null)
-          }
-        })
+    this.setState({ isActive: true })
+    this.mapView.container.style.cursor = 'crosshair'
+    
+    // Add click handler for placing protractor center
+    this.clickHandler = this.mapView.on('click', this.handleMapClick)
+  }
+
+  private deactivateProtractor = () => {
+    this.setState({ 
+      isActive: false, 
+      centerPoint: null, 
+      isDragging: false,
+      currentAngle: 0,
+      measurements: []
+    })
+    
+    if (this.mapView) {
+      this.mapView.container.style.cursor = 'default'
+    }
+
+    // Remove event handlers
+    if (this.clickHandler) {
+      this.clickHandler.remove()
+      this.clickHandler = null
+    }
+    if (this.pointerMoveHandler) {
+      this.pointerMoveHandler.remove()
+      this.pointerMoveHandler = null
+    }
+    if (this.pointerUpHandler) {
+      this.pointerUpHandler.remove()
+      this.pointerUpHandler = null
+    }
+
+    // Clear graphics
+    if (this.graphicsLayer) {
+      this.graphicsLayer.removeAll()
+    }
+  }
+
+  private handleMapClick = (event) => {
+    const point = new Point({
+      longitude: event.mapPoint.longitude,
+      latitude: event.mapPoint.latitude,
+      spatialReference: this.mapView.spatialReference
+    })
+
+    this.setState({ centerPoint: point })
+    this.createProtractorBase(point)
+    
+    // Remove click handler and add drag handlers
+    this.clickHandler.remove()
+    this.clickHandler = null
+    
+    this.pointerMoveHandler = this.mapView.on('pointer-move', this.handlePointerMove)
+    this.pointerUpHandler = this.mapView.on('click', this.handleAngleMeasurement)
+  }
+
+  private createProtractorBase = (centerPoint: Point) => {
+    // Clear existing graphics
+    this.graphicsLayer.removeAll()
+
+    // Create center point marker
+    const centerMarker = new Graphic({
+      geometry: centerPoint,
+      symbol: new SimpleMarkerSymbol({
+        style: 'circle',
+        color: [255, 0, 0, 0.8],
+        size: '8px',
+        outline: {
+          color: [255, 255, 255],
+          width: 2
+        }
       })
-      
-      setDragHandler(handler)
-    }
+    })
+    this.graphicsLayer.add(centerMarker)
+
+    // Create north reference line (0 degrees)
+    this.createReferenceLine(centerPoint, 0, 'North (0°)', [0, 255, 0, 1])
+
+    // Create base circle for protractor
+    this.createProtractorCircle(centerPoint)
   }
 
-  const enableMoveMode = (pin: Pin) => {
-    if (!jimuMapView?.view) return
+  private createReferenceLine = (center: Point, angle: number, label: string, color: number[]) => {
+    const distance = 1000 // meters
+    const radians = (angle - 90) * Math.PI / 180 // Adjust for north being 0°
     
-    setMoveMode(true)
-    setPinPopup(null)
-    
-    // Disable map navigation
-    jimuMapView.view.navigation.momentumEnabled = false
-    jimuMapView.view.navigation.mouseWheelZoomEnabled = false
-    jimuMapView.view.navigation.browserTouchPanEnabled = false
-    jimuMapView.view.container.style.cursor = 'move'
-    
-    let isDragging = false
-    
-    const moveHandler = jimuMapView.view.on('pointer-move', (event) => {
-      if (isDragging && pin.graphic && pin.labelGraphic) {
-        const point = jimuMapView.view.toMap({ x: event.x, y: event.y })
-        pin.graphic.geometry = point
-        pin.labelGraphic.geometry = point
-      }
+    const endPoint = new Point({
+      longitude: center.longitude + (distance * Math.cos(radians)) / 111320,
+      latitude: center.latitude + (distance * Math.sin(radians)) / 110540,
+      spatialReference: center.spatialReference
     })
-    
-    const downHandler = jimuMapView.view.on('pointer-down', (event) => {
-      jimuMapView.view.hitTest(event).then((response) => {
-        const clickedPin = response.results.find(r => r.graphic === pin.graphic)
-        if (clickedPin) {
-          isDragging = true
-          event.stopPropagation()
-        }
+
+    // Create arrow line
+    const line = new Polyline({
+      paths: [[
+        [center.longitude, center.latitude],
+        [endPoint.longitude, endPoint.latitude]
+      ]],
+      spatialReference: center.spatialReference
+    })
+
+    const lineGraphic = new Graphic({
+      geometry: line,
+      symbol: new SimpleLineSymbol({
+        color: color,
+        width: 3,
+        style: 'solid'
       })
     })
-    
-    const upHandler = jimuMapView.view.on('pointer-up', (event) => {
-      if (isDragging && pin.graphic) {
-        const point = pin.graphic.geometry as Point
-        
-        // Update coordinates
-        setPins(currentPins => currentPins.map(p => {
-          if (p.id === pin.id) {
-            return {
-              ...p,
-              x: parseFloat(point.longitude.toFixed(6)),
-              y: parseFloat(point.latitude.toFixed(6))
-            }
-          }
-          return p
-        }))
-        
-        // Exit move mode
-        exitMoveMode()
-      }
-      isDragging = false
-    })
-    
-    // Store handlers for cleanup
-    setDragHandler({ moveHandler, downHandler, upHandler })
-  }
-  
-  const exitMoveMode = () => {
-    setMoveMode(false)
-    
-    if (jimuMapView?.view) {
-      // Re-enable map navigation
-      jimuMapView.view.navigation.momentumEnabled = true
-      jimuMapView.view.navigation.mouseWheelZoomEnabled = true
-      jimuMapView.view.navigation.browserTouchPanEnabled = true
-      jimuMapView.view.container.style.cursor = isActive ? 'crosshair' : 'default'
-    }
-    
-    // Clean up move handlers
-    if (dragHandler && typeof dragHandler === 'object') {
-      dragHandler.moveHandler?.remove()
-      dragHandler.downHandler?.remove()
-      dragHandler.upHandler?.remove()
-    }
-    
-    // Re-enable pin selection
-    enablePinSelection()
-  }
+    this.graphicsLayer.add(lineGraphic)
 
-  const getRandomColor = () => {
-    const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffa500', '#800080', '#ffc0cb', '#90ee90']
-    return colors[Math.floor(Math.random() * colors.length)]
-  }
+    // Create arrowhead
+    this.createArrowhead(endPoint, angle, color)
 
-  const createLabelGraphic = (point: Point, text: string, color: string) => {
+    // Add label
     const labelPoint = new Point({
-      longitude: point.longitude,
-      latitude: point.latitude,
+      longitude: center.longitude + (distance * 0.7 * Math.cos(radians)) / 111320,
+      latitude: center.latitude + (distance * 0.7 * Math.sin(radians)) / 110540,
+      spatialReference: center.spatialReference
+    })
+
+    const textGraphic = new Graphic({
+      geometry: labelPoint,
+      symbol: new TextSymbol({
+        text: label,
+        color: color,
+        font: {
+          size: 12,
+          family: 'Arial'
+        },
+        haloColor: 'white',
+        haloSize: 1
+      })
+    })
+    this.graphicsLayer.add(textGraphic)
+  }
+
+  private createArrowhead = (point: Point, angle: number, color: number[]) => {
+    const arrowSize = 50 // meters
+    const arrowAngle = 30 // degrees
+    const radians = (angle - 90) * Math.PI / 180
+
+    // Calculate arrowhead points
+    const leftAngle = radians + (arrowAngle * Math.PI / 180)
+    const rightAngle = radians - (arrowAngle * Math.PI / 180)
+
+    const leftPoint = new Point({
+      longitude: point.longitude - (arrowSize * Math.cos(leftAngle)) / 111320,
+      latitude: point.latitude - (arrowSize * Math.sin(leftAngle)) / 110540,
       spatialReference: point.spatialReference
     })
 
-    const textSymbol = new TextSymbol({
-      text: text,
-      color: '#000000',
-      haloColor: '#ffffff',
-      haloSize: '2px',
-      font: {
-        size: 12,
-        family: 'Arial',
-        weight: 'bold'
-      },
-      yoffset: -20 // Position above the pin
+    const rightPoint = new Point({
+      longitude: point.longitude - (arrowSize * Math.cos(rightAngle)) / 111320,
+      latitude: point.latitude - (arrowSize * Math.sin(rightAngle)) / 110540,
+      spatialReference: point.spatialReference
     })
 
-    return new Graphic({
-      geometry: labelPoint,
-      symbol: textSymbol
+    // Create arrowhead lines
+    const leftArrow = new Polyline({
+      paths: [[
+        [point.longitude, point.latitude],
+        [leftPoint.longitude, leftPoint.latitude]
+      ]],
+      spatialReference: point.spatialReference
     })
-  }
 
-  const addPin = (x: number, y: number) => {
-    const pinId = `pin_${Date.now()}`
-    const pinColor = getRandomColor()
-    
-    setPins(currentPins => {
-      const pinName = `Pin ${currentPins.length + 1}`
-      
-      const point = new Point({
-        longitude: x,
-        latitude: y,
-        spatialReference: jimuMapView.view.spatialReference
+    const rightArrow = new Polyline({
+      paths: [[
+        [point.longitude, point.latitude],
+        [rightPoint.longitude, rightPoint.latitude]
+      ]],
+      spatialReference: point.spatialReference
+    })
+
+    this.graphicsLayer.add(new Graphic({
+      geometry: leftArrow,
+      symbol: new SimpleLineSymbol({
+        color: color,
+        width: 3,
+        style: 'solid'
       })
+    }))
 
-      const symbol = new PictureMarkerSymbol({
-        url: createPinSvg(pinColor),
-        width: '24px',
-        height: '32px',
-        yoffset: '16px'
+    this.graphicsLayer.add(new Graphic({
+      geometry: rightArrow,
+      symbol: new SimpleLineSymbol({
+        color: color,
+        width: 3,
+        style: 'solid'
       })
-
-      const graphic = new Graphic({
-        geometry: point,
-        symbol: symbol,
-        attributes: { id: pinId, name: pinName }
-      })
-
-      const labelGraphic = createLabelGraphic(point, pinName, pinColor)
-
-      jimuMapView.view.graphics.add(graphic)
-      jimuMapView.view.graphics.add(labelGraphic)
-
-      const newPin: Pin = {
-        id: pinId,
-        x: parseFloat(x.toFixed(6)),
-        y: parseFloat(y.toFixed(6)),
-        name: pinName,
-        color: pinColor,
-        graphic: graphic,
-        labelGraphic: labelGraphic
-      }
-
-      return [...currentPins, newPin]
-    })
-  }
-
-  const removePin = (pinId: string) => {
-    setPinPopup(null)
-    setPins(currentPins => {
-      const pin = currentPins.find(p => p.id === pinId)
-      if (pin) {
-        if (pin.graphic) {
-          jimuMapView.view.graphics.remove(pin.graphic)
-        }
-        if (pin.labelGraphic) {
-          jimuMapView.view.graphics.remove(pin.labelGraphic)
-        }
-      }
-      return currentPins.filter(p => p.id !== pinId)
-    })
-    setSelectedPin(null)
-  }
-
-  const updatePin = (pinId: string, updates: Partial<Pin>) => {
-    setPins(currentPins => currentPins.map(pin => {
-      if (pin.id === pinId) {
-        const updatedPin = { ...pin, ...updates }
-        
-        // Update graphic if color changed
-        if (updates.color && pin.graphic) {
-          const newSymbol = new PictureMarkerSymbol({
-            url: createPinSvg(updates.color),
-            width: '24px',
-            height: '32px',
-            yoffset: '16px'
-          })
-          pin.graphic.symbol = newSymbol
-        }
-        
-        // Update label if name changed
-        if (updates.name && pin.labelGraphic) {
-          const newTextSymbol = new TextSymbol({
-            text: updates.name,
-            color: '#000000',
-            haloColor: '#ffffff',
-            haloSize: '2px',
-            font: {
-              size: 12,
-              family: 'Arial',
-              weight: 'bold'
-            },
-            yoffset: -20
-          })
-          pin.labelGraphic.symbol = newTextSymbol
-        }
-        
-        return updatedPin
-      }
-      return pin
     }))
   }
 
-  const copyCoordinates = (pin: Pin) => {
-    const coords = `${pin.y}, ${pin.x}`
-    navigator.clipboard.writeText(coords)
-    setShowCoords(`Copied: ${coords}`)
-    setTimeout(() => setShowCoords(''), 2000)
+  private createProtractorCircle = (center: Point) => {
+    const radius = 1000 // meters
+    const segments = 72 // 5-degree increments
+    const points = []
+
+    for (let i = 0; i <= segments; i++) {
+      const angle = (i * 360 / segments) * Math.PI / 180
+      const x = center.longitude + (radius * Math.cos(angle)) / 111320
+      const y = center.latitude + (radius * Math.sin(angle)) / 110540
+      points.push([x, y])
+    }
+
+    const circle = new Polyline({
+      paths: [points],
+      spatialReference: center.spatialReference
+    })
+
+    const circleGraphic = new Graphic({
+      geometry: circle,
+      symbol: new SimpleLineSymbol({
+        color: [128, 128, 128, 0.5],
+        width: 1,
+        style: 'dash'
+      })
+    })
+    this.graphicsLayer.add(circleGraphic)
+
+    // Add degree markings
+    this.addDegreeMarkings(center, radius)
   }
 
-  const onActiveViewChange = (jmv: JimuMapView) => {
-    if (jmv) {
-      setJimuMapView(jmv)
+  private addDegreeMarkings = (center: Point, radius: number) => {
+    for (let angle = 0; angle < 360; angle += 30) {
+      const radians = (angle - 90) * Math.PI / 180
+      const x = center.longitude + (radius * 1.1 * Math.cos(radians)) / 111320
+      const y = center.latitude + (radius * 1.1 * Math.sin(radians)) / 110540
+
+      const labelPoint = new Point({
+        longitude: x,
+        latitude: y,
+        spatialReference: center.spatialReference
+      })
+
+      const bearing = this.getBearingText(angle)
+      const textGraphic = new Graphic({
+        geometry: labelPoint,
+        symbol: new TextSymbol({
+          text: `${angle}°\n${bearing}`,
+          color: [64, 64, 64],
+          font: {
+            size: 10,
+            family: 'Arial'
+          },
+          haloColor: 'white',
+          haloSize: 1
+        })
+      })
+      this.graphicsLayer.add(textGraphic)
     }
   }
 
-  return (
-    <div className="widget-drop-pin" style={{ padding: '10px' }}>
-      <div style={{ marginBottom: '10px' }}>
-        <Button 
-          size="sm" 
-          type={isActive ? 'primary' : 'secondary'}
-          onClick={activeMapView}
-          disabled={!jimuMapView || moveMode}
-        >
-          {isActive ? 'Stop Dropping' : 'Drop Pin'}
-        </Button>
-        
-        {moveMode && (
-          <Button 
-            size="sm" 
-            type="danger"
-            onClick={exitMoveMode}
-            style={{ marginLeft: '8px' }}
-          >
-            Exit Move Mode
-          </Button>
-        )}
-      </div>
+  private handlePointerMove = (event) => {
+    if (!this.state.centerPoint) return
 
-      {showCoords && (
-        <Alert type="success" size="small" style={{ marginBottom: '10px' }}>
-          {showCoords}
-        </Alert>
-      )}
+    const angle = this.calculateAngle(this.state.centerPoint, event.mapPoint)
+    this.setState({ currentAngle: angle })
+    
+    // Update dynamic line
+    this.updateDynamicLine(this.state.centerPoint, event.mapPoint, angle)
+  }
 
-      <div style={{ maxHeight: '300px', overflowY: 'auto' }}>
-        {pins.map(pin => (
-          <div key={pin.id} style={{ 
-            border: '1px solid #ccc', 
-            padding: '8px', 
-            marginBottom: '8px', 
-            borderRadius: '4px' 
-          }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <input
-                type="text"
-                value={pin.name}
-                onChange={(e) => updatePin(pin.id, { name: e.target.value })}
-                style={{ marginRight: '8px', flex: 1 }}
-              />
-              <input
-                type="color"
-                value={pin.color}
-                onChange={(e) => updatePin(pin.id, { color: e.target.value })}
-                style={{ width: '30px', height: '25px', marginRight: '8px' }}
-              />
-            </div>
+  private handleAngleMeasurement = (event) => {
+    if (!this.state.centerPoint) return
+
+    const angle = this.calculateAngle(this.state.centerPoint, event.mapPoint)
+    const bearing = this.getBearingText(angle)
+    const distance = geometryEngine.distance(this.state.centerPoint, event.mapPoint, 'meters')
+
+    // Add measurement to state
+    const newMeasurement = {
+      angle: angle,
+      bearing: bearing,
+      distance: Math.round(distance)
+    }
+
+    this.setState(prevState => ({
+      measurements: [...prevState.measurements, newMeasurement]
+    }))
+
+    // Create permanent measurement line
+    this.createReferenceLine(
+      this.state.centerPoint, 
+      angle, 
+      `${angle.toFixed(1)}° (${bearing})`, 
+      [255, 165, 0, 1]
+    )
+  }
+
+  private updateDynamicLine = (center: Point, mousePoint: Point, angle: number) => {
+    // Remove existing dynamic line
+    const existingDynamic = this.graphicsLayer.graphics.find(g => 
+      g.attributes && g.attributes.type === 'dynamic'
+    )
+    if (existingDynamic) {
+      this.graphicsLayer.remove(existingDynamic)
+    }
+
+    // Create new dynamic line
+    const line = new Polyline({
+      paths: [[
+        [center.longitude, center.latitude],
+        [mousePoint.longitude, mousePoint.latitude]
+      ]],
+      spatialReference: center.spatialReference
+    })
+
+    const lineGraphic = new Graphic({
+      geometry: line,
+      symbol: new SimpleLineSymbol({
+        color: [255, 0, 255, 0.8],
+        width: 2,
+        style: 'solid'
+      }),
+      attributes: { type: 'dynamic' }
+    })
+    this.graphicsLayer.add(lineGraphic)
+  }
+
+  private calculateAngle = (center: Point, target: Point): number => {
+    const deltaX = target.longitude - center.longitude
+    const deltaY = target.latitude - center.latitude
+    let angle = Math.atan2(deltaY, deltaX) * 180 / Math.PI
+    
+    // Convert to compass bearing (0° = North)
+    angle = (90 - angle) % 360
+    if (angle < 0) angle += 360
+    
+    return angle
+  }
+
+  private getBearingText = (angle: number): string => {
+    const bearings = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE', 
+                     'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+    const index = Math.round(angle / 22.5) % 16
+    return bearings[index]
+  }
+
+  private clearMeasurements = () => {
+    this.graphicsLayer.removeAll()
+    this.setState({ 
+      measurements: [],
+      centerPoint: null,
+      currentAngle: 0
+    })
+  }
+
+  render() {
+    const { isActive, measurements, currentAngle } = this.state
+
+    return (
+      <div className="widget-protractor">
+        <div style={{ padding: '10px' }}>
+          <h4>Telecom Protractor Tool</h4>
+          
+          <div style={{ marginBottom: '10px' }}>
+            <Button 
+              type={isActive ? 'danger' : 'primary'}
+              onClick={isActive ? this.deactivateProtractor : this.activateProtractor}
+              style={{ marginRight: '5px' }}
+            >
+              {isActive ? 'Deactivate' : 'Activate'} Protractor
+            </Button>
             
-            <div style={{ fontSize: '12px', color: '#666', margin: '4px 0' }}>
-              {pin.y.toFixed(6)}, {pin.x.toFixed(6)}
-            </div>
-            
-            <div style={{ display: 'flex', gap: '4px' }}>
-              <Button size="sm" onClick={() => copyCoordinates(pin)}>
-                Copy Coords
-              </Button>
-              <Button size="sm" type="danger" onClick={() => removePin(pin.id)}>
-                Remove
-              </Button>
-            </div>
+            <Button 
+              type="secondary"
+              onClick={this.clearMeasurements}
+              disabled={!isActive}
+            >
+              Clear All
+            </Button>
           </div>
-        ))}
+
+          {isActive && (
+            <div>
+              <p><strong>Instructions:</strong></p>
+              <ol style={{ fontSize: '12px', paddingLeft: '20px' }}>
+                <li>Click on the map to place protractor center</li>
+                <li>Move mouse to see dynamic angle measurement</li>
+                <li>Click to record angle measurements</li>
+              </ol>
+
+              {currentAngle > 0 && (
+                <div style={{ 
+                  background: '#f0f0f0', 
+                  padding: '8px', 
+                  borderRadius: '4px',
+                  fontSize: '12px'
+                }}>
+                  <strong>Current Angle:</strong> {currentAngle.toFixed(1)}° ({this.getBearingText(currentAngle)})
+                </div>
+              )}
+            </div>
+          )}
+
+          {measurements.length > 0 && (
+            <div style={{ marginTop: '15px' }}>
+              <h5>Measurements:</h5>
+              <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                {measurements.map((measurement, index) => (
+                  <div key={index} style={{ 
+                    fontSize: '11px', 
+                    padding: '4px',
+                    borderBottom: '1px solid #eee'
+                  }}>
+                    <strong>#{index + 1}:</strong> {measurement.angle.toFixed(1)}° ({measurement.bearing})
+                    {measurement.distance && ` - ${measurement.distance}m`}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <JimuMapViewComponent 
+          useMapWidgetId={this.props.useMapWidgetIds?.[0]} 
+          onActiveViewChange={this.onActiveViewChange}
+        />
       </div>
-
-      {pins.length === 0 && (
-        <div style={{ textAlign: 'center', color: '#666', fontStyle: 'italic' }}>
-          Click "Drop Pin" to add pins to the map.<br/>
-          <small>Click on pins to get options including move!</small>
-        </div>
-      )}
-
-      {/* Pin Popup */}
-      {pinPopup && (
-        <div style={{
-          position: 'absolute',
-          left: pinPopup.x + 10,
-          top: pinPopup.y - 10,
-          backgroundColor: 'white',
-          border: '1px solid #ccc',
-          borderRadius: '4px',
-          padding: '8px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
-          zIndex: 1000,
-          minWidth: '120px'
-        }}>
-          <div style={{ fontWeight: 'bold', marginBottom: '4px' }}>
-            {pinPopup.pin.name}
-          </div>
-          <div style={{ fontSize: '11px', color: '#666', marginBottom: '8px' }}>
-            {pinPopup.pin.y.toFixed(6)}, {pinPopup.pin.x.toFixed(6)}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-            <Button 
-              size="sm" 
-              onClick={() => enableMoveMode(pinPopup.pin)}
-            >
-              Move Pin
-            </Button>
-            <Button 
-              size="sm" 
-              onClick={() => copyCoordinates(pinPopup.pin)}
-            >
-              Copy Coords
-            </Button>
-            <Button 
-              size="sm" 
-              type="danger" 
-              onClick={() => removePin(pinPopup.pin.id)}
-            >
-              Remove
-            </Button>
-            <Button 
-              size="sm" 
-              type="secondary" 
-              onClick={() => setPinPopup(null)}
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
-      )}
-
-      <JimuMapViewComponent 
-        useMapWidgetId={props.useMapWidgetIds?.[0]} 
-        onActiveViewChange={onActiveViewChange}
-      />
-    </div>
-  )
+    )
+  }
 }
-
-export default Widget
