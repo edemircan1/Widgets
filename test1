@@ -283,14 +283,27 @@ const Widget = (props: AllWidgetProps<any>) => {
   // Setup popup handlers when view popup opens
   React.useEffect(() => {
     if (jimuMapView?.view) {
-      jimuMapView.view.popup.watch('selectedFeature', (feature) => {
-        if (feature && feature.attributes && feature.attributes.id) {
-          const pin = pins.find(p => p.id === feature.attributes.id)
-          if (pin) {
-            setTimeout(() => setupPopupHandlers(pin), 100)
+      const handler = jimuMapView.view.popup.on('trigger-action', (event) => {
+        // Handle popup actions if needed
+      })
+
+      // Listen for popup open events
+      const openHandler = jimuMapView.view.popup.watch('visible', (visible) => {
+        if (visible && jimuMapView.view.popup.selectedFeature) {
+          const feature = jimuMapView.view.popup.selectedFeature
+          if (feature.attributes && feature.attributes.id) {
+            const pin = pins.find(p => p.id === feature.attributes.id)
+            if (pin) {
+              setTimeout(() => setupPopupHandlers(pin), 200)
+            }
           }
         }
       })
+
+      return () => {
+        handler.remove()
+        openHandler.remove()
+      }
     }
   }, [jimuMapView, pins])
 
