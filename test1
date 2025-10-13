@@ -15,6 +15,7 @@ interface State {
 
 export default class Widget extends React.PureComponent<AllWidgetProps<any>, State> {
   private mapView: JimuMapView = null;
+  private filterTimeout: any = null;
 
   constructor(props) {
     super(props);
@@ -66,32 +67,43 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
     const layers = this.mapView.view.map.allLayers;
     let foundLayer = false;
+    let lastVisibleLayer = null;
 
+    // En son aktif edilen layer'ı bul
     layers.forEach((layer: any) => {
-      console.log('Layer:', layer.title, 'Type:', layer.type, 'Visible:', layer.visible);
-
       if (layer.visible) {
         // MapImageLayer için sublayer kontrolü
         if (layer.type === 'map-image' && layer.allSublayers) {
           layer.allSublayers.forEach((sublayer: any) => {
-            console.log('Sublayer:', sublayer.title, 'Visible:', sublayer.visible);
-            
-            if (sublayer.visible && !foundLayer) {
-              const detected = this.checkSublayerFields(sublayer, layer);
-              if (detected) foundLayer = true;
+            if (sublayer.visible) {
+              const result = this.checkSublayerFields(sublayer, layer);
+              if (result) {
+                lastVisibleLayer = result;
+                foundLayer = true;
+              }
             }
           });
         }
         // FeatureLayer için direkt kontrol
-        else if (layer.type === 'feature' && !foundLayer) {
-          const detected = this.checkFieldsInLayer(layer);
-          if (detected) foundLayer = true;
+        else if (layer.type === 'feature') {
+          const result = this.checkFieldsInLayer(layer);
+          if (result) {
+            lastVisibleLayer = result;
+            foundLayer = true;
+          }
         }
       }
     });
 
-    // Hiç uygun layer bulunamadıysa state'i temizle
-    if (!foundLayer) {
+    // En son bulunan layer'ı aktif et
+    if (foundLayer && lastVisibleLayer) {
+      this.setActiveLayer(
+        lastVisibleLayer.layer,
+        lastVisibleLayer.field,
+        lastVisibleLayer.parent
+      );
+    } else if (!foundLayer) {
+      // Hiç layer yoksa temizle
       this.setState({
         activeLayer: null,
         activeSublayer: null,
@@ -101,50 +113,47 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
   };
 
   // Sublayer field kontrolü
-  checkSublayerFields = (sublayer: any, parentLayer: any): boolean => {
+  checkSublayerFields = (sublayer: any, parentLayer: any) => {
     const title = sublayer.title?.toUpperCase() || '';
 
-    // Sublayer adında RSRP/RSRQ/SNR var mı?
     if (title.includes('RSRP')) {
-      this.setActiveLayer(sublayer, 'RSRP', parentLayer);
-      return true;
+      return { layer: sublayer, field: 'RSRP', parent: parentLayer };
     } else if (title.includes('RSRQ')) {
-      this.setActiveLayer(sublayer, 'RSRQ', parentLayer);
-      return true;
+      return { layer: sublayer, field: 'RSRQ', parent: parentLayer };
     } else if (title.includes('SNR')) {
-      this.setActiveLayer(sublayer, 'SNR', parentLayer);
-      return true;
+      return { layer: sublayer, field: 'SNR', parent: parentLayer };
     }
 
-    return false;
+    return null;
   };
 
   // Layer'daki field'ları kontrol et
-  checkFieldsInLayer = (layer: any): boolean => {
-    if (!layer.fields) return false;
+  checkFieldsInLayer = (layer: any) => {
+    if (!layer.fields) return null;
 
     for (const field of layer.fields) {
       const fieldName = field.name.toUpperCase();
 
       if (fieldName.includes('RSRP')) {
-        this.setActiveLayer(layer, field.name, null);
-        return true;
+        return { layer: layer, field: field.name, parent: null };
       } else if (fieldName.includes('RSRQ')) {
-        this.setActiveLayer(layer, field.name, null);
-        return true;
+        return { layer: layer, field: field.name, parent: null };
       } else if (fieldName.includes('SNR')) {
-        this.setActiveLayer(layer, field.name, null);
-        return true;
+        return { layer: layer, field: field.name, parent: null };
       }
     }
 
-    return false;
+    return null;
   };
 
   // Aktif layer'ı ayarla
   setActiveLayer = (layer: any, fieldName: string, parentLayer?: any) => {
-    let min = -120, max = -40;
+    // Eğer aynı layer zaten aktifse tekrar set etme
+    if (this.state.activeField === fieldName && this.state.activeSublayer === layer) {
+      return;
+    }
 
+    let min = -120, max = -40;
     const fieldUpper = fieldName.toUpperCase();
 
     if (fieldUpper.includes('RSRQ')) {
@@ -155,7 +164,13 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
       max = 30;
     }
 
-    console.log('Active layer set:', fieldName, 'Parent:', parentLayer?.title);
+    console.log('Setting active layer:', fieldName, 'Range:', min, '-', max);
+
+    // Önceki filtreyi temizle
+    const oldTarget = this.state.activeSublayer || this.state.activeLayer;
+    if (oldTarget && oldTarget.definitionExpression !== undefined) {
+      oldTarget.definitionExpression = null;
+    }
 
     this.setState({
       activeLayer: parentLayer || layer,
@@ -168,14 +183,29 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     });
   };
 
-  // Slider değiştiğinde
-  onSliderChange = (value: number[]) => {
+  // Slider değiştiğinde (debounce ile)
+  onSliderChange = (evt: any) => {
+    const value = evt.target.value;
+    
+    // value bir array olmalı [min, max]
+    if (!Array.isArray(value) || value.length !== 2) {
+      console.log('Invalid slider value:', value);
+      return;
+    }
+
     this.setState({
       currentMin: value[0],
       currentMax: value[1]
-    }, () => {
-      this.applyFilter();
     });
+
+    // Debounce - kullanıcı slider'ı sürüklerken sürekli filter uygulanmasın
+    if (this.filterTimeout) {
+      clearTimeout(this.filterTimeout);
+    }
+
+    this.filterTimeout = setTimeout(() => {
+      this.applyFilter();
+    }, 300);
   };
 
   // Filtreyi uygula
@@ -191,15 +221,37 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
     const query = `${activeField} >= ${currentMin} AND ${activeField} <= ${currentMax}`;
     
-    console.log('Applying filter:', query, 'to', targetLayer.title);
+    console.log('Applying filter:', query);
 
     // DefinitionExpression uygula
     if (targetLayer.definitionExpression !== undefined) {
       targetLayer.definitionExpression = query;
+    } else {
+      console.warn('Layer does not support definitionExpression');
     }
 
     // Layer'ı refresh et
-    if (activeLayer.refresh) {
+    if (activeLayer && activeLayer.refresh) {
+      activeLayer.refresh();
+    }
+  };
+
+  // Slider'ı resetle
+  resetFilter = () => {
+    const { minValue, maxValue, activeLayer, activeSublayer } = this.state;
+
+    this.setState({
+      currentMin: minValue,
+      currentMax: maxValue
+    });
+
+    // Filtreyi kaldır
+    const targetLayer = activeSublayer || activeLayer;
+    if (targetLayer && targetLayer.definitionExpression !== undefined) {
+      targetLayer.definitionExpression = null;
+    }
+
+    if (activeLayer && activeLayer.refresh) {
       activeLayer.refresh();
     }
   };
@@ -216,25 +268,52 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
         {activeField ? (
           <div style={{ marginTop: '20px' }}>
-            <h4 style={{ fontSize: '16px', marginBottom: '10px' }}>
-              {activeField} Filtresi
-            </h4>
-            <p style={{ fontSize: '14px', marginBottom: '15px' }}>
-              Aralık: <strong>{currentMin}</strong> - <strong>{currentMax}</strong>
-            </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <h4 style={{ fontSize: '16px', margin: 0 }}>
+                {activeField} Filtresi
+              </h4>
+              <button 
+                onClick={this.resetFilter}
+                style={{
+                  padding: '5px 10px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  border: '1px solid #ccc',
+                  borderRadius: '4px',
+                  background: '#fff'
+                }}
+              >
+                Reset
+              </button>
+            </div>
 
-            <Slider
-              range
-              min={minValue}
-              max={maxValue}
-              value={[currentMin, currentMax]}
-              onChange={this.onSliderChange}
-              style={{ width: '100%' }}
-            />
+            <div style={{ marginBottom: '15px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '5px' }}>
+                <span>Min: <strong>{currentMin}</strong></span>
+                <span>Max: <strong>{currentMax}</strong></span>
+              </div>
+              <div style={{ fontSize: '12px', color: '#666' }}>
+                Toplam Aralık: {minValue} - {maxValue}
+              </div>
+            </div>
+
+            <div style={{ padding: '10px 0' }}>
+              <Slider
+                min={minValue}
+                max={maxValue}
+                range
+                value={[currentMin, currentMax]}
+                onChange={this.onSliderChange}
+              />
+            </div>
+
+            <div style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
+              💡 İki ucu sürükleyerek min/max değerleri ayarlayın
+            </div>
           </div>
         ) : (
           <div style={{ marginTop: '20px', textAlign: 'center', color: '#666' }}>
-            <p>RSRP, RSRQ veya SNR içeren bir layer aktif edin</p>
+            <p>📡 RSRP, RSRQ veya SNR içeren bir layer aktif edin</p>
           </div>
         )}
       </div>
