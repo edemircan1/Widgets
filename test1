@@ -1,16 +1,28 @@
 /** @jsx jsx */
 import { React, jsx, AllWidgetProps } from 'jimu-core';
 import { JimuMapView, JimuMapViewComponent } from 'jimu-arcgis';
+import { Button, Select, Option } from 'jimu-ui';
+
+interface FilterCondition {
+  id: string;
+  field: string;
+  min: number;
+  max: number;
+}
 
 interface State {
-  activeLayer: any;
-  activeSublayer: any;
-  activeField: string;
-  minValue: number;
-  maxValue: number;
-  currentMin: number;
-  currentMax: number;
+  conditions: FilterCondition[];
+  selectedField: string;
+  tempMin: number;
+  tempMax: number;
+  appliedLayer: any;
 }
+
+const FIELD_RANGES = {
+  'RSRP': { min: -140, max: -50, default: [-140, -50] },
+  'RSRQ': { min: -25, max: 0, default: [-25, 0] },
+  'SNR': { min: -10, max: 35, default: [-10, 35] }
+};
 
 export default class Widget extends React.PureComponent<AllWidgetProps<any>, State> {
   private mapView: JimuMapView = null;
@@ -18,256 +30,362 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
   constructor(props) {
     super(props);
     this.state = {
-      activeLayer: null,
-      activeSublayer: null,
-      activeField: '',
-      minValue: -120,
-      maxValue: -40,
-      currentMin: -120,
-      currentMax: -40
+      conditions: [],
+      selectedField: 'RSRP',
+      tempMin: -140,
+      tempMax: -50,
+      appliedLayer: null
     };
   }
 
   onActiveViewChange = (jimuMapView: JimuMapView) => {
     if (!jimuMapView) return;
-    
     this.mapView = jimuMapView;
+  };
 
-    // Layer visibility değişimlerini izle
-    const watchLayers = () => {
-      jimuMapView.view.map.allLayers.forEach((layer: any) => {
-        layer.watch('visible', () => {
-          setTimeout(() => this.checkActiveLayers(), 100);
-        });
-
-        if (layer.type === 'map-image' && layer.allSublayers) {
-          layer.allSublayers.forEach((sublayer: any) => {
-            sublayer.watch('visible', () => {
-              setTimeout(() => this.checkActiveLayers(), 100);
-            });
-          });
-        }
-      });
-    };
-
-    watchLayers();
+  onFieldChange = (e: any) => {
+    const field = e.target.value;
+    const range = FIELD_RANGES[field];
     
-    jimuMapView.view.map.allLayers.on('change', () => {
-      watchLayers();
-      setTimeout(() => this.checkActiveLayers(), 100);
-    });
-
-    this.checkActiveLayers();
-  };
-
-  checkActiveLayers = () => {
-    if (!this.mapView) return;
-
-    const layers = this.mapView.view.map.allLayers;
-    let lastFound = null;
-
-    // Tüm layer'ları tara
-    layers.forEach((layer: any) => {
-      if (!layer.visible) return;
-
-      // MapImageLayer
-      if (layer.type === 'map-image' && layer.allSublayers) {
-        layer.allSublayers.forEach((sublayer: any) => {
-          if (!sublayer.visible) return;
-          
-          const title = (sublayer.title || '').toUpperCase();
-          
-          if (title.includes('RSRP')) {
-            lastFound = { sublayer, parent: layer, field: 'RSRP' };
-          } else if (title.includes('RSRQ')) {
-            lastFound = { sublayer, parent: layer, field: 'RSRQ' };
-          } else if (title.includes('SNR')) {
-            lastFound = { sublayer, parent: layer, field: 'SNR' };
-          }
-        });
-      }
-      // FeatureLayer
-      else if (layer.type === 'feature' && layer.fields) {
-        for (const field of layer.fields) {
-          const fname = field.name.toUpperCase();
-          if (fname.includes('RSRP')) {
-            lastFound = { sublayer: layer, parent: null, field: field.name };
-            break;
-          } else if (fname.includes('RSRQ')) {
-            lastFound = { sublayer: layer, parent: null, field: field.name };
-            break;
-          } else if (fname.includes('SNR')) {
-            lastFound = { sublayer: layer, parent: null, field: field.name };
-            break;
-          }
-        }
-      }
-    });
-
-    if (lastFound) {
-      this.setActiveLayer(lastFound.sublayer, lastFound.field, lastFound.parent);
-    } else {
-      this.clearActiveLayer();
-    }
-  };
-
-  setActiveLayer = (layer: any, fieldName: string, parentLayer: any) => {
-    let min = -120, max = -40;
-    const fieldUpper = fieldName.toUpperCase();
-
-    if (fieldUpper.includes('RSRQ')) {
-      min = -20;
-      max = -3;
-    } else if (fieldUpper.includes('SNR')) {
-      min = -10;
-      max = 30;
-    }
-
-    // Önceki layer'ın filtresini temizle
-    const oldTarget = this.state.activeSublayer || this.state.activeLayer;
-    if (oldTarget && oldTarget !== layer && oldTarget.definitionExpression !== undefined) {
-      oldTarget.definitionExpression = null;
-    }
-
-    console.log('Active:', fieldName, 'Range:', min, 'to', max);
-
     this.setState({
-      activeLayer: parentLayer || layer,
-      activeSublayer: layer,
-      activeField: fieldName,
-      minValue: min,
-      maxValue: max,
-      currentMin: min,
-      currentMax: max
-    }, () => {
-      // Filter'ı hemen uygula (tüm aralık)
-      this.applyFilter();
-    });
-  };
-
-  clearActiveLayer = () => {
-    const oldTarget = this.state.activeSublayer || this.state.activeLayer;
-    if (oldTarget && oldTarget.definitionExpression !== undefined) {
-      oldTarget.definitionExpression = null;
-    }
-
-    this.setState({
-      activeLayer: null,
-      activeSublayer: null,
-      activeField: ''
+      selectedField: field,
+      tempMin: range.default[0],
+      tempMax: range.default[1]
     });
   };
 
   onMinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newMin = parseFloat(e.target.value);
-    this.setState({ currentMin: newMin }, () => {
-      this.applyFilter();
-    });
+    this.setState({ tempMin: parseFloat(e.target.value) });
   };
 
   onMaxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newMax = parseFloat(e.target.value);
-    this.setState({ currentMax: newMax }, () => {
-      this.applyFilter();
+    this.setState({ tempMax: parseFloat(e.target.value) });
+  };
+
+  addCondition = () => {
+    const { selectedField, tempMin, tempMax, conditions } = this.state;
+    
+    // Aynı field zaten varsa güncelle
+    const existingIndex = conditions.findIndex(c => c.field === selectedField);
+    
+    let newConditions;
+    if (existingIndex >= 0) {
+      newConditions = [...conditions];
+      newConditions[existingIndex] = {
+        id: Date.now().toString(),
+        field: selectedField,
+        min: tempMin,
+        max: tempMax
+      };
+    } else {
+      newConditions = [
+        ...conditions,
+        {
+          id: Date.now().toString(),
+          field: selectedField,
+          min: tempMin,
+          max: tempMax
+        }
+      ];
+    }
+
+    this.setState({ conditions: newConditions });
+  };
+
+  removeCondition = (id: string) => {
+    const newConditions = this.state.conditions.filter(c => c.id !== id);
+    this.setState({ conditions: newConditions }, () => {
+      if (newConditions.length === 0) {
+        this.clearFilter();
+      }
     });
   };
 
   applyFilter = () => {
-    const { activeSublayer, activeLayer, activeField, currentMin, currentMax } = this.state;
-    const targetLayer = activeSublayer || activeLayer;
-
-    if (!targetLayer || !activeField) return;
-
-    const query = `${activeField} >= ${currentMin} AND ${activeField} <= ${currentMax}`;
+    const { conditions } = this.state;
     
-    console.log('Filter:', query);
-
-    if (targetLayer.definitionExpression !== undefined) {
-      targetLayer.definitionExpression = query;
+    if (!this.mapView || conditions.length === 0) {
+      console.log('No conditions to apply');
+      return;
     }
 
-    if (activeLayer && activeLayer.refresh) {
-      activeLayer.refresh();
+    // Tüm layer'ları tara ve uygun olanı bul
+    const layers = this.mapView.view.map.allLayers;
+    let targetLayer = null;
+    let targetSublayer = null;
+
+    layers.forEach((layer: any) => {
+      if (!layer.visible) return;
+
+      // MapImageLayer sublayers
+      if (layer.type === 'map-image' && layer.allSublayers) {
+        layer.allSublayers.forEach((sublayer: any) => {
+          if (sublayer.visible) {
+            const title = (sublayer.title || '').toUpperCase();
+            // RSRP, RSRQ veya SNR içeriyorsa
+            if (title.includes('RSRP') || title.includes('RSRQ') || title.includes('SNR')) {
+              targetLayer = layer;
+              targetSublayer = sublayer;
+            }
+          }
+        });
+      }
+      // Feature Layer
+      else if (layer.type === 'feature' && layer.visible && layer.fields) {
+        const hasTargetField = layer.fields.some((f: any) => {
+          const fname = f.name.toUpperCase();
+          return fname.includes('RSRP') || fname.includes('RSRQ') || fname.includes('SNR');
+        });
+        
+        if (hasTargetField) {
+          targetLayer = layer;
+          targetSublayer = layer;
+        }
+      }
+    });
+
+    if (!targetSublayer) {
+      alert('Uygun layer bulunamadı! RSRP/RSRQ/SNR içeren bir layer aktif edin.');
+      return;
+    }
+
+    // SQL sorgusu oluştur (AND ile birleştir)
+    const whereClauses = conditions.map(c => 
+      `${c.field} >= ${c.min} AND ${c.field} <= ${c.max}`
+    );
+    const whereClause = whereClauses.join(' AND ');
+
+    console.log('Applying filter:', whereClause);
+    console.log('To layer:', targetSublayer.title || targetSublayer.name);
+
+    // Filtreyi uygula
+    if (targetSublayer.definitionExpression !== undefined) {
+      targetSublayer.definitionExpression = whereClause;
+      
+      this.setState({ appliedLayer: targetSublayer });
+
+      // Layer'ı refresh et
+      if (targetLayer.refresh) {
+        targetLayer.refresh();
+      }
+
+      console.log('Filter applied successfully!');
+    } else {
+      console.error('Layer does not support definitionExpression');
+      alert('Bu layer filtreleme desteklemiyor!');
     }
   };
 
+  clearFilter = () => {
+    const { appliedLayer } = this.state;
+    
+    if (appliedLayer && appliedLayer.definitionExpression !== undefined) {
+      appliedLayer.definitionExpression = null;
+      console.log('Filter cleared');
+    }
+
+    this.setState({ 
+      conditions: [],
+      appliedLayer: null 
+    });
+  };
+
   render() {
-    const { activeField, minValue, maxValue, currentMin, currentMax } = this.state;
+    const { conditions, selectedField, tempMin, tempMax } = this.state;
+    const currentRange = FIELD_RANGES[selectedField];
 
     return (
-      <div style={{ padding: '15px', width: '100%', height: '100%', backgroundColor: '#fff' }}>
+      <div style={{ padding: '15px', width: '100%', height: '100%', backgroundColor: '#fff', overflow: 'auto' }}>
         <JimuMapViewComponent
           useMapWidgetId={this.props.useMapWidgetIds?.[0]}
           onActiveViewChange={this.onActiveViewChange}
         />
 
-        {activeField ? (
-          <div style={{ marginTop: '20px' }}>
-            <h3 style={{ margin: '0 0 15px 0', fontSize: '18px', fontWeight: 'bold' }}>
-              {activeField} Filter
-            </h3>
+        <div style={{ marginTop: '20px' }}>
+          <h3 style={{ margin: '0 0 15px 0', fontSize: '18px', fontWeight: 'bold' }}>
+            Layer Filtresi
+          </h3>
 
-            {/* MIN SLIDER */}
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600' }}>
-                Min: {currentMin}
-              </label>
-              <input
-                type="range"
-                min={minValue}
-                max={maxValue}
-                step={1}
-                value={currentMin}
-                onChange={this.onMinChange}
-                style={{
-                  width: '100%',
-                  height: '8px',
-                  borderRadius: '5px',
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              />
-            </div>
-
-            {/* MAX SLIDER */}
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600' }}>
-                Max: {currentMax}
-              </label>
-              <input
-                type="range"
-                min={minValue}
-                max={maxValue}
-                step={1}
-                value={currentMax}
-                onChange={this.onMaxChange}
-                style={{
-                  width: '100%',
-                  height: '8px',
-                  borderRadius: '5px',
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              />
-            </div>
-
-            <div style={{ 
-              padding: '10px', 
-              backgroundColor: '#f0f0f0', 
-              borderRadius: '5px',
-              fontSize: '13px'
-            }}>
-              📊 Aralık: <strong>{minValue}</strong> ile <strong>{maxValue}</strong> arası<br/>
-              🎯 Filtre: <strong>{currentMin}</strong> - <strong>{currentMax}</strong>
-            </div>
+          {/* FIELD SEÇME */}
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600' }}>
+              Alan Seçin:
+            </label>
+            <select
+              value={selectedField}
+              onChange={this.onFieldChange}
+              style={{
+                width: '100%',
+                padding: '8px',
+                fontSize: '14px',
+                border: '1px solid #ccc',
+                borderRadius: '4px'
+              }}
+            >
+              <option value="RSRP">RSRP (-140 to -50)</option>
+              <option value="RSRQ">RSRQ (-25 to 0)</option>
+              <option value="SNR">SNR (-10 to 35)</option>
+            </select>
           </div>
-        ) : (
-          <div style={{ marginTop: '30px', textAlign: 'center', color: '#999' }}>
-            <p style={{ fontSize: '14px' }}>
-              📡 RSRP, RSRQ veya SNR katmanını aktif edin
-            </p>
+
+          {/* MIN SLIDER */}
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600' }}>
+              Min: {tempMin}
+            </label>
+            <input
+              type="range"
+              min={currentRange.min}
+              max={currentRange.max}
+              step={1}
+              value={tempMin}
+              onChange={this.onMinChange}
+              style={{
+                width: '100%',
+                height: '6px',
+                cursor: 'pointer'
+              }}
+            />
           </div>
-        )}
+
+          {/* MAX SLIDER */}
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600' }}>
+              Max: {tempMax}
+            </label>
+            <input
+              type="range"
+              min={currentRange.min}
+              max={currentRange.max}
+              step={1}
+              value={tempMax}
+              onChange={this.onMaxChange}
+              style={{
+                width: '100%',
+                height: '6px',
+                cursor: 'pointer'
+              }}
+            />
+          </div>
+
+          {/* ADD CONDITION BUTTON */}
+          <button
+            onClick={this.addCondition}
+            style={{
+              width: '100%',
+              padding: '10px',
+              backgroundColor: '#0079c1',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: 'pointer',
+              marginBottom: '20px'
+            }}
+          >
+            + Koşul Ekle
+          </button>
+
+          {/* CONDITIONS LIST */}
+          {conditions.length > 0 && (
+            <div style={{ marginBottom: '20px' }}>
+              <h4 style={{ fontSize: '14px', fontWeight: '600', marginBottom: '10px' }}>
+                Aktif Koşullar:
+              </h4>
+              {conditions.map((cond, index) => (
+                <div
+                  key={cond.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '8px 10px',
+                    backgroundColor: '#f5f5f5',
+                    borderRadius: '4px',
+                    marginBottom: '8px',
+                    fontSize: '13px'
+                  }}
+                >
+                  <span>
+                    {index > 0 && <strong>AND </strong>}
+                    <strong>{cond.field}</strong>: {cond.min} → {cond.max}
+                  </span>
+                  <button
+                    onClick={() => this.removeCondition(cond.id)}
+                    style={{
+                      padding: '4px 8px',
+                      backgroundColor: '#d9534f',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '3px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* APPLY AND CLEAR BUTTONS */}
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button
+              onClick={this.applyFilter}
+              disabled={conditions.length === 0}
+              style={{
+                flex: 1,
+                padding: '12px',
+                backgroundColor: conditions.length === 0 ? '#ccc' : '#28a745',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: conditions.length === 0 ? 'not-allowed' : 'pointer'
+              }}
+            >
+              ✓ Filtreyi Uygula
+            </button>
+
+            <button
+              onClick={this.clearFilter}
+              disabled={conditions.length === 0}
+              style={{
+                flex: 1,
+                padding: '12px',
+                backgroundColor: conditions.length === 0 ? '#ccc' : '#dc3545',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: conditions.length === 0 ? 'not-allowed' : 'pointer'
+              }}
+            >
+              ✗ Temizle
+            </button>
+          </div>
+
+          {/* INFO */}
+          <div style={{
+            marginTop: '20px',
+            padding: '10px',
+            backgroundColor: '#e7f3ff',
+            borderLeft: '4px solid #0079c1',
+            fontSize: '12px',
+            borderRadius: '4px'
+          }}>
+            💡 <strong>Nasıl Kullanılır:</strong><br/>
+            1. Alan seçin (RSRP/RSRQ/SNR)<br/>
+            2. Min/Max değerleri ayarlayın<br/>
+            3. "Koşul Ekle" ile listeye ekleyin<br/>
+            4. İstediğiniz kadar koşul ekleyin (AND ile)<br/>
+            5. "Filtreyi Uygula" ile map'e uygulayın
+          </div>
+        </div>
       </div>
     );
   }
