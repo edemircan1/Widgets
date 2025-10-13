@@ -8,7 +8,8 @@
   "copyright": "",
   "license": "MIT",
   "properties": {
-    "hasUIString": true
+    "hasUIString": true,
+    "hasSettingPage": true
   },
   "translatedLocales": [
     "en"
