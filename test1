@@ -1,7 +1,6 @@
 /** @jsx jsx */
 import { React, jsx, AllWidgetProps } from 'jimu-core';
 import { JimuMapView, JimuMapViewComponent } from 'jimu-arcgis';
-import { Slider } from 'jimu-ui';
 
 interface State {
   activeLayer: any;
@@ -15,7 +14,6 @@ interface State {
 
 export default class Widget extends React.PureComponent<AllWidgetProps<any>, State> {
   private mapView: JimuMapView = null;
-  private filterTimeout: any = null;
 
   constructor(props) {
     super(props);
@@ -30,129 +28,90 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     };
   }
 
-  // MapView hazır olduğunda
   onActiveViewChange = (jimuMapView: JimuMapView) => {
     if (!jimuMapView) return;
     
     this.mapView = jimuMapView;
 
-    // Layer'lar değiştiğinde dinle
-    jimuMapView.view.map.allLayers.on('change', () => {
-      this.checkActiveLayers();
-    });
-
-    // Layer visibility değiştiğinde dinle
-    jimuMapView.view.map.allLayers.forEach((layer: any) => {
-      layer.watch('visible', () => {
-        this.checkActiveLayers();
-      });
-
-      // MapImageLayer sublayer'larını izle
-      if (layer.type === 'map-image' && layer.allSublayers) {
-        layer.allSublayers.forEach((sublayer: any) => {
-          sublayer.watch('visible', () => {
-            this.checkActiveLayers();
-          });
+    // Layer visibility değişimlerini izle
+    const watchLayers = () => {
+      jimuMapView.view.map.allLayers.forEach((layer: any) => {
+        layer.watch('visible', () => {
+          setTimeout(() => this.checkActiveLayers(), 100);
         });
-      }
+
+        if (layer.type === 'map-image' && layer.allSublayers) {
+          layer.allSublayers.forEach((sublayer: any) => {
+            sublayer.watch('visible', () => {
+              setTimeout(() => this.checkActiveLayers(), 100);
+            });
+          });
+        }
+      });
+    };
+
+    watchLayers();
+    
+    jimuMapView.view.map.allLayers.on('change', () => {
+      watchLayers();
+      setTimeout(() => this.checkActiveLayers(), 100);
     });
 
-    // İlk yüklemede kontrol et
     this.checkActiveLayers();
   };
 
-  // Aktif layer'ları kontrol et
   checkActiveLayers = () => {
     if (!this.mapView) return;
 
     const layers = this.mapView.view.map.allLayers;
-    let foundLayer = false;
-    let lastVisibleLayer = null;
+    let lastFound = null;
 
-    // En son aktif edilen layer'ı bul
+    // Tüm layer'ları tara
     layers.forEach((layer: any) => {
-      if (layer.visible) {
-        // MapImageLayer için sublayer kontrolü
-        if (layer.type === 'map-image' && layer.allSublayers) {
-          layer.allSublayers.forEach((sublayer: any) => {
-            if (sublayer.visible) {
-              const result = this.checkSublayerFields(sublayer, layer);
-              if (result) {
-                lastVisibleLayer = result;
-                foundLayer = true;
-              }
-            }
-          });
-        }
-        // FeatureLayer için direkt kontrol
-        else if (layer.type === 'feature') {
-          const result = this.checkFieldsInLayer(layer);
-          if (result) {
-            lastVisibleLayer = result;
-            foundLayer = true;
+      if (!layer.visible) return;
+
+      // MapImageLayer
+      if (layer.type === 'map-image' && layer.allSublayers) {
+        layer.allSublayers.forEach((sublayer: any) => {
+          if (!sublayer.visible) return;
+          
+          const title = (sublayer.title || '').toUpperCase();
+          
+          if (title.includes('RSRP')) {
+            lastFound = { sublayer, parent: layer, field: 'RSRP' };
+          } else if (title.includes('RSRQ')) {
+            lastFound = { sublayer, parent: layer, field: 'RSRQ' };
+          } else if (title.includes('SNR')) {
+            lastFound = { sublayer, parent: layer, field: 'SNR' };
+          }
+        });
+      }
+      // FeatureLayer
+      else if (layer.type === 'feature' && layer.fields) {
+        for (const field of layer.fields) {
+          const fname = field.name.toUpperCase();
+          if (fname.includes('RSRP')) {
+            lastFound = { sublayer: layer, parent: null, field: field.name };
+            break;
+          } else if (fname.includes('RSRQ')) {
+            lastFound = { sublayer: layer, parent: null, field: field.name };
+            break;
+          } else if (fname.includes('SNR')) {
+            lastFound = { sublayer: layer, parent: null, field: field.name };
+            break;
           }
         }
       }
     });
 
-    // En son bulunan layer'ı aktif et
-    if (foundLayer && lastVisibleLayer) {
-      this.setActiveLayer(
-        lastVisibleLayer.layer,
-        lastVisibleLayer.field,
-        lastVisibleLayer.parent
-      );
-    } else if (!foundLayer) {
-      // Hiç layer yoksa temizle
-      this.setState({
-        activeLayer: null,
-        activeSublayer: null,
-        activeField: ''
-      });
+    if (lastFound) {
+      this.setActiveLayer(lastFound.sublayer, lastFound.field, lastFound.parent);
+    } else {
+      this.clearActiveLayer();
     }
   };
 
-  // Sublayer field kontrolü
-  checkSublayerFields = (sublayer: any, parentLayer: any) => {
-    const title = sublayer.title?.toUpperCase() || '';
-
-    if (title.includes('RSRP')) {
-      return { layer: sublayer, field: 'RSRP', parent: parentLayer };
-    } else if (title.includes('RSRQ')) {
-      return { layer: sublayer, field: 'RSRQ', parent: parentLayer };
-    } else if (title.includes('SNR')) {
-      return { layer: sublayer, field: 'SNR', parent: parentLayer };
-    }
-
-    return null;
-  };
-
-  // Layer'daki field'ları kontrol et
-  checkFieldsInLayer = (layer: any) => {
-    if (!layer.fields) return null;
-
-    for (const field of layer.fields) {
-      const fieldName = field.name.toUpperCase();
-
-      if (fieldName.includes('RSRP')) {
-        return { layer: layer, field: field.name, parent: null };
-      } else if (fieldName.includes('RSRQ')) {
-        return { layer: layer, field: field.name, parent: null };
-      } else if (fieldName.includes('SNR')) {
-        return { layer: layer, field: field.name, parent: null };
-      }
-    }
-
-    return null;
-  };
-
-  // Aktif layer'ı ayarla
-  setActiveLayer = (layer: any, fieldName: string, parentLayer?: any) => {
-    // Eğer aynı layer zaten aktifse tekrar set etme
-    if (this.state.activeField === fieldName && this.state.activeSublayer === layer) {
-      return;
-    }
-
+  setActiveLayer = (layer: any, fieldName: string, parentLayer: any) => {
     let min = -120, max = -40;
     const fieldUpper = fieldName.toUpperCase();
 
@@ -164,91 +123,67 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
       max = 30;
     }
 
-    console.log('Setting active layer:', fieldName, 'Range:', min, '-', max);
+    // Önceki layer'ın filtresini temizle
+    const oldTarget = this.state.activeSublayer || this.state.activeLayer;
+    if (oldTarget && oldTarget !== layer && oldTarget.definitionExpression !== undefined) {
+      oldTarget.definitionExpression = null;
+    }
 
-    // Önceki filtreyi temizle
+    console.log('Active:', fieldName, 'Range:', min, 'to', max);
+
+    this.setState({
+      activeLayer: parentLayer || layer,
+      activeSublayer: layer,
+      activeField: fieldName,
+      minValue: min,
+      maxValue: max,
+      currentMin: min,
+      currentMax: max
+    }, () => {
+      // Filter'ı hemen uygula (tüm aralık)
+      this.applyFilter();
+    });
+  };
+
+  clearActiveLayer = () => {
     const oldTarget = this.state.activeSublayer || this.state.activeLayer;
     if (oldTarget && oldTarget.definitionExpression !== undefined) {
       oldTarget.definitionExpression = null;
     }
 
     this.setState({
-      activeLayer: parentLayer || layer,
-      activeSublayer: parentLayer ? layer : null,
-      activeField: fieldName,
-      minValue: min,
-      maxValue: max,
-      currentMin: min,
-      currentMax: max
+      activeLayer: null,
+      activeSublayer: null,
+      activeField: ''
     });
   };
 
-  // Slider değiştiğinde (debounce ile)
-  onSliderChange = (evt: any) => {
-    const value = evt.target.value;
-    
-    // value bir array olmalı [min, max]
-    if (!Array.isArray(value) || value.length !== 2) {
-      console.log('Invalid slider value:', value);
-      return;
-    }
-
-    this.setState({
-      currentMin: value[0],
-      currentMax: value[1]
-    });
-
-    // Debounce - kullanıcı slider'ı sürüklerken sürekli filter uygulanmasın
-    if (this.filterTimeout) {
-      clearTimeout(this.filterTimeout);
-    }
-
-    this.filterTimeout = setTimeout(() => {
+  onMinChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newMin = parseFloat(e.target.value);
+    this.setState({ currentMin: newMin }, () => {
       this.applyFilter();
-    }, 300);
+    });
   };
 
-  // Filtreyi uygula
-  applyFilter = () => {
-    const { activeLayer, activeSublayer, activeField, currentMin, currentMax } = this.state;
+  onMaxChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newMax = parseFloat(e.target.value);
+    this.setState({ currentMax: newMax }, () => {
+      this.applyFilter();
+    });
+  };
 
+  applyFilter = () => {
+    const { activeSublayer, activeLayer, activeField, currentMin, currentMax } = this.state;
     const targetLayer = activeSublayer || activeLayer;
 
-    if (!targetLayer || !activeField) {
-      console.log('No target layer or field');
-      return;
-    }
+    if (!targetLayer || !activeField) return;
 
     const query = `${activeField} >= ${currentMin} AND ${activeField} <= ${currentMax}`;
     
-    console.log('Applying filter:', query);
+    console.log('Filter:', query);
 
-    // DefinitionExpression uygula
     if (targetLayer.definitionExpression !== undefined) {
       targetLayer.definitionExpression = query;
-    } else {
-      console.warn('Layer does not support definitionExpression');
-    }
-
-    // Layer'ı refresh et
-    if (activeLayer && activeLayer.refresh) {
-      activeLayer.refresh();
-    }
-  };
-
-  // Slider'ı resetle
-  resetFilter = () => {
-    const { minValue, maxValue, activeLayer, activeSublayer } = this.state;
-
-    this.setState({
-      currentMin: minValue,
-      currentMax: maxValue
-    });
-
-    // Filtreyi kaldır
-    const targetLayer = activeSublayer || activeLayer;
-    if (targetLayer && targetLayer.definitionExpression !== undefined) {
-      targetLayer.definitionExpression = null;
     }
 
     if (activeLayer && activeLayer.refresh) {
@@ -260,7 +195,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     const { activeField, minValue, maxValue, currentMin, currentMax } = this.state;
 
     return (
-      <div className="widget-rsrp-filter" style={{ padding: '20px', width: '100%', height: '100%' }}>
+      <div style={{ padding: '15px', width: '100%', height: '100%', backgroundColor: '#fff' }}>
         <JimuMapViewComponent
           useMapWidgetId={this.props.useMapWidgetIds?.[0]}
           onActiveViewChange={this.onActiveViewChange}
@@ -268,52 +203,69 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
         {activeField ? (
           <div style={{ marginTop: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <h4 style={{ fontSize: '16px', margin: 0 }}>
-                {activeField} Filtresi
-              </h4>
-              <button 
-                onClick={this.resetFilter}
-                style={{
-                  padding: '5px 10px',
-                  fontSize: '12px',
-                  cursor: 'pointer',
-                  border: '1px solid #ccc',
-                  borderRadius: '4px',
-                  background: '#fff'
-                }}
-              >
-                Reset
-              </button>
-            </div>
+            <h3 style={{ margin: '0 0 15px 0', fontSize: '18px', fontWeight: 'bold' }}>
+              {activeField} Filter
+            </h3>
 
-            <div style={{ marginBottom: '15px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginBottom: '5px' }}>
-                <span>Min: <strong>{currentMin}</strong></span>
-                <span>Max: <strong>{currentMax}</strong></span>
-              </div>
-              <div style={{ fontSize: '12px', color: '#666' }}>
-                Toplam Aralık: {minValue} - {maxValue}
-              </div>
-            </div>
-
-            <div style={{ padding: '10px 0' }}>
-              <Slider
+            {/* MIN SLIDER */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600' }}>
+                Min: {currentMin}
+              </label>
+              <input
+                type="range"
                 min={minValue}
                 max={maxValue}
-                range
-                value={[currentMin, currentMax]}
-                onChange={this.onSliderChange}
+                step={1}
+                value={currentMin}
+                onChange={this.onMinChange}
+                style={{
+                  width: '100%',
+                  height: '8px',
+                  borderRadius: '5px',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
               />
             </div>
 
-            <div style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
-              💡 İki ucu sürükleyerek min/max değerleri ayarlayın
+            {/* MAX SLIDER */}
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', fontWeight: '600' }}>
+                Max: {currentMax}
+              </label>
+              <input
+                type="range"
+                min={minValue}
+                max={maxValue}
+                step={1}
+                value={currentMax}
+                onChange={this.onMaxChange}
+                style={{
+                  width: '100%',
+                  height: '8px',
+                  borderRadius: '5px',
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              />
+            </div>
+
+            <div style={{ 
+              padding: '10px', 
+              backgroundColor: '#f0f0f0', 
+              borderRadius: '5px',
+              fontSize: '13px'
+            }}>
+              📊 Aralık: <strong>{minValue}</strong> ile <strong>{maxValue}</strong> arası<br/>
+              🎯 Filtre: <strong>{currentMin}</strong> - <strong>{currentMax}</strong>
             </div>
           </div>
         ) : (
-          <div style={{ marginTop: '20px', textAlign: 'center', color: '#666' }}>
-            <p>📡 RSRP, RSRQ veya SNR içeren bir layer aktif edin</p>
+          <div style={{ marginTop: '30px', textAlign: 'center', color: '#999' }}>
+            <p style={{ fontSize: '14px' }}>
+              📡 RSRP, RSRQ veya SNR katmanını aktif edin
+            </p>
           </div>
         )}
       </div>
