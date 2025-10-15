@@ -51,6 +51,10 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     try {
       // Build query URL with parameters
       const queryUrl = `${this.KPI_TABLE_URL}/query`;
+      console.log('=== KPI LOAD DEBUG ===');
+      console.log('Base URL:', this.KPI_TABLE_URL);
+      console.log('Query URL:', queryUrl);
+      
       const params = new URLSearchParams({
         where: '1=1',
         outFields: ['eutrancellfdd', ...this.KPI_COLUMNS].join(','),
@@ -58,16 +62,30 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
         f: 'json'
       });
 
-      const response = await fetch(`${queryUrl}?${params.toString()}`);
+      const fullUrl = `${queryUrl}?${params.toString()}`;
+      console.log('Full URL:', fullUrl);
+      console.log('Fetching...');
+
+      const response = await fetch(fullUrl);
+      console.log('Response status:', response.status);
+      console.log('Response headers:', response.headers);
+      
+      const responseText = await response.text();
+      console.log('Response text (first 500 chars):', responseText.substring(0, 500));
       
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
-      const result = await response.json();
+      const result = JSON.parse(responseText);
+      console.log('Parsed result:', result);
       
       if (result.error) {
         throw new Error(result.error.message || 'Query failed');
+      }
+      
+      if (!result.features || result.features.length === 0) {
+        throw new Error('No features returned from query');
       }
       
       const data = result.features.map(feature => ({
@@ -79,13 +97,14 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
       }));
 
       this.setState({ kpiData: data, isLoading: false });
-      console.log('KPI Data loaded:', data.length, 'records');
+      console.log('✓ KPI Data loaded successfully:', data.length, 'records');
+      console.log('Sample record:', data[0]);
     } catch (err) {
       this.setState({ 
         error: `Failed to load KPI data: ${err.message}`, 
         isLoading: false 
       });
-      console.error('Error loading KPI data:', err);
+      console.error('❌ Error loading KPI data:', err);
     }
   };
 
