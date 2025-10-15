@@ -1,307 +1,136 @@
 /** @jsx jsx */
-import { React, AllWidgetProps, jsx } from 'jimu-core';
-import { JimuMapView, JimuMapViewComponent } from 'jimu-arcgis';
-import FeatureLayer from 'esri/layers/FeatureLayer';
-import SimpleFillSymbol from 'esri/symbols/SimpleFillSymbol';
-import Color from 'esri/Color';
-import Query from 'esri/rest/support/Query';
+import { React, AllWidgetProps, jsx } from ‘jimu-core’;
+import { JimuMapView } from ‘jimu-arcgis’;
+import FeatureLayer from ‘esri/layers/FeatureLayer’;
 
 interface State {
-  jimuMapView: JimuMapView;
-  selectedKPI: string;
-  kpiData: any[];
-  isLoading: boolean;
-  error: string;
+polygonData: any[];
+kpiData: any[];
+loading: boolean;
+error: string;
 }
 
-export default class Widget extends React.PureComponent<AllWidgetProps<any>, State> {
-  // **EDIT THESE URLs**
-  private readonly POLYGON_LAYER_URL = 'YOUR_POLYGON_FEATURE_LAYER_URL_HERE';
-  private readonly KPI_TABLE_URL = 'YOUR_KPI_TABLE_URL_HERE';
-  
-  private readonly KPI_COLUMNS = [
-    'data_ran_acc',
-    'd_erb_drop', 
-    'rrc_fail',
-    'rrc_attempts',
-    'duac_fail',
-    'dl_drb_tput'
-  ];
+export default class Widget extends React.PureComponent<AllWidgetProps<{}>, State> {
+// Hard-coded URLs for your feature services
+private readonly DFW_TX_LTE_URL = ‘YOUR_DFW_TX_LTE_FEATURE_LAYER_URL_HERE’;
+private readonly KPIS_URL = ‘YOUR_KPIS_LAYER_URL_HERE’;
 
-  constructor(props) {
-    super(props);
-    this.state = {
-      jimuMapView: null,
-      selectedKPI: '',
-      kpiData: [],
-      isLoading: false,
-      error: ''
-    };
-    console.log('KPI Widget initialized');
-    console.log('Polygon Layer URL:', this.POLYGON_LAYER_URL);
-    console.log('KPI Table URL:', this.KPI_TABLE_URL);
-  }
+constructor(props) {
+super(props);
+this.state = {
+polygonData: [],
+kpiData: [],
+loading: false,
+error: ‘’
+};
+}
 
-  activeViewChangeHandler = (jmv: JimuMapView) => {
-    if (jmv) {
-      this.setState({ jimuMapView: jmv });
-    }
-  };
+componentDidMount() {
+this.loadData();
+}
 
-  loadKPIData = async () => {
-    this.setState({ isLoading: true, error: '' });
+loadData = async () => {
+this.setState({ loading: true, error: ‘’ });
+
+```
+try {
+  // Load DFW_TX_LTE polygon data
+  const polygonLayer = new FeatureLayer({
+    url: this.DFW_TX_LTE_URL
+  });
+
+  const polygonQuery = polygonLayer.createQuery();
+  polygonQuery.where = '1=1'; // Get all features
+  polygonQuery.outFields = ['*']; // Get all fields
+  polygonQuery.returnGeometry = false;
+
+  const polygonResults = await polygonLayer.queryFeatures(polygonQuery);
+  const polygonFeatures = polygonResults.features.map(f => f.attributes);
+
+  // Load KPIS data
+  const kpiLayer = new FeatureLayer({
+    url: this.KPIS_URL
+  });
+
+  const kpiQuery = kpiLayer.createQuery();
+  kpiQuery.where = '1=1';
+  kpiQuery.outFields = ['*'];
+  kpiQuery.returnGeometry = false;
+
+  const kpiResults = await kpiLayer.queryFeatures(kpiQuery);
+  const kpiFeatures = kpiResults.features.map(f => f.attributes);
+
+  this.setState({
+    polygonData: polygonFeatures,
+    kpiData: kpiFeatures,
+    loading: false
+  });
+
+  console.log('DFW_TX_LTE Data:', polygonFeatures);
+  console.log('KPIS Data:', kpiFeatures);
+
+} catch (error) {
+  this.setState({
+    loading: false,
+    error: `Error loading data: ${error.message}`
+  });
+  console.error('Error:', error);
+}
+```
+
+};
+
+render() {
+const { polygonData, kpiData, loading, error } = this.state;
+
+```
+return (
+  <div className="widget-custom" style={{ padding: '20px' }}>
+    <h3>Feature Services Data Reader</h3>
     
-    try {
-      // Build query URL with parameters
-      const queryUrl = `${this.KPI_TABLE_URL}/query`;
-      console.log('=== KPI LOAD DEBUG ===');
-      console.log('Base URL:', this.KPI_TABLE_URL);
-      console.log('Query URL:', queryUrl);
-      
-      const params = new URLSearchParams({
-        where: '1=1',
-        outFields: ['eutrancellfdd', ...this.KPI_COLUMNS].join(','),
-        returnGeometry: 'false',
-        f: 'json'
-      });
-
-      const fullUrl = `${queryUrl}?${params.toString()}`;
-      console.log('Full URL:', fullUrl);
-      console.log('Fetching...');
-
-      const response = await fetch(fullUrl);
-      console.log('Response status:', response.status);
-      console.log('Response headers:', response.headers);
-      
-      const responseText = await response.text();
-      console.log('Response text (first 500 chars):', responseText.substring(0, 500));
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const result = JSON.parse(responseText);
-      console.log('Parsed result:', result);
-      
-      if (result.error) {
-        throw new Error(result.error.message || 'Query failed');
-      }
-      
-      if (!result.features || result.features.length === 0) {
-        throw new Error('No features returned from query');
-      }
-      
-      const data = result.features.map(feature => ({
-        eutrancellfdd: feature.attributes.eutrancellfdd,
-        ...this.KPI_COLUMNS.reduce((acc, col) => {
-          acc[col] = feature.attributes[col];
-          return acc;
-        }, {})
-      }));
-
-      this.setState({ kpiData: data, isLoading: false });
-      console.log('✓ KPI Data loaded successfully:', data.length, 'records');
-      console.log('Sample record:', data[0]);
-    } catch (err) {
-      this.setState({ 
-        error: `Failed to load KPI data: ${err.message}`, 
-        isLoading: false 
-      });
-      console.error('❌ Error loading KPI data:', err);
-    }
-  };
-
-  applyKPIColors = async () => {
-    const { jimuMapView, selectedKPI, kpiData } = this.state;
+    {loading && <p>Loading data...</p>}
     
-    if (!jimuMapView || !selectedKPI || kpiData.length === 0) {
-      return;
-    }
-
-    try {
-      // Find the polygon layer or create it
-      let polygonLayer = jimuMapView.view.map.layers.find(
-        layer => layer.url === this.POLYGON_LAYER_URL
-      ) as FeatureLayer;
-
-      if (!polygonLayer) {
-        polygonLayer = new FeatureLayer({
-          url: this.POLYGON_LAYER_URL
-        });
-        jimuMapView.view.map.add(polygonLayer);
-      }
-
-      // Calculate min and max values for the selected KPI
-      const kpiValues = kpiData
-        .map(d => d[selectedKPI])
-        .filter(v => v !== null && v !== undefined && !isNaN(v));
-      
-      const minValue = Math.min(...kpiValues);
-      const maxValue = Math.max(...kpiValues);
-
-      // Create a color mapping function
-      const getColor = (value: number): Color => {
-        if (isNaN(value) || value === null || value === undefined) {
-          return new Color([200, 200, 200, 0.5]); // Gray for null/undefined
-        }
-        
-        const normalized = (value - minValue) / (maxValue - minValue);
-        
-        // Red (low) -> Yellow (mid) -> Green (high)
-        let r, g, b;
-        if (normalized < 0.5) {
-          // Red to Yellow
-          r = 255;
-          g = Math.round(255 * (normalized * 2));
-          b = 0;
-        } else {
-          // Yellow to Green
-          r = Math.round(255 * (1 - (normalized - 0.5) * 2));
-          g = 255;
-          b = 0;
-        }
-        
-        return new Color([r, g, b, 0.7]);
-      };
-
-      // Query all polygons
-      const query = new Query();
-      query.where = '1=1';
-      query.outFields = ['cell'];
-      query.returnGeometry = false;
-
-      const result = await polygonLayer.queryFeatures(query);
-      
-      // Create unique value infos for renderer
-      const uniqueValueInfos = result.features.map(feature => {
-        const cellValue = feature.attributes.cell;
-        const kpiRecord = kpiData.find(d => d.eutrancellfdd === cellValue);
-        const kpiValue = kpiRecord ? kpiRecord[selectedKPI] : null;
-        const color = getColor(kpiValue);
-
-        return {
-          value: cellValue,
-          symbol: new SimpleFillSymbol({
-            color: color,
-            outline: {
-              color: [255, 255, 255, 0.5],
-              width: 1
-            }
-          })
-        };
-      });
-
-      // Apply unique value renderer
-      const renderer = {
-        type: 'unique-value',
-        field: 'cell',
-        uniqueValueInfos: uniqueValueInfos,
-        defaultSymbol: new SimpleFillSymbol({
-          color: [200, 200, 200, 0.3],
-          outline: {
-            color: [100, 100, 100, 0.5],
-            width: 1
-          }
-        })
-      } as any;
-
-      polygonLayer.renderer = renderer;
-
-      this.setState({ error: '' });
-    } catch (err) {
-      this.setState({ 
-        error: `Failed to apply colors: ${err.message}` 
-      });
-    }
-  };
-
-  handleKPISelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    this.setState({ selectedKPI: e.target.value }, () => {
-      this.applyKPIColors();
-    });
-  };
-
-  render() {
-    const { selectedKPI, isLoading, error, kpiData } = this.state;
-
-    console.log('Rendering widget, state:', { selectedKPI, isLoading, error, kpiDataCount: kpiData.length });
-
-    return (
-      <div className="widget-kpi jimu-widget" style={{ padding: '20px', height: '100%', overflow: 'auto' }}>
-        <h3>KPI Visualization</h3>
-        
-        <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '4px' }}>
-          <small>
-            <strong>Status:</strong> Widget loaded successfully<br/>
-            <strong>Map connected:</strong> {this.state.jimuMapView ? 'Yes' : 'No'}
-          </small>
-        </div>
-        
-        <div style={{ marginBottom: '15px' }}>
-          <button 
-            onClick={this.loadKPIData}
-            disabled={isLoading}
-            style={{
-              padding: '8px 16px',
-              backgroundColor: isLoading ? '#ccc' : '#0079c1',
-              color: 'white',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: isLoading ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {isLoading ? 'Loading...' : 'Load KPI Data'}
-          </button>
-          {kpiData.length > 0 && (
-            <span style={{ marginLeft: '10px', color: 'green' }}>
-              ✓ {kpiData.length} records loaded
-            </span>
+    {error && <p style={{ color: 'red' }}>{error}</p>}
+    
+    {!loading && !error && (
+      <div>
+        <div style={{ marginBottom: '20px' }}>
+          <h4>DFW_TX_LTE Layer</h4>
+          <p>Records loaded: {polygonData.length}</p>
+          {polygonData.length > 0 && (
+            <details>
+              <summary>View first record</summary>
+              <pre style={{ fontSize: '12px', background: '#f5f5f5', padding: '10px' }}>
+                {JSON.stringify(polygonData[0], null, 2)}
+              </pre>
+            </details>
           )}
         </div>
 
-        {kpiData.length > 0 && (
-          <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
-              Select KPI:
-            </label>
-            <select
-              value={selectedKPI}
-              onChange={this.handleKPISelect}
-              style={{
-                width: '100%',
-                padding: '8px',
-                borderRadius: '4px',
-                border: '1px solid #ccc'
-              }}
-            >
-              <option value="">-- Select a KPI --</option>
-              {this.KPI_COLUMNS.map(kpi => (
-                <option key={kpi} value={kpi}>
-                  {kpi}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
+        <div>
+          <h4>KPIS Layer</h4>
+          <p>Records loaded: {kpiData.length}</p>
+          {kpiData.length > 0 && (
+            <details>
+              <summary>View first record</summary>
+              <pre style={{ fontSize: '12px', background: '#f5f5f5', padding: '10px' }}>
+                {JSON.stringify(kpiData[0], null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
 
-        {error && (
-          <div style={{ 
-            padding: '10px', 
-            backgroundColor: '#ffebee', 
-            color: '#c62828',
-            borderRadius: '4px',
-            marginTop: '10px',
-            fontSize: '13px'
-          }}>
-            <strong>Error:</strong> {error}
-          </div>
-        )}
-
-        <JimuMapViewComponent
-          useMapWidgetId={this.props.useMapWidgetIds?.[0]}
-          onActiveViewChange={this.activeViewChangeHandler}
-        />
+        <button 
+          onClick={this.loadData}
+          style={{ marginTop: '20px', padding: '8px 16px', cursor: 'pointer' }}
+        >
+          Reload Data
+        </button>
       </div>
-    );
-  }
+    )}
+  </div>
+);
+```
+
+}
 }
