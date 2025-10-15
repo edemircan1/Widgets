@@ -1,18 +1,25 @@
-{
-  "name": "kpi",
-  "type": "widget",
-  "version": "1.0.0",
-  "exbVersion": "1.6.0",
-  "author": "Custom",
-  "description": "KPI Visualization Widget for Cell Site Performance",
-  "copyright": "",
-  "license": "MIT",
-  "properties": {},
-  "translatedLocales": [
-    "en"
-  ],
-  "defaultSize": {
-    "width": 300,
-    "height": 400
+/** @jsx jsx */
+import { React, jsx } from 'jimu-core';
+import { AllWidgetSettingProps } from 'jimu-for-builder';
+import { MapWidgetSelector } from 'jimu-ui/advanced/setting-components';
+
+export default class Setting extends React.PureComponent<AllWidgetSettingProps<any>> {
+  
+  onMapWidgetSelected = (useMapWidgetIds: string[]) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      useMapWidgetIds: useMapWidgetIds
+    });
+  };
+
+  render() {
+    return (
+      <div className="widget-setting-kpi">
+        <MapWidgetSelector
+          onSelect={this.onMapWidgetSelected}
+          useMapWidgetIds={this.props.useMapWidgetIds}
+        />
+      </div>
+    );
   }
 }
