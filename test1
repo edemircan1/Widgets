@@ -37,6 +37,9 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
       isLoading: false,
       error: ''
     };
+    console.log('KPI Widget initialized');
+    console.log('Polygon Layer URL:', this.POLYGON_LAYER_URL);
+    console.log('KPI Table URL:', this.KPI_TABLE_URL);
   }
 
   activeViewChangeHandler = (jmv: JimuMapView) => {
@@ -221,9 +224,18 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
   render() {
     const { selectedKPI, isLoading, error, kpiData } = this.state;
 
+    console.log('Rendering widget, state:', { selectedKPI, isLoading, error, kpiDataCount: kpiData.length });
+
     return (
-      <div className="widget-kpi jimu-widget" style={{ padding: '20px' }}>
+      <div className="widget-kpi jimu-widget" style={{ padding: '20px', height: '100%', overflow: 'auto' }}>
         <h3>KPI Visualization</h3>
+        
+        <div style={{ marginBottom: '10px', padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '4px' }}>
+          <small>
+            <strong>Status:</strong> Widget loaded successfully<br/>
+            <strong>Map connected:</strong> {this.state.jimuMapView ? 'Yes' : 'No'}
+          </small>
+        </div>
         
         <div style={{ marginBottom: '15px' }}>
           <button 
@@ -231,7 +243,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             disabled={isLoading}
             style={{
               padding: '8px 16px',
-              backgroundColor: '#0079c1',
+              backgroundColor: isLoading ? '#ccc' : '#0079c1',
               color: 'white',
               border: 'none',
               borderRadius: '4px',
@@ -249,7 +261,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
         {kpiData.length > 0 && (
           <div style={{ marginBottom: '15px' }}>
-            <label style={{ display: 'block', marginBottom: '5px' }}>
+            <label style={{ display: 'block', marginBottom: '5px', fontWeight: 'bold' }}>
               Select KPI:
             </label>
             <select
@@ -278,9 +290,10 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             backgroundColor: '#ffebee', 
             color: '#c62828',
             borderRadius: '4px',
-            marginTop: '10px'
+            marginTop: '10px',
+            fontSize: '13px'
           }}>
-            {error}
+            <strong>Error:</strong> {error}
           </div>
         )}
 
