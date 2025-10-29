@@ -268,6 +268,7 @@ interface WidgetState {
   legendTitle?: string;
   dateRange?: { min: number; max: number };
   selectedDateRange?: { start: number; end: number };
+  useQuickDateRange: boolean;
 }
 
 const ensureFeatureLayer = async (
@@ -299,10 +300,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     legendExpression: undefined,
     legendTitle: undefined,
     dateRange: undefined,
-    selectedDateRange: undefined
+    selectedDateRange: undefined,
+    useQuickDateRange: false
   });
   const [kpiSeries, setKpiSeries] = React.useState<KpiSeriesEntry[]>([]);
-  const [kpiTimeSeries, setKpiTimeSeries] = React.useState<KpiTimeSeriesEntry[]>([]);
+  const [kpiTimeSeriesByField, setKpiTimeSeriesByField] = React.useState<Map<string, KpiTimeSeriesEntry[]>>(new Map());
   const [isChartOpen, setChartOpen] = React.useState(false);
   const chartContainerRef = React.useRef<HTMLDivElement | null>(null);
   const [chartWidth, setChartWidth] = React.useState<number>(0);
@@ -319,7 +321,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
   const mapWidgetId = props.useMapWidgetIds?.[0];
   const [hoveredPoint, setHoveredPoint] = React.useState<{ seriesKey: string; timestamp: number } | null>(null);
   const [selectedCellKeys, setSelectedCellKeys] = React.useState<string[]>([]);
-  const [cellSeriesData, setCellSeriesData] = React.useState<Map<string, KpiTimeSeriesEntry>>(new Map());
+  const [cellColorMap, setCellColorMap] = React.useState<Map<string, string>>(new Map());
 
   const normalizeKey = React.useCallback((value: unknown): string | undefined => {
     if (value === null || value === undefined) {
@@ -335,7 +337,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
   React.useEffect(() => {
     if (!config?.kpisUrl?.trim()) {
       setKpiSeries([]);
-      setKpiTimeSeries([]);
+      setKpiTimeSeriesByField(new Map());
       setChartOpen(false);
       setLegendExpanded(false);
       setState((prev: WidgetState) => {
@@ -386,7 +388,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
         const sample = kpiFeatures[0];
         const joinField = KPI_JOIN_FIELD;
         return Object.keys(sample)
-          .filter(k => k !== joinField && !/^objectid/i.test(k))
+          .filter(k => k !== joinField && !/^objectid/i.test(k) && k !== 'date_time_id')
           .filter(k => typeof (sample as any)[k] === 'number');
       })();
       const dateValues = kpiFeatures
@@ -500,11 +502,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     }
     restoreCellsLayerDefaults();
     setKpiSeries([]);
-    setKpiTimeSeries([]);
+    setKpiTimeSeriesByField(new Map());
     setChartOpen(false);
     setLegendExpanded(false);
     setSelectedCellKeys([]);
-    setCellSeriesData(new Map());
+    setCellColorMap(new Map());
   }, [restoreCellsLayerDefaults]);
 
   const handleActiveViewChange = React.useCallback((jmv: JimuMapView) => {
@@ -573,11 +575,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       legendTitle: undefined
     }));
     setKpiSeries([]);
-    setKpiTimeSeries([]);
+    setKpiTimeSeriesByField(new Map());
     setChartOpen(false);
     setLegendExpanded(false);
     setSelectedCellKeys([]);
-    setCellSeriesData(new Map());
+    setCellColorMap(new Map());
     setActiveJimuMapView(jmv);
   }, [activeJimuMapView, restoreCellsLayerDefaults]);
 
@@ -756,11 +758,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       legendTitle: undefined
     }));
     setKpiSeries([]);
-    setKpiTimeSeries([]);
+    setKpiTimeSeriesByField(new Map());
     setChartOpen(false);
     setLegendExpanded(false);
     setSelectedCellKeys([]);
-    setCellSeriesData(new Map());
+    setCellColorMap(new Map());
   }, [restoreCellsLayerDefaults]);
 
   const handleLegendBreakChange = React.useCallback((index: number, field: 'minValue' | 'maxValue' | 'color', rawValue: string) => {
@@ -893,10 +895,10 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       const labelByKey = new Map<string, string>(selectedCells.map((cell: SelectedCell) => [cell.key, cell.raw ?? cell.key]));
       const activeDateRange = state.selectedDateRange ?? state.dateRange;
 
-      const aggregatedByKpi = new Map<string, Map<number, { sum: number; count: number }>>();
-      chartKpiFields.forEach((field: string) => aggregatedByKpi.set(field, new Map()));
+      const dataByKpiField = new Map<string, Map<string, KpiTimeSeriesPoint[]>>();
+      chartKpiFields.forEach(field => dataByKpiField.set(field, new Map()));
+      
       const mapSeriesByCell = new Map<string, { label: string; points: KpiTimeSeriesPoint[] }>();
-      const cellSeriesMapByField = new Map<string, Map<string, KpiTimeSeriesPoint[]>>();
 
       kpiFeaturesResult.forEach((feature: QueryFeature) => {
         const attributes = feature.attributes ?? {};
@@ -937,23 +939,15 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
           if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
             return;
           }
-          const seriesMap = aggregatedByKpi.get(field);
-          if (!seriesMap) {
-            return;
+          
+          const fieldData = dataByKpiField.get(field);
+          if (!fieldData) return;
+          
+          if (!fieldData.has(key)) {
+            fieldData.set(key, []);
           }
-          const bucket = seriesMap.get(timestamp) ?? { sum: 0, count: 0 };
-          bucket.sum += rawValue;
-          bucket.count += 1;
-          seriesMap.set(timestamp, bucket);
-
-          if (!cellSeriesMapByField.has(field)) {
-            cellSeriesMapByField.set(field, new Map());
-          }
-          const cellMap = cellSeriesMapByField.get(field)!;
-          if (!cellMap.has(key)) {
-            cellMap.set(key, []);
-          }
-          cellMap.get(key)!.push({
+          
+          fieldData.get(key)!.push({
             timestamp,
             value: rawValue,
             displayLabel: formatDateLabel(timestamp),
@@ -962,38 +956,24 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
         });
       });
 
-      const chartSeriesEntries = chartKpiFields
-        .map((field: string): KpiTimeSeriesEntry | null => {
-          const seriesMap = aggregatedByKpi.get(field);
-          if (!seriesMap || seriesMap.size === 0) {
-            return null;
-          }
-          const points = Array.from(seriesMap.entries())
-            .map(([timestamp, stats]) => {
-              const average = stats.count === 0 ? NaN : stats.sum / stats.count;
-              return {
-                timestamp,
-                value: average,
-                displayLabel: formatDateLabel(timestamp),
-                tooltipLabel: formatDateTooltip(timestamp)
-              } as KpiTimeSeriesPoint;
-            })
-            .filter((point) => Number.isFinite(point.value))
-            .sort((a, b) => a.timestamp - b.timestamp);
-          if (points.length === 0) {
-            return null;
-          }
-          return {
-            key: field,
-            label: field,
-            points
-          };
-  })
-  .filter((entry: KpiTimeSeriesEntry | null): entry is KpiTimeSeriesEntry => entry !== null);
-
-      if (chartSeriesEntries.length === 0) {
-        throw new Error('No KPI time series data was returned for the selected KPIs. Adjust the filters or choose different KPIs.');
-      }
+      const kpiTimeSeriesByFieldMap = new Map<string, KpiTimeSeriesEntry[]>();
+      
+      chartKpiFields.forEach(kpiField => {
+        const fieldData = dataByKpiField.get(kpiField);
+        if (!fieldData) return;
+        
+        const seriesForThisKpi: KpiTimeSeriesEntry[] = [];
+        fieldData.forEach((points, cellKey) => {
+          const sortedPoints = points.sort((a, b) => a.timestamp - b.timestamp);
+          seriesForThisKpi.push({
+            key: cellKey,
+            label: labelByKey.get(cellKey) ?? cellKey,
+            points: sortedPoints
+          });
+        });
+        
+        kpiTimeSeriesByFieldMap.set(kpiField, seriesForThisKpi);
+      });
 
       const mapSeriesEntries = Array.from(mapSeriesByCell.entries())
         .map(([key, data]) => ({
@@ -1058,15 +1038,16 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       const chartEntriesSorted = summaryEntries
         .slice()
         .sort((a: KpiSeriesEntry, b: KpiSeriesEntry) => b.value - a.value);
-      setKpiTimeSeries(chartSeriesEntries);
+      
+      setKpiTimeSeriesByField(kpiTimeSeriesByFieldMap);
       setKpiSeries(chartEntriesSorted);
       setLegendExpanded(false);
 
-      const newCellSeriesData = new Map<string, KpiTimeSeriesEntry>();
-      mapSeriesEntries.forEach(entry => {
-        newCellSeriesData.set(entry.key, entry);
+      const newCellColorMap = new Map<string, string>();
+      Array.from(selectedKeys).forEach((key, index) => {
+        newCellColorMap.set(key, getColorForIndex(index));
       });
-      setCellSeriesData(newCellSeriesData);
+      setCellColorMap(newCellColorMap);
       setSelectedCellKeys(Array.from(selectedKeys));
 
       setState((prev: WidgetState) => ({
@@ -1080,11 +1061,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       console.error('Apply KPI error', err);
       setState((prev: WidgetState) => ({ ...prev, error: err instanceof Error ? err.message : String(err) }));
       setKpiSeries([]);
-      setKpiTimeSeries([]);
+      setKpiTimeSeriesByField(new Map());
       setChartOpen(false);
       setLegendExpanded(false);
       setSelectedCellKeys([]);
-      setCellSeriesData(new Map());
+      setCellColorMap(new Map());
     } finally {
       setState((prev: WidgetState) => ({ ...prev, applying: false }));
     }
@@ -1133,7 +1114,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       };
     });
     setKpiSeries([]);
-    setKpiTimeSeries([]);
+    setKpiTimeSeriesByField(new Map());
     setChartOpen(false);
     setLegendExpanded(false);
   }, [restoreCellsLayerDefaults]);
@@ -1153,7 +1134,35 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       };
     });
     setKpiSeries([]);
-    setKpiTimeSeries([]);
+    setKpiTimeSeriesByField(new Map());
+    setChartOpen(false);
+    setLegendExpanded(false);
+  }, [restoreCellsLayerDefaults]);
+
+  const handleQuickDateRange = React.useCallback((days: number) => {
+    setState((prev: WidgetState) => {
+      const baseRange = prev.dateRange;
+      if (!baseRange) {
+        return prev;
+      }
+      
+      const now = Date.now();
+      const end = Math.min(now, baseRange.max);
+      const start = Math.max(end - (days * DAY_IN_MS), baseRange.min);
+      
+      return {
+        ...prev,
+        selectedDateRange: { start, end },
+        useQuickDateRange: true,
+        legendBreaks: [],
+        legendExpression: undefined,
+        legendTitle: undefined
+      };
+    });
+    
+    restoreCellsLayerDefaults(undefined, { preserveEffect: true });
+    setKpiSeries([]);
+    setKpiTimeSeriesByField(new Map());
     setChartOpen(false);
     setLegendExpanded(false);
   }, [restoreCellsLayerDefaults]);
@@ -1201,6 +1210,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       return {
         ...prev,
         selectedDateRange: { start, end },
+        useQuickDateRange: false,
         legendBreaks: [],
         legendExpression: undefined,
         legendTitle: undefined
@@ -1210,11 +1220,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     if (didUpdate) {
       restoreCellsLayerDefaults(undefined, { preserveEffect: true });
       setKpiSeries([]);
-      setKpiTimeSeries([]);
+      setKpiTimeSeriesByField(new Map());
       setChartOpen(false);
       setLegendExpanded(false);
     }
-  }, [restoreCellsLayerDefaults, setState, setChartOpen, setKpiSeries, setKpiTimeSeries, setLegendExpanded]);
+  }, [restoreCellsLayerDefaults]);
 
   const toggleCellSelection = React.useCallback((cellKey: string) => {
     setSelectedCellKeys(prev => {
@@ -1240,7 +1250,8 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     legendExpression,
     legendTitle,
     dateRange,
-    selectedDateRange
+    selectedDateRange,
+    useQuickDateRange
   } = state;
   const chartKpiFields = Array.isArray(stateChartKpiFields) ? stateChartKpiFields : [];
   const hasDateRange = Boolean(dateRange);
@@ -1252,132 +1263,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
   const rangeSummaryStart = effectiveSelectedRange ? formatDateLabel(effectiveSelectedRange.start) : '';
   const rangeSummaryEnd = effectiveSelectedRange ? formatDateLabel(effectiveSelectedRange.end) : '';
 
-  const hasBaseKpiData = kpiSeries.length > 0 && kpiTimeSeries.length > 0;
+  const hasBaseKpiData = kpiSeries.length > 0 && kpiTimeSeriesByField.size > 0;
   const canApplyKpi = Boolean(mapKpiField && chartKpiFields.length > 0 && selectedCells.length > 0);
   
-  const displayedChartSeries = React.useMemo(() => {
-    if (selectedCellKeys.length === 0) {
-      return kpiTimeSeries;
-    }
-    const filteredSeries: KpiTimeSeriesEntry[] = [];
-    selectedCellKeys.forEach(cellKey => {
-      const cellData = cellSeriesData.get(cellKey);
-      if (cellData) {
-        filteredSeries.push(cellData);
-      }
-    });
-    return filteredSeries.length > 0 ? filteredSeries : kpiTimeSeries;
-  }, [kpiTimeSeries, selectedCellKeys, cellSeriesData]);
-
-  const chartSeries = displayedChartSeries;
-  const hasChartData = chartSeries.some((series: KpiTimeSeriesEntry) => series.points.length > 0);
-  const chartHeight = 320;
+  const chartHeight = 300;
   const chartMargins = { top: 20, right: 28, bottom: 50, left: 60 };
-  
-  const chartDomain = React.useMemo(() => {
-    if (!hasChartData) {
-      return undefined;
-    }
-    const allPoints = chartSeries.flatMap((series: KpiTimeSeriesEntry) => series.points);
-    if (allPoints.length === 0) {
-      return undefined;
-    }
-    const minTime = Math.min(...allPoints.map((point: KpiTimeSeriesPoint) => point.timestamp));
-    const maxTime = Math.max(...allPoints.map((point: KpiTimeSeriesPoint) => point.timestamp));
-    const minValue = Math.min(...allPoints.map((point: KpiTimeSeriesPoint) => point.value));
-    const maxValue = Math.max(...allPoints.map((point: KpiTimeSeriesPoint) => point.value));
-    return { minTime, maxTime, minValue, maxValue };
-  }, [chartSeries, hasChartData]);
-
-  const chartScales = React.useMemo(() => {
-    if (!chartDomain) {
-      return undefined;
-    }
-    const measuredWidth = chartWidth || 0;
-    const width = measuredWidth > 0 ? measuredWidth : 400;
-    const innerWidth = Math.max(width - chartMargins.left - chartMargins.right, 1);
-    const innerHeight = Math.max(chartHeight - chartMargins.top - chartMargins.bottom, 1);
-    const timeRange = chartDomain.maxTime - chartDomain.minTime;
-    const baseValueRange = chartDomain.maxValue - chartDomain.minValue;
-    const padding = baseValueRange === 0
-      ? Math.max(Math.abs(chartDomain.maxValue) * 0.1, 1)
-      : baseValueRange * 0.1;
-    const minValue = chartDomain.minValue - padding;
-    const maxValue = chartDomain.maxValue + padding;
-    const valueRange = maxValue - minValue || 1;
-    const getX = (timestamp: number) => {
-      if (timeRange === 0) {
-        return chartMargins.left + innerWidth / 2;
-      }
-      return chartMargins.left + ((timestamp - chartDomain.minTime) / timeRange) * innerWidth;
-    };
-    const getY = (value: number) => {
-      return chartMargins.top + innerHeight - ((value - minValue) / valueRange) * innerHeight;
-    };
-    return { width, innerWidth, innerHeight, getX, getY, minValue, maxValue };
-  }, [chartDomain, chartWidth, chartMargins.left, chartMargins.right, chartMargins.top, chartMargins.bottom, chartHeight]);
-
-  const preparedChartSeries = React.useMemo<PreparedChartSeries[]>(() => {
-    if (!chartScales || !chartDomain) {
-      return [];
-    }
-    return chartSeries.map((series: KpiTimeSeriesEntry, index: number) => {
-      const coordinates: ChartSeriesCoordinates[] = series.points.map((point: KpiTimeSeriesPoint) => ({
-        point,
-        x: chartScales.getX(point.timestamp),
-        y: chartScales.getY(point.value)
-      }));
-      const path = coordinates
-        .map((coord: ChartSeriesCoordinates, coordIndex: number) => `${coordIndex === 0 ? 'M' : 'L'}${coord.x},${coord.y}`)
-        .join(' ');
-      return {
-        key: series.key,
-        label: series.label,
-        color: getColorForIndex(index),
-        path,
-        coordinates
-      };
-    });
-  }, [chartSeries, chartScales, chartDomain]);
-
-  const axisTicks = React.useMemo(() => {
-    if (!chartScales || !chartDomain) {
-      return { xTicks: [] as { x: number; label: string }[], yTicks: [] as { y: number; label: string }[] };
-    }
-    const xTicks: { x: number; label: string }[] = [];
-    const xTickCount = 5;
-    for (let i = 0; i <= xTickCount; i++) {
-      const ratio = i / xTickCount;
-      const timestamp = chartDomain.minTime + ratio * (chartDomain.maxTime - chartDomain.minTime);
-      xTicks.push({ x: chartScales.getX(timestamp), label: formatDateLabel(timestamp) });
-    }
-
-    const yTicks: { y: number; label: string }[] = [];
-    const yTickCount = 6;
-    for (let i = 0; i <= yTickCount; i++) {
-      const ratio = i / yTickCount;
-      const value = chartScales.minValue + ratio * (chartScales.maxValue - chartScales.minValue);
-      yTicks.push({ y: chartScales.getY(value), label: formatKpiValue(value) });
-    }
-    return { xTicks, yTicks };
-  }, [chartScales, chartDomain]);
-
-  const chartSummary = React.useMemo(() => {
-    if (!chartDomain) {
-      return { min: 0, max: 0, points: 0 };
-    }
-    const allPoints = chartSeries.flatMap((series: KpiTimeSeriesEntry) => series.points);
-    if (allPoints.length === 0) {
-      return { min: 0, max: 0, points: 0 };
-    }
-    const min = Math.min(...allPoints.map((point: KpiTimeSeriesPoint) => point.value));
-    const max = Math.max(...allPoints.map((point: KpiTimeSeriesPoint) => point.value));
-    return { min, max, points: allPoints.length };
-  }, [chartSeries, chartDomain]);
-
-  const chartSvgWidth = chartScales?.width ?? Math.max(chartWidth || 0, 400);
-  const chartSvgHeight = chartHeight;
-  const hasRenderableChart = hasChartData && preparedChartSeries.length > 0 && Boolean(chartScales);
 
   React.useEffect(() => {
     if (!isChartOpen) {
@@ -1505,6 +1395,213 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     );
   }
 
+  const renderChart = (kpiField: string, seriesData: KpiTimeSeriesEntry[]) => {
+    const filteredSeries = selectedCellKeys.length === 0
+      ? seriesData
+      : seriesData.filter(s => selectedCellKeys.includes(s.key));
+
+    if (filteredSeries.length === 0) {
+      return (
+        <div style={{ padding: 20, textAlign: 'center', color: '#718096' }}>
+          No data available for this KPI.
+        </div>
+      );
+    }
+
+    const allPoints = filteredSeries.flatMap(s => s.points);
+    if (allPoints.length === 0) {
+      return (
+        <div style={{ padding: 20, textAlign: 'center', color: '#718096' }}>
+          No chart data available.
+        </div>
+      );
+    }
+
+    const minTime = Math.min(...allPoints.map(p => p.timestamp));
+    const maxTime = Math.max(...allPoints.map(p => p.timestamp));
+    const minValue = Math.min(...allPoints.map(p => p.value));
+    const maxValue = Math.max(...allPoints.map(p => p.value));
+
+    const measuredWidth = chartWidth || 0;
+    const width = measuredWidth > 0 ? measuredWidth : 400;
+    const innerWidth = Math.max(width - chartMargins.left - chartMargins.right, 1);
+    const innerHeight = Math.max(chartHeight - chartMargins.top - chartMargins.bottom, 1);
+    const timeRange = maxTime - minTime;
+    const baseValueRange = maxValue - minValue;
+    const padding = baseValueRange === 0
+      ? Math.max(Math.abs(maxValue) * 0.1, 1)
+      : baseValueRange * 0.1;
+    const minValuePadded = minValue - padding;
+    const maxValuePadded = maxValue + padding;
+    const valueRange = maxValuePadded - minValuePadded || 1;
+
+    const getX = (timestamp: number) => {
+      if (timeRange === 0) {
+        return chartMargins.left + innerWidth / 2;
+      }
+      return chartMargins.left + ((timestamp - minTime) / timeRange) * innerWidth;
+    };
+    const getY = (value: number) => {
+      return chartMargins.top + innerHeight - ((value - minValuePadded) / valueRange) * innerHeight;
+    };
+
+    const preparedSeries = filteredSeries.map((series, index) => {
+      const coordinates = series.points.map(point => ({
+        point,
+        x: getX(point.timestamp),
+        y: getY(point.value)
+      }));
+      const path = coordinates
+        .map((coord, coordIndex) => `${coordIndex === 0 ? 'M' : 'L'}${coord.x},${coord.y}`)
+        .join(' ');
+      return {
+        key: series.key,
+        label: series.label,
+        color: cellColorMap.get(series.key) || getColorForIndex(index),
+        path,
+        coordinates
+      };
+    });
+
+    const xTicks = [];
+    const xTickCount = 5;
+    for (let i = 0; i <= xTickCount; i++) {
+      const ratio = i / xTickCount;
+      const timestamp = minTime + ratio * (maxTime - minTime);
+      xTicks.push({ x: getX(timestamp), label: formatDateLabel(timestamp) });
+    }
+
+    const yTicks = [];
+    const yTickCount = 6;
+    for (let i = 0; i <= yTickCount; i++) {
+      const ratio = i / yTickCount;
+      const value = minValuePadded + ratio * (maxValuePadded - minValuePadded);
+      yTicks.push({ y: getY(value), label: formatKpiValue(value) });
+    }
+
+    return (
+      <svg
+        width={width}
+        height={chartHeight}
+        style={{ maxWidth: '100%', background: '#ffffff', borderRadius: 8 }}
+      >
+        <defs>
+          <filter id={`shadow-${kpiField}`}>
+            <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.1" />
+          </filter>
+        </defs>
+        <rect
+          x={chartMargins.left}
+          y={chartMargins.top}
+          width={innerWidth}
+          height={innerHeight}
+          fill="#f9fafb"
+          stroke="#e2e8f0"
+          strokeWidth={1}
+          rx={4}
+        />
+        {yTicks.map((tick, index) => (
+          <g key={`y-${index}`}>
+            <line
+              x1={chartMargins.left}
+              y1={tick.y}
+              x2={chartMargins.left + innerWidth}
+              y2={tick.y}
+              stroke="#e2e8f0"
+              strokeWidth={1}
+              strokeDasharray="4,4"
+            />
+            <text
+              x={chartMargins.left - 8}
+              y={tick.y + 4}
+              fontSize={11}
+              fill="#718096"
+              textAnchor="end"
+              fontWeight={500}
+            >
+              {tick.label}
+            </text>
+          </g>
+        ))}
+        {xTicks.map((tick, index) => (
+          <g key={`x-${index}`}>
+            <line
+              x1={tick.x}
+              y1={chartMargins.top + innerHeight}
+              x2={tick.x}
+              y2={chartMargins.top + innerHeight + 6}
+              stroke="#cbd5e0"
+              strokeWidth={1.5}
+            />
+            <text
+              x={tick.x}
+              y={chartHeight - 10}
+              fontSize={10}
+              fill="#718096"
+              textAnchor="middle"
+              fontWeight={500}
+            >
+              {tick.label}
+            </text>
+          </g>
+        ))}
+        {preparedSeries.map((series) => (
+          <g key={series.key}>
+            <path
+              d={series.path}
+              fill="none"
+              stroke={series.color}
+              strokeWidth={2.5}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              filter={`url(#shadow-${kpiField})`}
+            />
+            {series.coordinates.map((coord, idx) => {
+              const isHovered = hoveredPoint?.seriesKey === series.key && hoveredPoint?.timestamp === coord.point.timestamp;
+              return (
+                <g key={`${series.key}-${idx}`}>
+                  <circle
+                    cx={coord.x}
+                    cy={coord.y}
+                    r={isHovered ? 6 : 4}
+                    fill="#ffffff"
+                    stroke={series.color}
+                    strokeWidth={isHovered ? 3 : 2}
+                    style={{ cursor: 'pointer', transition: 'all 0.2s' }}
+                    onMouseEnter={() => setHoveredPoint({ seriesKey: series.key, timestamp: coord.point.timestamp })}
+                    onMouseLeave={() => setHoveredPoint(null)}
+                  />
+                  <title>{`${series.label}\n${coord.point.tooltipLabel}\nValue: ${formatKpiValue(coord.point.value)}`}</title>
+                </g>
+              );
+            })}
+          </g>
+        ))}
+        <text
+          x={chartMargins.left + innerWidth / 2}
+          y={chartHeight - 2}
+          textAnchor="middle"
+          fontSize={12}
+          fill="#4a5568"
+          fontWeight={600}
+        >
+          Date
+        </text>
+        <text
+          x={chartMargins.left - 45}
+          y={chartMargins.top + innerHeight / 2}
+          textAnchor="middle"
+          fontSize={12}
+          fill="#4a5568"
+          fontWeight={600}
+          transform={`rotate(-90 ${chartMargins.left - 45} ${chartMargins.top + innerHeight / 2})`}
+        >
+          KPI Value
+        </text>
+      </svg>
+    );
+  };
+
   return (
     <div style={styles.container}>
       <JimuMapViewComponent useMapWidgetId={mapWidgetId} onActiveViewChange={handleActiveViewChange} />
@@ -1606,6 +1703,56 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
                     <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 8 }}>
                       Date Range
                     </label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+                      <button
+                        onClick={() => handleQuickDateRange(1)}
+                        disabled={applying || selecting}
+                        style={{
+                          ...styles.buttonSecondary,
+                          fontSize: 12,
+                          padding: '6px 12px',
+                          ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+                        }}
+                      >
+                        1 Day
+                      </button>
+                      <button
+                        onClick={() => handleQuickDateRange(7)}
+                        disabled={applying || selecting}
+                        style={{
+                          ...styles.buttonSecondary,
+                          fontSize: 12,
+                          padding: '6px 12px',
+                          ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+                        }}
+                      >
+                        1 Week
+                      </button>
+                      <button
+                        onClick={() => handleQuickDateRange(30)}
+                        disabled={applying || selecting}
+                        style={{
+                          ...styles.buttonSecondary,
+                          fontSize: 12,
+                          padding: '6px 12px',
+                          ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+                        }}
+                      >
+                        1 Month
+                      </button>
+                      <button
+                        onClick={() => handleQuickDateRange(365)}
+                        disabled={applying || selecting}
+                        style={{
+                          ...styles.buttonSecondary,
+                          fontSize: 12,
+                          padding: '6px 12px',
+                          ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+                        }}
+                      >
+                        1 Year
+                      </button>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <div>
                         <label style={{ fontSize: 12, color: '#718096', display: 'block', marginBottom: 4 }}>Start</label>
@@ -1615,8 +1762,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
                           min={dateMinValue || undefined}
                           max={dateMaxValue || undefined}
                           onChange={(e) => handleDateInputChange('start', e.target.value)}
-                          disabled={applying || selecting}
-                          style={styles.select}
+                          disabled={applying || selecting || useQuickDateRange}
+                          style={{
+                            ...styles.select,
+                            ...(useQuickDateRange ? { opacity: 0.6, cursor: 'not-allowed' } : {})
+                          }}
                         />
                       </div>
                       <div>
@@ -1627,8 +1777,11 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
                           min={dateMinValue || undefined}
                           max={dateMaxValue || undefined}
                           onChange={(e) => handleDateInputChange('end', e.target.value)}
-                          disabled={applying || selecting}
-                          style={styles.select}
+                          disabled={applying || selecting || useQuickDateRange}
+                          style={{
+                            ...styles.select,
+                            ...(useQuickDateRange ? { opacity: 0.6, cursor: 'not-allowed' } : {})
+                          }}
                         />
                       </div>
                     </div>
@@ -1725,25 +1878,26 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
 
           {hasBaseKpiData && (
             <div style={styles.card}>
-              <h4 style={styles.cardTitle}>3. Interactive KPI Graph</h4>
+              <h4 style={styles.cardTitle}>3. Interactive KPI Graphs</h4>
               <button
                 onClick={() => setChartOpen(!isChartOpen)}
                 style={styles.button}
               >
-                {isChartOpen ? '▼ Hide Graph' : '▶ Show Graph'}
+                {isChartOpen ? '▼ Hide Graphs' : '▶ Show Graphs'}
               </button>
 
               {isChartOpen && (
                 <div style={{ marginTop: 16 }}>
-                  {cellSeriesData.size > 0 && (
+                  {cellColorMap.size > 0 && (
                     <div style={{ marginBottom: 16 }}>
                       <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 8 }}>
-                        Filter by Cell (click to toggle)
+                        Filter by Cell
                       </label>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {Array.from(cellSeriesData.keys()).map(cellKey => {
+                        {Array.from(cellColorMap.keys()).map(cellKey => {
                           const isSelected = selectedCellKeys.includes(cellKey);
-                          const cellLabel = cellSeriesData.get(cellKey)?.label || cellKey;
+                          const cellColor = cellColorMap.get(cellKey) || '#4a5568';
+                          const cellLabel = kpiSeries.find(s => s.key === cellKey)?.label || cellKey;
                           return (
                             <button
                               key={cellKey}
@@ -1752,179 +1906,53 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
                                 padding: '6px 12px',
                                 fontSize: 12,
                                 borderRadius: 6,
-                                border: isSelected ? '2px solid #4361ee' : '1px solid #cbd5e0',
-                                background: isSelected ? '#4361ee' : '#ffffff',
+                                border: `2px solid ${isSelected ? cellColor : '#cbd5e0'}`,
+                                background: isSelected ? cellColor : '#ffffff',
                                 color: isSelected ? '#ffffff' : '#4a5568',
                                 cursor: 'pointer',
                                 fontWeight: isSelected ? 600 : 400,
-                                transition: 'all 0.2s'
+                                transition: 'all 0.2s',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 6
                               }}
                             >
+                              <span
+                                style={{
+                                  width: 12,
+                                  height: 12,
+                                  borderRadius: 2,
+                                  background: cellColor,
+                                  border: '1px solid rgba(255,255,255,0.3)'
+                                }}
+                              />
                               {cellLabel}
                             </button>
                           );
                         })}
                       </div>
                       <p style={{ fontSize: 12, color: '#718096', marginTop: 8 }}>
-                        {selectedCellKeys.length === 0 ? 'Showing average across all cells' : `Showing ${selectedCellKeys.length} cell(s)`}
+                        {selectedCellKeys.length === 0 ? 'Showing all cells' : `Showing ${selectedCellKeys.length} cell(s)`}
                       </p>
                     </div>
                   )}
 
-                  {preparedChartSeries.length > 0 && (
-                    <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-                      {preparedChartSeries.map((series: PreparedChartSeries) => (
-                        <div key={series.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                          <span
-                            style={{
-                              width: 14,
-                              height: 14,
-                              borderRadius: 3,
-                              background: series.color,
-                              border: '1px solid rgba(0,0,0,0.1)'
-                            }}
-                          />
-                          <span style={{ fontWeight: 500, color: '#2d3748' }}>{series.label}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div ref={chartContainerRef} style={{ width: '100%', overflowX: 'auto' }}>
-                    {hasRenderableChart ? (
-                      <svg
-                        width={chartSvgWidth}
-                        height={chartSvgHeight}
-                        style={{ maxWidth: '100%', background: '#ffffff', borderRadius: 8 }}
-                      >
-                        <defs>
-                          <filter id="shadow">
-                            <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.1" />
-                          </filter>
-                        </defs>
-                        <rect
-                          x={chartMargins.left}
-                          y={chartMargins.top}
-                          width={chartScales?.innerWidth ?? 0}
-                          height={chartScales?.innerHeight ?? 0}
-                          fill="#f9fafb"
-                          stroke="#e2e8f0"
-                          strokeWidth={1}
-                          rx={4}
-                        />
-                        {axisTicks.yTicks.map((tick, index) => (
-                          <g key={`y-${index}`}>
-                            <line
-                              x1={chartMargins.left}
-                              y1={tick.y}
-                              x2={chartMargins.left + (chartScales?.innerWidth ?? 0)}
-                              y2={tick.y}
-                              stroke="#e2e8f0"
-                              strokeWidth={1}
-                              strokeDasharray="4,4"
-                            />
-                            <text
-                              x={chartMargins.left - 8}
-                              y={tick.y + 4}
-                              fontSize={11}
-                              fill="#718096"
-                              textAnchor="end"
-                              fontWeight={500}
-                            >
-                              {tick.label}
-                            </text>
-                          </g>
-                        ))}
-                        {axisTicks.xTicks.map((tick, index) => (
-                          <g key={`x-${index}`}>
-                            <line
-                              x1={tick.x}
-                              y1={chartMargins.top + (chartScales?.innerHeight ?? 0)}
-                              x2={tick.x}
-                              y2={chartMargins.top + (chartScales?.innerHeight ?? 0) + 6}
-                              stroke="#cbd5e0"
-                              strokeWidth={1.5}
-                            />
-                            <text
-                              x={tick.x}
-                              y={chartHeight - 10}
-                              fontSize={10}
-                              fill="#718096"
-                              textAnchor="middle"
-                              fontWeight={500}
-                            >
-                              {tick.label}
-                            </text>
-                          </g>
-                        ))}
-                        {preparedChartSeries.map((series: PreparedChartSeries) => (
-                          <g key={series.key}>
-                            <path
-                              d={series.path}
-                              fill="none"
-                              stroke={series.color}
-                              strokeWidth={2.5}
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              filter="url(#shadow)"
-                            />
-                            {series.coordinates.map((coord, idx) => {
-                              const isHovered = hoveredPoint?.seriesKey === series.key && hoveredPoint?.timestamp === coord.point.timestamp;
-                              return (
-                                <g key={`${series.key}-${idx}`}>
-                                  <circle
-                                    cx={coord.x}
-                                    cy={coord.y}
-                                    r={isHovered ? 6 : 4}
-                                    fill="#ffffff"
-                                    stroke={series.color}
-                                    strokeWidth={isHovered ? 3 : 2}
-                                    style={{ cursor: 'pointer', transition: 'all 0.2s' }}
-                                    onMouseEnter={() => setHoveredPoint({ seriesKey: series.key, timestamp: coord.point.timestamp })}
-                                    onMouseLeave={() => setHoveredPoint(null)}
-                                  />
-                                  <title>{`${series.label}\n${coord.point.tooltipLabel}\nValue: ${formatKpiValue(coord.point.value)}`}</title>
-                                </g>
-                              );
-                            })}
-                          </g>
-                        ))}
-                        <text
-                          x={chartMargins.left + (chartScales?.innerWidth ?? 0) / 2}
-                          y={chartHeight - 2}
-                          textAnchor="middle"
-                          fontSize={12}
-                          fill="#4a5568"
-                          fontWeight={600}
-                        >
-                          Date
-                        </text>
-                        <text
-                          x={chartMargins.left - 45}
-                          y={chartMargins.top + (chartScales?.innerHeight ?? 0) / 2}
-                          textAnchor="middle"
-                          fontSize={12}
-                          fill="#4a5568"
-                          fontWeight={600}
-                          transform={`rotate(-90 ${chartMargins.left - 45} ${chartMargins.top + (chartScales?.innerHeight ?? 0) / 2})`}
-                        >
-                          KPI Value
-                        </text>
-                      </svg>
-                    ) : (
-                      <div style={{ padding: 20, textAlign: 'center', color: '#718096' }}>
-                        No chart data available. Adjust filters or reapply KPI.
+                  <div ref={chartContainerRef} style={{ width: '100%' }}>
+                    {Array.from(kpiTimeSeriesByField.entries()).map(([kpiField, seriesData]) => (
+                      <div key={kpiField} style={{ marginBottom: 24 }}>
+                        <h5 style={{ 
+                          fontSize: 14, 
+                          fontWeight: 600, 
+                          color: '#2d3748', 
+                          marginBottom: 12,
+                          marginTop: 0 
+                        }}>
+                          {kpiField}
+                        </h5>
+                        {renderChart(kpiField, seriesData)}
                       </div>
-                    )}
+                    ))}
                   </div>
-
-                  {hasRenderableChart && (
-                    <div style={{ marginTop: 12, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: '#4a5568' }}>
-                      <span style={styles.badge}>Min: {formatKpiValue(chartSummary.min)}</span>
-                      <span style={styles.badge}>Max: {formatKpiValue(chartSummary.max)}</span>
-                      <span style={styles.badge}>Data Points: {chartSummary.points}</span>
-                    </div>
-                  )}
                 </div>
               )}
             </div>
