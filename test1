@@ -15,8 +15,8 @@ interface FeatureLayerQuery {
 }
 
 interface QueryFeature {
-  attributes: Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
-  geometry?: any; // polygon geometry (keep any to avoid pulling in full ArcGIS types) // eslint-disable-line @typescript-eslint/no-explicit-any
+  attributes: Record<string, any>;
+  geometry?: any;
 }
 
 interface FeatureLayerQueryResult {
@@ -27,15 +27,15 @@ interface FeatureLayerQueryResult {
 interface FeatureLayerInstance {
   createQuery: () => FeatureLayerQuery;
   queryFeatures: (query: FeatureLayerQuery) => Promise<FeatureLayerQueryResult>;
-  renderer?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-  when?: () => Promise<any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  renderer?: any;
+  when?: () => Promise<any>;
   load?: () => Promise<void>;
   queryObjectIds?: (query: FeatureLayerQuery) => Promise<number[]>;
   capabilities?: { query?: { supportsPagination?: boolean; maxRecordCount?: number } };
   objectIdField?: string;
 }
 
-type FeatureLayerConstructor = new (params: any) => FeatureLayerInstance; // eslint-disable-line @typescript-eslint/no-explicit-any
+type FeatureLayerConstructor = new (params: any) => FeatureLayerInstance;
 
 interface SelectedCell {
   raw: string;
@@ -82,9 +82,8 @@ interface PreparedChartSeries {
   coordinates: ChartSeriesCoordinates[];
 }
 
-// Field name constants
-const POLYGON_CELL_FIELD = 'cell'; // polygon layer attribute containing cell name
-const KPI_JOIN_FIELD = 'eutrancellfdd'; // KPI table join attribute matching polygon cell names
+const POLYGON_CELL_FIELD = 'cell';
+const KPI_JOIN_FIELD = 'eutrancellfdd';
 
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
 
@@ -222,14 +221,14 @@ const clampValue = (value: number, min: number, max: number): number => {
   return value;
 };
 
-const cloneEsriValue = (value: any): any => { // eslint-disable-line @typescript-eslint/no-explicit-any
+const cloneEsriValue = (value: any): any => {
   if (value && typeof value === 'object') {
-    const cloneFn = (value as any).clone; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const cloneFn = (value as any).clone;
     if (typeof cloneFn === 'function') {
       try {
         return cloneFn.call(value);
       } catch (err) {
-        console.warn('Clone via clone() failed, falling back to JSON:', err); // eslint-disable-line no-console
+        console.warn('Clone via clone() failed, falling back to JSON:', err);
       }
     }
   }
@@ -239,7 +238,7 @@ const cloneEsriValue = (value: any): any => { // eslint-disable-line @typescript
   try {
     return JSON.parse(JSON.stringify(value));
   } catch (err) {
-    console.warn('Clone via JSON failed, returning original value:', err); // eslint-disable-line no-console
+    console.warn('Clone via JSON failed, returning original value:', err);
     return value;
   }
 };
@@ -284,83 +283,6 @@ const ensureFeatureLayer = async (
   return FeatureLayer;
 };
 
-const queryLayer = async (
-  FeatureLayer: FeatureLayerConstructor,
-  url: string,
-  withGeometry = false
-): Promise<QueryFeature[]> => {
-  const layer = new FeatureLayer({ url });
-  if (typeof layer.load === 'function') {
-    await layer.load();
-  }
-
-  const features: QueryFeature[] = [];
-  const capabilities = (layer as any)?.capabilities?.query ?? {}; // eslint-disable-line @typescript-eslint/no-explicit-any
-  const supportsPagination = capabilities.supportsPagination !== false;
-  const maxRecordCount = Number(capabilities.maxRecordCount) || 2000;
-  const chunkSize = Math.max(1, Math.min(5000, maxRecordCount));
-  const objectIdField = (layer as any).objectIdField as string | undefined; // eslint-disable-line @typescript-eslint/no-explicit-any
-
-  if (supportsPagination) {
-    let start = 0;
-    let more = true;
-    while (more) {
-      const query = layer.createQuery();
-      query.where = '1=1';
-      query.outFields = ['*'];
-      query.returnGeometry = withGeometry;
-      query.start = start;
-      query.num = chunkSize;
-      if (objectIdField) {
-        query.orderByFields = [`${objectIdField} ASC`];
-      }
-
-      const result = await layer.queryFeatures(query);
-      features.push(...result.features);
-      const fetched = result.features.length;
-      const reachedEnd = !result.exceededTransferLimit || fetched === 0;
-      if (reachedEnd) {
-        more = false;
-      } else {
-        start += fetched;
-      }
-    }
-  } else {
-    const idQuery = layer.createQuery();
-    idQuery.where = '1=1';
-    if (objectIdField) {
-      idQuery.outFields = [objectIdField];
-      idQuery.returnGeometry = false;
-    }
-    if (typeof layer.queryObjectIds !== 'function') {
-      // Fallback: single query with best effort
-      const query = layer.createQuery();
-      query.where = '1=1';
-      query.outFields = ['*'];
-      query.returnGeometry = withGeometry;
-      query.returnExceededLimitFeatures = true;
-      const result = await layer.queryFeatures(query);
-      features.push(...result.features);
-      return features;
-    }
-
-    const objectIds: number[] = await layer.queryObjectIds(idQuery);
-    if (!objectIds || objectIds.length === 0) {
-      return features;
-    }
-    for (let i = 0; i < objectIds.length; i += chunkSize) {
-      const query = layer.createQuery();
-      query.objectIds = objectIds.slice(i, i + chunkSize);
-      query.outFields = ['*'];
-      query.returnGeometry = withGeometry;
-      const result = await layer.queryFeatures(query);
-      features.push(...result.features);
-    }
-  }
-
-  return features;
-};
-
 const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
   const { config } = props;
   const [state, setState] = React.useState<WidgetState>({
@@ -386,16 +308,18 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
   const [chartWidth, setChartWidth] = React.useState<number>(0);
   const [legendExpanded, setLegendExpanded] = React.useState(false);
   const featureLayerCtorRef = React.useRef<FeatureLayerConstructor>();
-  const cellsLayerRef = React.useRef<any>(); // auto-detected polygon layer containing eutrancellfdd // eslint-disable-line @typescript-eslint/no-explicit-any
-  const selectionLayerRef = React.useRef<any>(); // temporary sketch graphics layer // eslint-disable-line @typescript-eslint/no-explicit-any
-  const sketchViewModelRef = React.useRef<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
-  const initialRendererRef = React.useRef<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
-  const initialFeatureEffectRef = React.useRef<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const cellsLayerRef = React.useRef<any>();
+  const selectionLayerRef = React.useRef<any>();
+  const sketchViewModelRef = React.useRef<any>();
+  const initialRendererRef = React.useRef<any>();
+  const initialFeatureEffectRef = React.useRef<any>();
   const initialDefinitionExpressionRef = React.useRef<string | undefined>();
-  const initialViewpointRef = React.useRef<any>(); // eslint-disable-line @typescript-eslint/no-explicit-any
+  const initialViewpointRef = React.useRef<any>();
   const [activeJimuMapView, setActiveJimuMapView] = React.useState<JimuMapView>();
   const mapWidgetId = props.useMapWidgetIds?.[0];
-
+  const [hoveredPoint, setHoveredPoint] = React.useState<{ seriesKey: string; timestamp: number } | null>(null);
+  const [selectedCellKeys, setSelectedCellKeys] = React.useState<string[]>([]);
+  const [cellSeriesData, setCellSeriesData] = React.useState<Map<string, KpiTimeSeriesEntry>>(new Map());
 
   const normalizeKey = React.useCallback((value: unknown): string | undefined => {
     if (value === null || value === undefined) {
@@ -436,9 +360,6 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     }
   }, [config?.kpisUrl]);
 
-  // Remove initial KPI data loading. Only load KPI data after polygon selection.
-
-  // New function: fetch KPI data for selected EUTRANCELLFDDs
   const fetchKpiDataForCells = React.useCallback(async (cellKeys: string[]) => {
     const kpisUrl = config?.kpisUrl?.trim();
     if (!kpisUrl || cellKeys.length === 0) {
@@ -448,7 +369,6 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     setState((prev: WidgetState) => ({ ...prev, loading: true, error: undefined }));
     try {
       const FeatureLayer = await ensureFeatureLayer(featureLayerCtorRef);
-      // Build where clause for selected cells
       const safeValues = cellKeys.map((key) => `'${String(key).replace(/'/g, "''")}'`);
       const where = safeValues.length === 1 ? `${KPI_JOIN_FIELD} = ${safeValues[0]}` : `${KPI_JOIN_FIELD} IN (${safeValues.join(', ')})`;
       const layer = new FeatureLayer({ url: kpisUrl });
@@ -461,7 +381,6 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       query.returnGeometry = false;
       const result = await layer.queryFeatures(query);
       const kpiFeatures = result.features.map((f: QueryFeature) => f.attributes);
-      // derive candidate KPI fields
       const candidateKpiFields: string[] = (() => {
         if (kpiFeatures.length === 0) return [];
         const sample = kpiFeatures[0];
@@ -531,13 +450,13 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       try {
         sketchViewModelRef.current.destroy?.();
       } catch (err) {
-        console.warn('Sketch destroy warning:', err); // eslint-disable-line no-console
+        console.warn('Sketch destroy warning:', err);
       }
       sketchViewModelRef.current = undefined;
     }
   }, []);
 
-  const restoreCellsLayerDefaults = React.useCallback((targetLayer?: any, options?: { preserveEffect?: boolean; preserveDefinitionExpression?: boolean }) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+  const restoreCellsLayerDefaults = React.useCallback((targetLayer?: any, options?: { preserveEffect?: boolean; preserveDefinitionExpression?: boolean }) => {
     const layer = targetLayer ?? cellsLayerRef.current;
     if (!layer) {
       return;
@@ -584,6 +503,8 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     setKpiTimeSeries([]);
     setChartOpen(false);
     setLegendExpanded(false);
+    setSelectedCellKeys([]);
+    setCellSeriesData(new Map());
   }, [restoreCellsLayerDefaults]);
 
   const handleActiveViewChange = React.useCallback((jmv: JimuMapView) => {
@@ -591,7 +512,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       try {
         sketchViewModelRef.current.destroy?.();
       } catch (err) {
-        console.warn('Sketch destroy warning:', err); // eslint-disable-line no-console
+        console.warn('Sketch destroy warning:', err);
       }
     }
 
@@ -599,12 +520,12 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     if (previousSelectionLayer?.removeAll) {
       previousSelectionLayer.removeAll();
     }
-    const previousView = activeJimuMapView?.view as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const previousView = activeJimuMapView?.view as any;
     if (previousSelectionLayer && previousView?.map?.remove) {
       try {
         previousView.map.remove(previousSelectionLayer);
       } catch (err) {
-        console.warn('Selection layer remove warning:', err); // eslint-disable-line no-console
+        console.warn('Selection layer remove warning:', err);
       }
     }
 
@@ -617,7 +538,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     initialFeatureEffectRef.current = undefined;
     initialDefinitionExpressionRef.current = undefined;
 
-    const view = jmv?.view as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    const view = jmv?.view as any;
     if (view) {
       const mapInitial = view?.map?.initialViewProperties?.viewpoint;
       if (mapInitial) {
@@ -636,7 +557,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
             }
           }
         }).catch((err: Error) => {
-          console.warn('View when() failed while capturing initial viewpoint:', err); // eslint-disable-line no-console
+          console.warn('View when() failed while capturing initial viewpoint:', err);
         });
       }
     } else {
@@ -655,320 +576,192 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     setKpiTimeSeries([]);
     setChartOpen(false);
     setLegendExpanded(false);
+    setSelectedCellKeys([]);
+    setCellSeriesData(new Map());
     setActiveJimuMapView(jmv);
   }, [activeJimuMapView, restoreCellsLayerDefaults]);
 
-  // No local map preview; renderer updates target the detected polygon cells layer in the main map widget
-
-  // Auto-detect polygon layer that contains the join field for spatial selection
-  const getCellsLayer = React.useCallback(async () => {
-    if (!activeJimuMapView || !activeJimuMapView.view) {
-      throw new Error('Map widget not ready. Ensure the selected map widget is active.');
+  const detectCellsLayer = React.useCallback(async (view: any) => {
+    if (!view?.map?.layers) {
+      return undefined;
     }
-    const joinFieldName = POLYGON_CELL_FIELD;
-    const mapView = activeJimuMapView.view as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-    const map = mapView?.map;
-    if (!map) {
-      throw new Error('Map instance not available.');
-    }
-    // Reuse if already resolved
-    if (cellsLayerRef.current) {
-      return cellsLayerRef.current;
-    }
-    const kpiUrl = config?.kpisUrl?.trim()?.toLowerCase();
-    const all: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
-    if (map.allLayers?.toArray) {
-      all.push(...map.allLayers.toArray());
-    } else if (map.layers?.toArray) {
-      all.push(...map.layers.toArray());
-    } else if (map.layers?.items) {
-      all.push(...map.layers.items);
-    }
-    const featureCandidates = all.filter((layer: any) => {
-      const typeOk = (layer.type === 'feature' || layer.declaredClass?.includes('FeatureLayer'));
-      const geomType = (layer.geometryType || '').toLowerCase();
-      const isPolygon = geomType === 'polygon' || geomType === 'esriGeometryPolygon';
-      const layerUrl = layer.url?.toLowerCase?.();
-      const notKpi = !kpiUrl || layerUrl !== kpiUrl; // avoid picking KPI table
-      return typeOk && isPolygon && notKpi;
-    });
-    // Load & inspect for join field
-    for (const layer of featureCandidates) {
-      try {
-        if (layer.when) { await layer.when(); }
-        const fields: any[] = layer.fields || []; // eslint-disable-line @typescript-eslint/no-explicit-any
-        const hasJoin = fields.some(f => (f?.name?.toLowerCase?.() ?? '') === joinFieldName.toLowerCase());
-        if (hasJoin) {
-          cellsLayerRef.current = layer;
-          initialRendererRef.current = cloneEsriValue(layer.renderer);
-          initialFeatureEffectRef.current = cloneEsriValue(layer.featureEffect);
-          initialDefinitionExpressionRef.current = layer.definitionExpression;
-          return layer;
-        }
-      } catch (err) {
-        console.warn('Cells layer candidate load failed, skipping:', err); // eslint-disable-line no-console
+    const allLayers = (view.map.layers as any).items ?? [];
+    for (const layer of allLayers) {
+      if (!layer || !layer.fields) {
+        continue;
       }
-    }
-  throw new Error(`No polygon layer with '${POLYGON_CELL_FIELD}' field found in the map. Add such a layer to the map.`);
-  }, [activeJimuMapView, config?.kpisUrl]);
-
-  const handleSelectionGeometry = React.useCallback(async (geometry: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-    try {
-      const cellsLayer = await getCellsLayer();
-      if (!cellsLayer?.createQuery) {
-        throw new Error('Cells polygon layer does not support querying.');
-      }
-      const joinField = POLYGON_CELL_FIELD;
-      const query = cellsLayer.createQuery();
-      query.geometry = geometry;
-      query.spatialRelationship = 'intersects';
-      query.outFields = [joinField];
-      query.returnGeometry = false;
-      const result = await cellsLayer.queryFeatures(query);
-      const valueMap = new Map<string, string>();
-      result.features.forEach((feature: QueryFeature) => {
-        const raw = feature.attributes?.[joinField];
-        const key = normalizeKey(raw);
-        if (raw && key && !valueMap.has(key)) {
-          valueMap.set(key, raw);
-        }
+      const fields = (layer.fields as any) ?? [];
+      const hasField = fields.some((field: any) => {
+        const name = field?.name;
+        return name && name.toLowerCase() === POLYGON_CELL_FIELD.toLowerCase();
       });
-
-      const selectedCells: SelectedCell[] = Array.from(valueMap.entries()).map(([key, raw]) => ({ key, raw }));
-      if (selectedCells.length === 0) {
-        restoreCellsLayerDefaults();
-        setState((prev: WidgetState) => ({
-          ...prev,
-          selectedCells: [],
-          legendBreaks: [],
-          legendExpression: undefined,
-          legendTitle: undefined,
-          error: 'No features found inside the drawn area.'
-        }));
-        setKpiSeries([]);
-        setKpiTimeSeries([]);
-        setChartOpen(false);
-        setLegendExpanded(false);
-        return;
+      if (hasField) {
+        return layer;
       }
-      const safeValues = selectedCells.map((cell: SelectedCell) => `'${String(cell.raw).replace(/'/g, "''")}'`);
-      const where = safeValues.length === 1 ? `${joinField} = ${safeValues[0]}` : `${joinField} IN (${safeValues.join(', ')})`;
-      if (cellsLayerRef.current) {
-        restoreCellsLayerDefaults(cellsLayerRef.current, { preserveEffect: true });
-        cellsLayerRef.current.featureEffect = {
-          filter: { where },
-          includedEffect: 'opacity(100%)',
-          excludedEffect: 'opacity(90%)'
-        };
-        if (typeof cellsLayerRef.current.refresh === 'function') {
-          cellsLayerRef.current.refresh();
-        }
-      }
-      setState((prev: WidgetState) => ({
-        ...prev,
-        selectedCells,
-        legendBreaks: [],
-        legendExpression: undefined,
-        legendTitle: undefined,
-        error: undefined
-      }));
-      setKpiSeries([]);
-      setKpiTimeSeries([]);
-      setChartOpen(false);
-      setLegendExpanded(false);
-      // Fetch KPI data for selected cells
-      const cellKeys = selectedCells.map(cell => cell.key);
-      fetchKpiDataForCells(cellKeys);
-    } catch (err) {
-      console.error('Selection processing error', err);
-      setState((prev: WidgetState) => ({
-        ...prev,
-        selectedCells: [],
-        error: err instanceof Error ? err.message : String(err)
-      }));
-      setKpiSeries([]);
-      setKpiTimeSeries([]);
-      setChartOpen(false);
-      setLegendExpanded(false);
     }
-  }, [getCellsLayer, normalizeKey, restoreCellsLayerDefaults]);
+    return undefined;
+  }, []);
+
+  const applyLegendRenderer = React.useCallback(async (
+    legendBreaks: LegendBreak[],
+    valueExpression: string,
+    title: string
+  ) => {
+    if (!activeJimuMapView?.view) {
+      throw new Error('Map view is not ready for legend updates.');
+    }
+    const view = activeJimuMapView.view as any;
+    let targetLayer = cellsLayerRef.current;
+    if (!targetLayer) {
+      targetLayer = await detectCellsLayer(view);
+      if (!targetLayer) {
+        throw new Error(`No layer with the field "${POLYGON_CELL_FIELD}" was found.`);
+      }
+      cellsLayerRef.current = targetLayer;
+      initialRendererRef.current = targetLayer.renderer ? cloneEsriValue(targetLayer.renderer) : undefined;
+      initialFeatureEffectRef.current = targetLayer.featureEffect ? cloneEsriValue(targetLayer.featureEffect) : undefined;
+      initialDefinitionExpressionRef.current = targetLayer.definitionExpression;
+    }
+
+    const [ClassBreaksRenderer, SimpleFillSymbol] = (await loadArcGISJSAPIModules([
+      'esri/renderers/ClassBreaksRenderer',
+      'esri/symbols/SimpleFillSymbol'
+    ])) as [any, any];
+
+    const classBreakInfos = legendBreaks.map((breakInfo: LegendBreak) => ({
+      minValue: breakInfo.minValue,
+      maxValue: breakInfo.maxValue,
+      symbol: new SimpleFillSymbol({
+        color: breakInfo.color,
+        outline: { color: [255, 255, 255, 0.6], width: 1 }
+      }),
+      label: breakInfo.label
+    }));
+
+    const renderer = new ClassBreaksRenderer({
+      valueExpression,
+      classBreakInfos
+    });
+
+    targetLayer.renderer = renderer;
+    if (typeof targetLayer.refresh === 'function') {
+      targetLayer.refresh();
+    }
+  }, [activeJimuMapView, detectCellsLayer]);
 
   const startSelection = React.useCallback(async () => {
-    if (!activeJimuMapView || !activeJimuMapView.view) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Map widget not ready. Ensure the selected map widget is active.' }));
+    if (!activeJimuMapView?.view) {
+      setState((prev: WidgetState) => ({ ...prev, error: 'Map view not ready. Make sure a map widget is loaded.' }));
       return;
     }
+    const view = activeJimuMapView.view as any;
+    let targetLayer = cellsLayerRef.current;
+    if (!targetLayer) {
+      targetLayer = await detectCellsLayer(view);
+      if (!targetLayer) {
+        setState((prev: WidgetState) => ({ ...prev, error: `No layer with the field "${POLYGON_CELL_FIELD}" was found.` }));
+        return;
+      }
+      cellsLayerRef.current = targetLayer;
+      initialRendererRef.current = targetLayer.renderer ? cloneEsriValue(targetLayer.renderer) : undefined;
+      initialFeatureEffectRef.current = targetLayer.featureEffect ? cloneEsriValue(targetLayer.featureEffect) : undefined;
+      initialDefinitionExpressionRef.current = targetLayer.definitionExpression;
+    }
+
+    let selectionLayer = selectionLayerRef.current;
+    if (!selectionLayer) {
+      const [GraphicsLayer] = (await loadArcGISJSAPIModules(['esri/layers/GraphicsLayer'])) as [any];
+      selectionLayer = new GraphicsLayer({ title: 'Selection Layer' });
+      view.map.add(selectionLayer);
+      selectionLayerRef.current = selectionLayer;
+    } else if (selectionLayer.removeAll) {
+      selectionLayer.removeAll();
+    }
+
     try {
-      setState((prev: WidgetState) => ({ ...prev, selecting: true, error: undefined }));
-      const cellsLayer = await getCellsLayer();
-      restoreCellsLayerDefaults(cellsLayer, { preserveDefinitionExpression: true });
-
-      const [SketchViewModel, GraphicsLayer] = (await loadArcGISJSAPIModules([
-        'esri/widgets/Sketch/SketchViewModel',
-        'esri/layers/GraphicsLayer'
-      ])) as [any, any]; // eslint-disable-line @typescript-eslint/no-explicit-any
-
-      const view = activeJimuMapView.view as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-      if (!selectionLayerRef.current) {
-        selectionLayerRef.current = new GraphicsLayer({ listMode: 'hide' });
-        if (view?.map?.add) {
-          view.map.add(selectionLayerRef.current);
-        }
-      } else if (selectionLayerRef.current?.removeAll) {
-        selectionLayerRef.current.removeAll();
-      }
-
-      if (sketchViewModelRef.current) {
-        try {
-          sketchViewModelRef.current.destroy?.();
-        } catch (err) {
-          console.warn('Sketch destroy warning:', err); // eslint-disable-line no-console
-        }
-      }
-
+      const [SketchViewModel] = (await loadArcGISJSAPIModules(['esri/widgets/Sketch/SketchViewModel'])) as [any];
       const sketchViewModel = new SketchViewModel({
         view,
-        layer: selectionLayerRef.current
+        layer: selectionLayer,
+        updateOnGraphicClick: false
       });
       sketchViewModelRef.current = sketchViewModel;
 
-      const handle = sketchViewModel.on('create', async (event: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+      setState((prev: WidgetState) => ({ ...prev, selecting: true, error: undefined }));
+
+      sketchViewModel.on('create', async (event: any) => {
         if (event.state === 'complete') {
-          handle.remove();
-          sketchViewModel.cancel?.();
-          sketchViewModel.destroy?.();
-          sketchViewModelRef.current = undefined;
-          try {
-            await handleSelectionGeometry(event.graphic?.geometry);
-          } finally {
-            setState((prev: WidgetState) => ({ ...prev, selecting: false }));
+          const geometry = event.graphic?.geometry;
+          if (!geometry) {
+            setState((prev: WidgetState) => ({ ...prev, selecting: false, error: 'No geometry from sketch.' }));
+            return;
           }
-        } else if (event.state === 'cancel') {
-          handle.remove();
-          sketchViewModel.cancel?.();
-          sketchViewModel.destroy?.();
-          sketchViewModelRef.current = undefined;
-          setState((prev: WidgetState) => ({ ...prev, selecting: false }));
+          const query = targetLayer.createQuery();
+          query.geometry = geometry;
+          query.spatialRelationship = 'intersects';
+          query.outFields = [POLYGON_CELL_FIELD];
+          query.returnGeometry = false;
+
+          try {
+            const result = await targetLayer.queryFeatures(query);
+            const features = result.features ?? [];
+            const selectedCells = features
+              .map((feature: any) => {
+                const rawValue = feature.attributes?.[POLYGON_CELL_FIELD];
+                const key = normalizeKey(rawValue);
+                if (!key) {
+                  return null;
+                }
+                return { raw: String(rawValue), key };
+              })
+              .filter((cell: SelectedCell | null): cell is SelectedCell => cell !== null);
+
+            setState((prev: WidgetState) => ({ ...prev, selectedCells, selecting: false }));
+            
+            const cellKeys = selectedCells.map((cell: SelectedCell) => cell.key);
+            await fetchKpiDataForCells(cellKeys);
+          } catch (err) {
+            console.error('Query error', err);
+            setState((prev: WidgetState) => ({
+              ...prev,
+              selecting: false,
+              error: err instanceof Error ? err.message : 'Selection query failed.'
+            }));
+          }
         }
       });
 
       sketchViewModel.create('polygon');
     } catch (err) {
-      console.error('Selection tool error', err);
+      console.error('Sketch creation error', err);
       setState((prev: WidgetState) => ({
         ...prev,
         selecting: false,
-        error: err instanceof Error ? err.message : String(err)
+        error: err instanceof Error ? err.message : 'Failed to create sketch tool.'
       }));
     }
-  }, [activeJimuMapView, getCellsLayer, handleSelectionGeometry, restoreCellsLayerDefaults]);
+  }, [activeJimuMapView, detectCellsLayer, normalizeKey, fetchKpiDataForCells]);
 
   const clearSelection = React.useCallback(() => {
     if (selectionLayerRef.current?.removeAll) {
       selectionLayerRef.current.removeAll();
     }
-    if (sketchViewModelRef.current) {
-      try {
-        sketchViewModelRef.current.cancel?.();
-        sketchViewModelRef.current.destroy?.();
-      } catch (err) {
-        console.warn('Sketch destroy warning:', err); // eslint-disable-line no-console
-      }
-      sketchViewModelRef.current = undefined;
-    }
-
-    const resetLayerState = async () => {
-      if (cellsLayerRef.current) {
-        restoreCellsLayerDefaults(cellsLayerRef.current);
-        return;
-      }
-      try {
-        const layer = await getCellsLayer();
-        restoreCellsLayerDefaults(layer);
-      } catch (err) {
-        console.warn('Cells layer restoration skipped:', err); // eslint-disable-line no-console
-      }
-    };
-    void resetLayerState();
-
-    const view = activeJimuMapView.view as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-    if (view && initialViewpointRef.current) {
-      try {
-        const goToResult = view.goTo(initialViewpointRef.current);
-        if (goToResult && typeof goToResult.catch === 'function') {
-          goToResult.catch((err: Error) => {
-            console.warn('Initial view restore warning:', err); // eslint-disable-line no-console
-          });
-        }
-      } catch (err) {
-        console.warn('Initial view restore immediate failure:', err); // eslint-disable-line no-console
-      }
-    }
-
+    restoreCellsLayerDefaults();
     setState((prev: WidgetState) => ({
       ...prev,
       selectedCells: [],
       selecting: false,
       legendBreaks: [],
       legendExpression: undefined,
-      legendTitle: undefined,
-      error: undefined
+      legendTitle: undefined
     }));
     setKpiSeries([]);
     setKpiTimeSeries([]);
     setChartOpen(false);
     setLegendExpanded(false);
-  }, [activeJimuMapView, getCellsLayer, restoreCellsLayerDefaults]);
-
-  React.useEffect(() => {
-    if (kpiSeries.length === 0) {
-      setChartOpen(false);
-      if (kpiTimeSeries.length > 0) {
-        setKpiTimeSeries([]);
-      }
-      if (legendExpanded) {
-        setLegendExpanded(false);
-      }
-    }
-  }, [kpiSeries.length, kpiTimeSeries.length, legendExpanded]);
-
-  const applyLegendRenderer = React.useCallback(async (legendBreaks: LegendBreak[], legendExpression: string, legendTitle: string) => {
-    if (!legendExpression || !legendBreaks || legendBreaks.length === 0) {
-      throw new Error('Legend is not configured. Apply KPI first.');
-    }
-    const layer = await getCellsLayer();
-    if (!layer) {
-      throw new Error('Cells layer is unavailable. Draw an area again to re-detect the polygon layer.');
-    }
-    const classBreakInfos = legendBreaks.map((b: LegendBreak) => ({
-      minValue: Number.isFinite(b.minValue) ? b.minValue : 0,
-      maxValue: Number.isFinite(b.maxValue) ? b.maxValue : 0,
-      label: formatLegendLabel(b.minValue, b.maxValue) || b.label || '',
-      symbol: {
-        type: 'simple-fill',
-        color: b.color || '#999999',
-        outline: { color: '#999', width: 0.25 }
-      }
-    }));
-
-    const renderer = {
-      type: 'class-breaks',
-      valueExpression: legendExpression,
-      valueExpressionTitle: legendTitle,
-      classBreakInfos,
-      defaultSymbol: {
-        type: 'simple-fill',
-        color: [210, 210, 210, 0.35],
-        outline: { color: '#bbb', width: 0.25 }
-      },
-      defaultLabel: 'Outside selection'
-    };
-
-    layer.renderer = renderer;
-    if (typeof layer.refresh === 'function') {
-      layer.refresh();
-    }
-  }, [getCellsLayer]);
+    setSelectedCellKeys([]);
+    setCellSeriesData(new Map());
+  }, [restoreCellsLayerDefaults]);
 
   const handleLegendBreakChange = React.useCallback((index: number, field: 'minValue' | 'maxValue' | 'color', rawValue: string) => {
     setState((prev: WidgetState) => {
@@ -1103,6 +896,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       const aggregatedByKpi = new Map<string, Map<number, { sum: number; count: number }>>();
       chartKpiFields.forEach((field: string) => aggregatedByKpi.set(field, new Map()));
       const mapSeriesByCell = new Map<string, { label: string; points: KpiTimeSeriesPoint[] }>();
+      const cellSeriesMapByField = new Map<string, Map<string, KpiTimeSeriesPoint[]>>();
 
       kpiFeaturesResult.forEach((feature: QueryFeature) => {
         const attributes = feature.attributes ?? {};
@@ -1151,6 +945,20 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
           bucket.sum += rawValue;
           bucket.count += 1;
           seriesMap.set(timestamp, bucket);
+
+          if (!cellSeriesMapByField.has(field)) {
+            cellSeriesMapByField.set(field, new Map());
+          }
+          const cellMap = cellSeriesMapByField.get(field)!;
+          if (!cellMap.has(key)) {
+            cellMap.set(key, []);
+          }
+          cellMap.get(key)!.push({
+            timestamp,
+            value: rawValue,
+            displayLabel: formatDateLabel(timestamp),
+            tooltipLabel: formatDateTooltip(timestamp)
+          });
         });
       });
 
@@ -1254,6 +1062,13 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       setKpiSeries(chartEntriesSorted);
       setLegendExpanded(false);
 
+      const newCellSeriesData = new Map<string, KpiTimeSeriesEntry>();
+      mapSeriesEntries.forEach(entry => {
+        newCellSeriesData.set(entry.key, entry);
+      });
+      setCellSeriesData(newCellSeriesData);
+      setSelectedCellKeys(Array.from(selectedKeys));
+
       setState((prev: WidgetState) => ({
         ...prev,
         error: undefined,
@@ -1268,6 +1083,8 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       setKpiTimeSeries([]);
       setChartOpen(false);
       setLegendExpanded(false);
+      setSelectedCellKeys([]);
+      setCellSeriesData(new Map());
     } finally {
       setState((prev: WidgetState) => ({ ...prev, applying: false }));
     }
@@ -1297,7 +1114,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       } else {
         nextChart = current.filter((item: string) => item !== field);
         if (nextChart.length === 0) {
-          return prev; // must keep at least one KPI selected
+          return prev;
         }
       }
 
@@ -1399,8 +1216,17 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     }
   }, [restoreCellsLayerDefaults, setState, setChartOpen, setKpiSeries, setKpiTimeSeries, setLegendExpanded]);
 
+  const toggleCellSelection = React.useCallback((cellKey: string) => {
+    setSelectedCellKeys(prev => {
+      if (prev.includes(cellKey)) {
+        return prev.filter(k => k !== cellKey);
+      } else {
+        return [...prev, cellKey];
+      }
+    });
+  }, []);
+
   const kpisUrlConfigured = Boolean(config?.kpisUrl?.trim());
-  const kpiFeatures = Array.isArray(state.kpiFeatures) ? state.kpiFeatures : [];
   const candidateKpiFields = Array.isArray(state.candidateKpiFields) ? state.candidateKpiFields : [];
   const {
     loading,
@@ -1428,11 +1254,26 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
 
   const hasBaseKpiData = kpiSeries.length > 0 && kpiTimeSeries.length > 0;
   const canApplyKpi = Boolean(mapKpiField && chartKpiFields.length > 0 && selectedCells.length > 0);
-  const selectedChartKpiList = chartKpiFields.join(', ');
-  const chartSeries = kpiTimeSeries;
+  
+  const displayedChartSeries = React.useMemo(() => {
+    if (selectedCellKeys.length === 0) {
+      return kpiTimeSeries;
+    }
+    const filteredSeries: KpiTimeSeriesEntry[] = [];
+    selectedCellKeys.forEach(cellKey => {
+      const cellData = cellSeriesData.get(cellKey);
+      if (cellData) {
+        filteredSeries.push(cellData);
+      }
+    });
+    return filteredSeries.length > 0 ? filteredSeries : kpiTimeSeries;
+  }, [kpiTimeSeries, selectedCellKeys, cellSeriesData]);
+
+  const chartSeries = displayedChartSeries;
   const hasChartData = chartSeries.some((series: KpiTimeSeriesEntry) => series.points.length > 0);
-  const chartHeight = 240;
-  const chartMargins = { top: 16, right: 24, bottom: 46, left: 56 };
+  const chartHeight = 320;
+  const chartMargins = { top: 20, right: 28, bottom: 50, left: 60 };
+  
   const chartDomain = React.useMemo(() => {
     if (!hasChartData) {
       return undefined;
@@ -1452,8 +1293,8 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     if (!chartDomain) {
       return undefined;
     }
-  const measuredWidth = chartWidth || 0;
-  const width = measuredWidth > 0 ? measuredWidth : 320;
+    const measuredWidth = chartWidth || 0;
+    const width = measuredWidth > 0 ? measuredWidth : 400;
     const innerWidth = Math.max(width - chartMargins.left - chartMargins.right, 1);
     const innerHeight = Math.max(chartHeight - chartMargins.top - chartMargins.bottom, 1);
     const timeRange = chartDomain.maxTime - chartDomain.minTime;
@@ -1504,7 +1345,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
       return { xTicks: [] as { x: number; label: string }[], yTicks: [] as { y: number; label: string }[] };
     }
     const xTicks: { x: number; label: string }[] = [];
-    const xTickCount = 4;
+    const xTickCount = 5;
     for (let i = 0; i <= xTickCount; i++) {
       const ratio = i / xTickCount;
       const timestamp = chartDomain.minTime + ratio * (chartDomain.maxTime - chartDomain.minTime);
@@ -1512,7 +1353,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     }
 
     const yTicks: { y: number; label: string }[] = [];
-    const yTickCount = 5;
+    const yTickCount = 6;
     for (let i = 0; i <= yTickCount; i++) {
       const ratio = i / yTickCount;
       const value = chartScales.minValue + ratio * (chartScales.maxValue - chartScales.minValue);
@@ -1534,7 +1375,7 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     return { min, max, points: allPoints.length };
   }, [chartSeries, chartDomain]);
 
-  const chartSvgWidth = chartScales?.width ?? Math.max(chartWidth || 0, 320);
+  const chartSvgWidth = chartScales?.width ?? Math.max(chartWidth || 0, 400);
   const chartSvgHeight = chartHeight;
   const hasRenderableChart = hasChartData && preparedChartSeries.length > 0 && Boolean(chartScales);
 
@@ -1564,434 +1405,530 @@ const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
     return () => window.removeEventListener('resize', updateWidth);
   }, [isChartOpen]);
 
+  const styles = {
+    container: {
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
+      padding: '16px',
+      height: '100%',
+      overflowY: 'auto' as const,
+      boxSizing: 'border-box' as const,
+      background: '#f5f7fa'
+    },
+    header: {
+      fontSize: 24,
+      fontWeight: 600,
+      color: '#1a202c',
+      marginBottom: 16,
+      paddingBottom: 12,
+      borderBottom: '2px solid #4361ee'
+    },
+    card: {
+      background: '#ffffff',
+      borderRadius: 8,
+      padding: 16,
+      marginTop: 12,
+      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+      border: '1px solid #e2e8f0'
+    },
+    cardTitle: {
+      fontSize: 16,
+      fontWeight: 600,
+      color: '#2d3748',
+      marginTop: 0,
+      marginBottom: 12
+    },
+    button: {
+      padding: '8px 16px',
+      fontSize: 14,
+      fontWeight: 500,
+      borderRadius: 6,
+      border: 'none',
+      cursor: 'pointer',
+      transition: 'all 0.2s',
+      background: '#4361ee',
+      color: '#ffffff'
+    },
+    buttonSecondary: {
+      padding: '8px 16px',
+      fontSize: 14,
+      fontWeight: 500,
+      borderRadius: 6,
+      border: '1px solid #cbd5e0',
+      cursor: 'pointer',
+      transition: 'all 0.2s',
+      background: '#ffffff',
+      color: '#4a5568'
+    },
+    select: {
+      padding: '8px 12px',
+      fontSize: 14,
+      borderRadius: 6,
+      border: '1px solid #cbd5e0',
+      background: '#ffffff',
+      cursor: 'pointer',
+      width: '100%'
+    },
+    errorText: {
+      color: '#e53e3e',
+      fontSize: 14,
+      padding: 12,
+      background: '#fff5f5',
+      borderRadius: 6,
+      border: '1px solid #fc8181'
+    },
+    badge: {
+      display: 'inline-block' as const,
+      padding: '4px 10px',
+      borderRadius: 12,
+      fontSize: 12,
+      fontWeight: 500,
+      background: '#edf2f7',
+      color: '#2d3748'
+    }
+  };
+
   if (!mapWidgetId) {
     return (
-      <div className="widget-custom" style={{ padding: '20px' }}>
-  <h3>KPI_Tool</h3>
-        <p>prototype v1 still in development</p>
+      <div style={styles.container}>
+        <h3 style={styles.header}>KPI Analysis Tool</h3>
+        <p style={{ color: '#718096' }}>Configure a map widget to begin analysis.</p>
       </div>
     );
   }
 
   if (!kpisUrlConfigured) {
     return (
-      <div className="widget-custom" style={{ padding: '20px' }}>
-        <h3>Feature Services Data Reader</h3>
-        <p>Please configure the KPI feature service URL in the widget settings.</p>
+      <div style={styles.container}>
+        <h3 style={styles.header}>KPI Analysis Tool</h3>
+        <p style={{ color: '#718096' }}>Please configure the KPI feature service URL in the widget settings.</p>
       </div>
     );
   }
 
   return (
-    <div className="widget-custom" style={{ padding: '20px', height: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
+    <div style={styles.container}>
       <JimuMapViewComponent useMapWidgetId={mapWidgetId} onActiveViewChange={handleActiveViewChange} />
-  <h3>KPI_Tool</h3>
+      <h3 style={styles.header}>KPI Analysis Tool</h3>
 
-      {loading && <p>Loading data…</p>}
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {loading && <p style={{ color: '#718096' }}>Loading data…</p>}
+      {error && <div style={styles.errorText}>{error}</div>}
 
       {!loading && !error && (
         <div>
-          <div style={{ marginTop: '20px', padding: '10px', border: '1px solid #ddd', borderRadius: 4 }}>
-            <h4 style={{ marginTop: 0 }}>Select AOI</h4>
-            <p style={{ fontSize: 12, marginBottom: 8 }}>Draw a polygon to apply KPI values to the selected cells.</p>
+          <div style={styles.card}>
+            <h4 style={styles.cardTitle}>1. Select Area of Interest</h4>
+            <p style={{ fontSize: 13, color: '#718096', marginBottom: 12 }}>Draw a polygon to select cells for analysis</p>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <button
                 onClick={startSelection}
                 disabled={selecting || applying}
-                style={{ padding: '6px 14px', cursor: selecting || applying ? 'not-allowed' : 'pointer' }}
+                style={{
+                  ...styles.button,
+                  ...(selecting || applying ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+                }}
               >
-                {selecting ? 'Drawing…' : 'Draw Area'}
+                {selecting ? 'Drawing…' : '✏️ Draw Selection'}
               </button>
               <button
                 onClick={clearSelection}
                 disabled={selecting || selectedCells.length === 0}
-                style={{ padding: '6px 14px', cursor: selecting || selectedCells.length === 0 ? 'not-allowed' : 'pointer' }}
+                style={{
+                  ...styles.buttonSecondary,
+                  ...(selecting || selectedCells.length === 0 ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+                }}
               >
-                Clear Selection
+                🗑️ Clear
               </button>
-              <span style={{ fontSize: 12, color: '#333' }}>Selected cells: {selectedCells.length}</span>
+              <span style={styles.badge}>{selectedCells.length} cells selected</span>
             </div>
           </div>
 
-          <div style={{ marginTop: '20px', padding: '10px', border: '1px solid #ddd', borderRadius: 4 }}>
-            <h4 style={{ marginTop: 0 }}>Choose KPIs</h4>
+          <div style={styles.card}>
+            <h4 style={styles.cardTitle}>2. Configure KPI Parameters</h4>
             {candidateKpiFields.length === 0 ? (
-              <p style={{ fontSize: 12 }}>No numeric KPI fields detected in the KPI layer.</p>
+              <p style={{ fontSize: 13, color: '#718096' }}>Select an area to load available KPIs</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {candidateKpiFields.map((field: string, index: number) => {
-                  const isSelectedForChart = chartKpiFields.includes(field);
-                  const isMapField = mapKpiField === field;
-                  return (
-                    <div
-                      key={field}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        padding: '6px 0',
-                        borderBottom: index === candidateKpiFields.length - 1 ? 'none' : '1px solid #f1f1f1'
-                      }}
-                    >
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: applying || selecting ? 'not-allowed' : 'pointer' }}>
+              <div>
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 6 }}>
+                    Map Color KPI
+                  </label>
+                  <select
+                    value={mapKpiField || ''}
+                    onChange={(e) => handleMapKpiChange(e.target.value)}
+                    disabled={applying || selecting}
+                    style={styles.select}
+                  >
+                    {candidateKpiFields.map((field: string) => (
+                      <option key={field} value={field}>{field}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: 16 }}>
+                  <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 8 }}>
+                    Chart KPIs (select multiple)
+                  </label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {candidateKpiFields.map((field: string) => {
+                      const isSelected = chartKpiFields.includes(field);
+                      return (
+                        <label
+                          key={field}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            padding: '6px 12px',
+                            borderRadius: 6,
+                            border: isSelected ? '2px solid #4361ee' : '1px solid #cbd5e0',
+                            background: isSelected ? '#ebf4ff' : '#ffffff',
+                            cursor: applying || selecting ? 'not-allowed' : 'pointer',
+                            fontSize: 13,
+                            fontWeight: isSelected ? 500 : 400
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={(e) => handleChartKpiToggle(field, e.target.checked)}
+                            disabled={applying || selecting}
+                          />
+                          <span>{field}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {hasDateRange && (
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 8 }}>
+                      Date Range
+                    </label>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={{ fontSize: 12, color: '#718096', display: 'block', marginBottom: 4 }}>Start</label>
                         <input
-                          type="checkbox"
-                          checked={isSelectedForChart}
-                          onChange={(event: React.ChangeEvent<HTMLInputElement>) => handleChartKpiToggle(field, event.target.checked)}
+                          type="date"
+                          value={dateStartValue}
+                          min={dateMinValue || undefined}
+                          max={dateMaxValue || undefined}
+                          onChange={(e) => handleDateInputChange('start', e.target.value)}
                           disabled={applying || selecting}
+                          style={styles.select}
                         />
-                        <span>{field}</span>
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, cursor: applying || selecting ? 'not-allowed' : 'pointer' }}>
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 12, color: '#718096', display: 'block', marginBottom: 4 }}>End</label>
                         <input
-                          type="radio"
-                          name="map-kpi-field"
-                          value={field}
-                          checked={isMapField}
-                          onChange={() => handleMapKpiChange(field)}
+                          type="date"
+                          value={dateEndValue}
+                          min={dateMinValue || undefined}
+                          max={dateMaxValue || undefined}
+                          onChange={(e) => handleDateInputChange('end', e.target.value)}
                           disabled={applying || selecting}
+                          style={styles.select}
                         />
-                        <span>Color map</span>
-                      </label>
+                      </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
-            {candidateKpiFields.length > 0 && (
-              <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  onClick={applyKpi}
-                  disabled={!canApplyKpi || applying || selecting}
-                  style={{ padding: '6px 14px', cursor: !canApplyKpi || applying || selecting ? 'not-allowed' : 'pointer' }}
-                >
-                  {applying ? 'Applying…' : 'Apply KPI'}
-                </button>
-                <span style={{ fontSize: 12, color: '#555' }}>
-                  {applying
-                    ? 'Updating map symbology…'
-                    : canApplyKpi
-                      ? `Ready to apply colors for ${mapKpiField ?? 'selected KPI'}.`
-                      : 'Check KPIs to chart, choose a color KPI, and draw an area to enable Apply.'}
-                </span>
-              </div>
-            )}
-            {selectedChartKpiList && (
-              <div style={{ marginTop: 8, fontSize: 11, color: '#555' }}>
-                Plotting KPIs: <strong>{selectedChartKpiList}</strong>
-                {mapKpiField ? ` | Map color KPI: ${mapKpiField}` : ''}
-              </div>
-            )}
-            {hasDateRange && (
-              <div style={{ marginTop: 12, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end', fontSize: 12 }}>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <span style={{ fontWeight: 600 }}>Start Date</span>
-                  <input
-                    type="date"
-                    value={dateStartValue}
-                    min={dateMinValue || undefined}
-                    max={dateMaxValue || undefined}
-                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => handleDateInputChange('start', event.target.value)}
-                    disabled={applying || selecting}
-                    style={{ padding: '6px 10px', fontSize: 12 }}
-                  />
-                </label>
-                <label style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  <span style={{ fontWeight: 600 }}>End Date</span>
-                  <input
-                    type="date"
-                    value={dateEndValue}
-                    min={dateMinValue || undefined}
-                    max={dateMaxValue || undefined}
-                    onChange={(event: React.ChangeEvent<HTMLInputElement>) => handleDateInputChange('end', event.target.value)}
-                    disabled={applying || selecting}
-                    style={{ padding: '6px 10px', fontSize: 12 }}
-                  />
-                </label>
-                {rangeSummaryStart && rangeSummaryEnd && (
-                  <div style={{ fontSize: 11, color: '#555', lineHeight: 1.4 }}>
-                    <div>Selected window</div>
-                    <strong>{rangeSummaryStart}</strong>
-                    <span> to </span>
-                    <strong>{rangeSummaryEnd}</strong>
+                    {rangeSummaryStart && rangeSummaryEnd && (
+                      <div style={{ fontSize: 12, color: '#718096', marginTop: 8 }}>
+                        Selected: <strong>{rangeSummaryStart}</strong> to <strong>{rangeSummaryEnd}</strong>
+                      </div>
+                    )}
                   </div>
                 )}
-                {dateMinValue && dateMaxValue && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      handleDateInputChange('start', dateMinValue);
-                      handleDateInputChange('end', dateMaxValue);
-                    }}
-                    disabled={applying || selecting}
-                    style={{ padding: '6px 10px', cursor: applying || selecting ? 'not-allowed' : 'pointer' }}
-                  >
-                    Reset Range
-                  </button>
-                )}
+
+                <button
+                  onClick={applyKpi}
+                  disabled={!canApplyKpi || applying || selecting}
+                  style={{
+                    ...styles.button,
+                    width: '100%',
+                    padding: '10px 16px',
+                    fontSize: 15,
+                    ...((!canApplyKpi || applying || selecting) ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+                  }}
+                >
+                  {applying ? '⏳ Applying...' : '✓ Apply KPI Analysis'}
+                </button>
               </div>
             )}
-            <small style={{ display: 'block', marginTop: 6, color: '#555' }}>
-              Choose one or more KPIs, select a single KPI for map coloring, adjust the optional date window, then click Apply to refresh the map.
-            </small>
           </div>
 
           {legendBreaks.length > 0 && legendExpression && legendTitle && (
-            <div style={{ marginTop: '16px', padding: '10px', border: '1px solid #ddd', borderRadius: 4 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-                <h4 style={{ margin: '0' }}>Legend ({legendTitle})</h4>
+            <div style={styles.card}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <h4 style={{ ...styles.cardTitle, marginBottom: 0 }}>Legend: {legendTitle}</h4>
                 <button
-                  type="button"
-                  onClick={() => setLegendExpanded((value: boolean) => !value)}
-                  style={{ padding: '6px 10px', cursor: 'pointer' }}
+                  onClick={() => setLegendExpanded(!legendExpanded)}
+                  style={styles.buttonSecondary}
                 >
-                  {legendExpanded ? 'Collapse' : 'Expand'}
+                  {legendExpanded ? '▲ Collapse' : '▼ Expand'}
                 </button>
               </div>
-              {!legendExpanded && (
-                <small style={{ fontSize: 11, color: '#555' }}>
-                  Legend settings are hidden. Expand to adjust class breaks.
-                </small>
-              )}
               {legendExpanded && (
-                <React.Fragment>
-                  <div style={{ fontSize: 11, color: '#555', margin: '8px 0' }}>Adjust the color and range for each class, then update.</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 220, overflowY: 'auto' }}>
+                <div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 240, overflowY: 'auto', marginBottom: 12 }}>
                     {legendBreaks.map((legendBreak: LegendBreak, index: number) => (
                       <div
-                        key={`legend-break-${index}`}
+                        key={`legend-${index}`}
                         style={{
                           display: 'grid',
-                          gridTemplateColumns: '36px 1fr 1fr',
-                          gap: 6,
+                          gridTemplateColumns: '40px 1fr 1fr',
+                          gap: 8,
                           alignItems: 'center',
-                          padding: '4px 6px',
-                          border: '1px solid #eee',
-                          borderRadius: 4
+                          padding: 8,
+                          border: '1px solid #e2e8f0',
+                          borderRadius: 6,
+                          background: '#fafafa'
                         }}
                       >
                         <input
                           type="color"
                           value={legendBreak.color}
                           onChange={(e) => handleLegendBreakChange(index, 'color', e.target.value)}
-                          aria-label={`Legend color ${index + 1}`}
-                          style={{ width: 32, height: 32, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+                          style={{ width: 36, height: 36, border: 'none', borderRadius: 4, cursor: 'pointer' }}
                         />
                         <input
                           type="number"
                           step="any"
                           value={legendBreak.minValue}
                           onChange={(e) => handleLegendBreakChange(index, 'minValue', e.target.value)}
-                          aria-label={`Legend minimum ${index + 1}`}
-                          style={{ width: '100%', padding: '4px 6px', fontSize: 12, boxSizing: 'border-box' }}
+                          style={{ ...styles.select, width: '100%' }}
                         />
                         <input
                           type="number"
                           step="any"
                           value={legendBreak.maxValue}
                           onChange={(e) => handleLegendBreakChange(index, 'maxValue', e.target.value)}
-                          aria-label={`Legend maximum ${index + 1}`}
-                          style={{ width: '100%', padding: '4px 6px', fontSize: 12, boxSizing: 'border-box' }}
+                          style={{ ...styles.select, width: '100%' }}
                         />
                       </div>
                     ))}
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button
-                      onClick={applyLegendUpdates}
-                      disabled={applying || selecting}
-                      style={{ padding: '6px 12px', cursor: applying || selecting ? 'not-allowed' : 'pointer' }}
-                    >
-                      Update Legend
-                    </button>
-                    <small style={{ fontSize: 11, color: '#555' }}>
-                      Modify and update the legend as needed.
-                    </small>
-                  </div>
-                </React.Fragment>
+                  <button
+                    onClick={applyLegendUpdates}
+                    disabled={applying || selecting}
+                    style={{
+                      ...styles.button,
+                      ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
+                    }}
+                  >
+                    Update Legend
+                  </button>
+                </div>
               )}
             </div>
           )}
 
           {hasBaseKpiData && (
-            <div style={{ marginTop: '16px', padding: '10px', border: '1px solid #ddd', borderRadius: 4 }}>
-              <h4 style={{ margin: '0 0 8px 0' }}>Explore KPI Results</h4>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button
-                  onClick={() => setChartOpen((value: boolean) => !value)}
-                  style={{ padding: '6px 14px', cursor: 'pointer' }}
-                >
-                  {isChartOpen ? 'Hide KPI Graph' : 'Show KPI Graph'}
-                </button>
-              </div>
-              <small style={{ display: 'block', marginTop: 6, color: '#555' }}>
-                Open the chart to explore KPI trends over time and review the latest values for each selected feature.
-              </small>
-            </div>
-          )}
-
-          {isChartOpen && hasBaseKpiData && (
-            <div style={{ marginTop: '16px', padding: '10px', border: '1px solid #ddd', borderRadius: 4 }}>
-              <h4 style={{ margin: '0 0 8px 0' }}>
-                KPI Graph{mapKpiField ? ` (Map KPI: ${mapKpiField})` : ''}
-              </h4>
-              <div style={{ fontSize: 11, color: '#555', marginBottom: 8 }}>
-                Lines show the average KPI value across the selected cells for each date.
-              </div>
-              {preparedChartSeries.length > 0 && (
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 8 }}>
-                  {preparedChartSeries.map((series: PreparedChartSeries) => (
-                    <div key={series.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: '#333' }}>
-                      <span style={{ width: 12, height: 12, borderRadius: 2, background: series.color, display: 'inline-block' }} />
-                      <span>{series.label}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div
-                ref={chartContainerRef}
-                style={{ width: '100%', overflowX: 'hidden', paddingTop: 12 }}
+            <div style={styles.card}>
+              <h4 style={styles.cardTitle}>3. Interactive KPI Graph</h4>
+              <button
+                onClick={() => setChartOpen(!isChartOpen)}
+                style={styles.button}
               >
-                {hasRenderableChart ? (
-                  <svg
-                    width={chartSvgWidth}
-                    height={chartSvgHeight}
-                    role="img"
-                    aria-label="KPI line chart"
-                    style={{ maxWidth: '100%' }}
-                  >
-                    <rect
-                      x={chartMargins.left}
-                      y={chartMargins.top}
-                      width={chartScales?.innerWidth ?? 0}
-                      height={chartScales?.innerHeight ?? 0}
-                      fill="#f8f9fa"
-                      stroke="#dee2e6"
-                      strokeWidth={1}
-                    />
-                    {axisTicks.yTicks.map((tick: { y: number; label: string }, index: number) => (
-                      <g key={`y-tick-${index}`}>
-                        <line
-                          x1={chartMargins.left}
-                          y1={tick.y}
-                          x2={chartMargins.left + (chartScales?.innerWidth ?? 0)}
-                          y2={tick.y}
-                          stroke="#e5e5e5"
+                {isChartOpen ? '▼ Hide Graph' : '▶ Show Graph'}
+              </button>
+
+              {isChartOpen && (
+                <div style={{ marginTop: 16 }}>
+                  {cellSeriesData.size > 0 && (
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 8 }}>
+                        Filter by Cell (click to toggle)
+                      </label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        {Array.from(cellSeriesData.keys()).map(cellKey => {
+                          const isSelected = selectedCellKeys.includes(cellKey);
+                          const cellLabel = cellSeriesData.get(cellKey)?.label || cellKey;
+                          return (
+                            <button
+                              key={cellKey}
+                              onClick={() => toggleCellSelection(cellKey)}
+                              style={{
+                                padding: '6px 12px',
+                                fontSize: 12,
+                                borderRadius: 6,
+                                border: isSelected ? '2px solid #4361ee' : '1px solid #cbd5e0',
+                                background: isSelected ? '#4361ee' : '#ffffff',
+                                color: isSelected ? '#ffffff' : '#4a5568',
+                                cursor: 'pointer',
+                                fontWeight: isSelected ? 600 : 400,
+                                transition: 'all 0.2s'
+                              }}
+                            >
+                              {cellLabel}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <p style={{ fontSize: 12, color: '#718096', marginTop: 8 }}>
+                        {selectedCellKeys.length === 0 ? 'Showing average across all cells' : `Showing ${selectedCellKeys.length} cell(s)`}
+                      </p>
+                    </div>
+                  )}
+
+                  {preparedChartSeries.length > 0 && (
+                    <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                      {preparedChartSeries.map((series: PreparedChartSeries) => (
+                        <div key={series.key} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
+                          <span
+                            style={{
+                              width: 14,
+                              height: 14,
+                              borderRadius: 3,
+                              background: series.color,
+                              border: '1px solid rgba(0,0,0,0.1)'
+                            }}
+                          />
+                          <span style={{ fontWeight: 500, color: '#2d3748' }}>{series.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div ref={chartContainerRef} style={{ width: '100%', overflowX: 'auto' }}>
+                    {hasRenderableChart ? (
+                      <svg
+                        width={chartSvgWidth}
+                        height={chartSvgHeight}
+                        style={{ maxWidth: '100%', background: '#ffffff', borderRadius: 8 }}
+                      >
+                        <defs>
+                          <filter id="shadow">
+                            <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.1" />
+                          </filter>
+                        </defs>
+                        <rect
+                          x={chartMargins.left}
+                          y={chartMargins.top}
+                          width={chartScales?.innerWidth ?? 0}
+                          height={chartScales?.innerHeight ?? 0}
+                          fill="#f9fafb"
+                          stroke="#e2e8f0"
                           strokeWidth={1}
+                          rx={4}
                         />
-                        <text
-                          x={chartMargins.left - 8}
-                          y={tick.y + 4}
-                          fontSize={10}
-                          fill="#555"
-                          textAnchor="end"
-                        >
-                          {tick.label}
-                        </text>
-                      </g>
-                    ))}
-                    {axisTicks.xTicks.map((tick: { x: number; label: string }, index: number) => (
-                      <g key={`x-tick-${index}`}>
-                        <line
-                          x1={tick.x}
-                          y1={chartMargins.top + (chartScales?.innerHeight ?? 0)}
-                          x2={tick.x}
-                          y2={chartMargins.top + (chartScales?.innerHeight ?? 0) + 6}
-                          stroke="#adb5bd"
-                          strokeWidth={1}
-                        />
-                        <text
-                          x={tick.x}
-                          y={chartHeight - 8}
-                          fontSize={10}
-                          fill="#555"
-                          textAnchor="middle"
-                        >
-                          {tick.label}
-                        </text>
-                      </g>
-                    ))}
-                    <line
-                      x1={chartMargins.left}
-                      y1={chartMargins.top}
-                      x2={chartMargins.left}
-                      y2={chartMargins.top + (chartScales?.innerHeight ?? 0)}
-                      stroke="#adb5bd"
-                      strokeWidth={1}
-                    />
-                    <line
-                      x1={chartMargins.left}
-                      y1={chartMargins.top + (chartScales?.innerHeight ?? 0)}
-                      x2={chartMargins.left + (chartScales?.innerWidth ?? 0)}
-                      y2={chartMargins.top + (chartScales?.innerHeight ?? 0)}
-                      stroke="#adb5bd"
-                      strokeWidth={1}
-                    />
-                    {preparedChartSeries.map((series: PreparedChartSeries) => (
-                      <g key={series.key}>
-                        <path
-                          d={series.path}
-                          fill="none"
-                          stroke={series.color}
-                          strokeWidth={2}
-                          strokeLinecap="round"
-                        />
-                        {series.coordinates.map((coord: ChartSeriesCoordinates, idx: number) => (
-                          <g key={`${series.key}-${coord.point.timestamp}-${idx}`}>
-                            <circle cx={coord.x} cy={coord.y} r={4} fill="#fff" stroke={series.color} strokeWidth={2} />
-                            <title>{`${coord.point.tooltipLabel}: ${formatKpiValue(coord.point.value)}`}</title>
+                        {axisTicks.yTicks.map((tick, index) => (
+                          <g key={`y-${index}`}>
+                            <line
+                              x1={chartMargins.left}
+                              y1={tick.y}
+                              x2={chartMargins.left + (chartScales?.innerWidth ?? 0)}
+                              y2={tick.y}
+                              stroke="#e2e8f0"
+                              strokeWidth={1}
+                              strokeDasharray="4,4"
+                            />
+                            <text
+                              x={chartMargins.left - 8}
+                              y={tick.y + 4}
+                              fontSize={11}
+                              fill="#718096"
+                              textAnchor="end"
+                              fontWeight={500}
+                            >
+                              {tick.label}
+                            </text>
                           </g>
                         ))}
-                      </g>
-                    ))}
-                    <text
-                      x={chartMargins.left + (chartScales?.innerWidth ?? 0) / 2}
-                      y={chartHeight - 2}
-                      textAnchor="middle"
-                      fontSize={11}
-                      fill="#333"
-                    >
-                      Date
-                    </text>
-                    <text
-                      x={chartMargins.left - 40}
-                      y={chartMargins.top + (chartScales?.innerHeight ?? 0) / 2}
-                      textAnchor="middle"
-                      fontSize={11}
-                      fill="#333"
-                      transform={`rotate(-90 ${chartMargins.left - 40} ${chartMargins.top + (chartScales?.innerHeight ?? 0) / 2})`}
-                    >
-                      KPI Value
-                    </text>
-                  </svg>
-                ) : (
-                  <div style={{ padding: '12px 0', fontSize: 12, color: '#555' }}>
-                    No chart records for the current filters. Adjust the date range or reapply the KPI to refresh the data.
+                        {axisTicks.xTicks.map((tick, index) => (
+                          <g key={`x-${index}`}>
+                            <line
+                              x1={tick.x}
+                              y1={chartMargins.top + (chartScales?.innerHeight ?? 0)}
+                              x2={tick.x}
+                              y2={chartMargins.top + (chartScales?.innerHeight ?? 0) + 6}
+                              stroke="#cbd5e0"
+                              strokeWidth={1.5}
+                            />
+                            <text
+                              x={tick.x}
+                              y={chartHeight - 10}
+                              fontSize={10}
+                              fill="#718096"
+                              textAnchor="middle"
+                              fontWeight={500}
+                            >
+                              {tick.label}
+                            </text>
+                          </g>
+                        ))}
+                        {preparedChartSeries.map((series: PreparedChartSeries) => (
+                          <g key={series.key}>
+                            <path
+                              d={series.path}
+                              fill="none"
+                              stroke={series.color}
+                              strokeWidth={2.5}
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              filter="url(#shadow)"
+                            />
+                            {series.coordinates.map((coord, idx) => {
+                              const isHovered = hoveredPoint?.seriesKey === series.key && hoveredPoint?.timestamp === coord.point.timestamp;
+                              return (
+                                <g key={`${series.key}-${idx}`}>
+                                  <circle
+                                    cx={coord.x}
+                                    cy={coord.y}
+                                    r={isHovered ? 6 : 4}
+                                    fill="#ffffff"
+                                    stroke={series.color}
+                                    strokeWidth={isHovered ? 3 : 2}
+                                    style={{ cursor: 'pointer', transition: 'all 0.2s' }}
+                                    onMouseEnter={() => setHoveredPoint({ seriesKey: series.key, timestamp: coord.point.timestamp })}
+                                    onMouseLeave={() => setHoveredPoint(null)}
+                                  />
+                                  <title>{`${series.label}\n${coord.point.tooltipLabel}\nValue: ${formatKpiValue(coord.point.value)}`}</title>
+                                </g>
+                              );
+                            })}
+                          </g>
+                        ))}
+                        <text
+                          x={chartMargins.left + (chartScales?.innerWidth ?? 0) / 2}
+                          y={chartHeight - 2}
+                          textAnchor="middle"
+                          fontSize={12}
+                          fill="#4a5568"
+                          fontWeight={600}
+                        >
+                          Date
+                        </text>
+                        <text
+                          x={chartMargins.left - 45}
+                          y={chartMargins.top + (chartScales?.innerHeight ?? 0) / 2}
+                          textAnchor="middle"
+                          fontSize={12}
+                          fill="#4a5568"
+                          fontWeight={600}
+                          transform={`rotate(-90 ${chartMargins.left - 45} ${chartMargins.top + (chartScales?.innerHeight ?? 0) / 2})`}
+                        >
+                          KPI Value
+                        </text>
+                      </svg>
+                    ) : (
+                      <div style={{ padding: 20, textAlign: 'center', color: '#718096' }}>
+                        No chart data available. Adjust filters or reapply KPI.
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              {hasRenderableChart && (
-                <div style={{ marginTop: 10, fontSize: 11, color: '#444', display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-                  <span>Min: {formatKpiValue(chartSummary.min)}</span>
-                  <span>Max: {formatKpiValue(chartSummary.max)}</span>
-                  <span>Points: {chartSummary.points}</span>
+
+                  {hasRenderableChart && (
+                    <div style={{ marginTop: 12, display: 'flex', gap: 16, flexWrap: 'wrap', fontSize: 12, color: '#4a5568' }}>
+                      <span style={styles.badge}>Min: {formatKpiValue(chartSummary.min)}</span>
+                      <span style={styles.badge}>Max: {formatKpiValue(chartSummary.max)}</span>
+                      <span style={styles.badge}>Data Points: {chartSummary.points}</span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
           )}
-          
-          {/* Hide the reloa button as it's not functional. */}
-          {/* <button
-            onClick={handleReload}
-            style={{ marginTop: '20px', padding: '8px 16px', cursor: 'pointer' }}
-          >
-            Reload Data
-          </button> */}
-
-          {/* No map preview section. This widget only controls the renderer of the detected polygon cells layer in the main map widget. */}
         </div>
       )}
     </div>
