@@ -3,8 +3,7 @@ import { React, jsx, AllWidgetProps } from 'jimu-core';
 import { JimuMapView, JimuMapViewComponent } from 'jimu-arcgis';
 
 /**
- * Sağlam iki uçlu (dual-thumb) slider
- * Pointer Events kullan, her iki uç sorunsuz hareket etsin.
+ * Professional dual-thumb slider with interactive color scale
  */
 type DualRangeSliderProps = {
   min: number;
@@ -13,6 +12,8 @@ type DualRangeSliderProps = {
   minValue: number;
   maxValue: number;
   onChange: (newMin: number, newMax: number) => void;
+  field: string;
+  legendSegments: LegendSegment[];
 };
 
 const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
@@ -21,14 +22,18 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
   step = 1,
   minValue,
   maxValue,
-  onChange
+  onChange,
+  field,
+  legendSegments
 }) => {
   const trackRef = React.useRef<HTMLDivElement>(null);
   const activeRef = React.useRef<null | { thumb: 'min' | 'max'; pointerId: number }>(null);
+  const [hoveredSegment, setHoveredSegment] = React.useState<number | null>(null);
 
   const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
   const valueToPercent = (v: number) => ((v - min) * 100) / (max - min);
   const snap = (v: number) => Math.round(v / step) * step;
+
   const handlePointerDown = (thumb: 'min' | 'max') => (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -75,38 +80,152 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
   const minPercent = valueToPercent(minValue);
   const maxPercent = valueToPercent(maxValue);
 
+  const total = max - min;
+  const toPercent = (start: number, end: number) => {
+    const clampedStart = Math.max(start, min);
+    const clampedEnd = Math.min(end, max);
+    const span = clampedEnd - clampedStart;
+    return Math.max((span / total) * 100, 0);
+  };
+
+  const getSegmentOpacity = (segmentIndex: number, segmentFrom: number, segmentTo: number): number => {
+    const segStart = segmentFrom ?? min;
+    const segEnd = segmentTo ?? max;
+    
+    // Check if segment is within selected range
+    const isInRange = !(segEnd < minValue || segStart > maxValue);
+    
+    if (hoveredSegment === segmentIndex) {
+      return 1;
+    }
+    
+    return isInRange ? 0.95 : 0.3;
+  };
+
   return (
-    <div style={{ width: '100%', padding: '8px 0', touchAction: 'none' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
-        <span>Min: {minValue}</span>
-        <span>Max: {maxValue}</span>
+    <div style={{ width: '100%', padding: '12px 0', touchAction: 'none' }}>
+      {/* Value Display */}
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        marginBottom: 16,
+        padding: '0 4px'
+      }}>
+        <div style={{ 
+          display: 'flex', 
+          flexDirection: 'column',
+          alignItems: 'flex-start'
+        }}>
+          <span style={{ fontSize: 11, color: '#6c757d', fontWeight: 500, marginBottom: 2 }}>MIN</span>
+          <span style={{ 
+            fontSize: 20, 
+            fontWeight: 700, 
+            color: '#0079c1',
+            fontVariantNumeric: 'tabular-nums'
+          }}>{minValue}</span>
+        </div>
+        <div style={{ 
+          display: 'flex', 
+          flexDirection: 'column',
+          alignItems: 'flex-end'
+        }}>
+          <span style={{ fontSize: 11, color: '#6c757d', fontWeight: 500, marginBottom: 2 }}>MAX</span>
+          <span style={{ 
+            fontSize: 20, 
+            fontWeight: 700, 
+            color: '#0079c1',
+            fontVariantNumeric: 'tabular-nums'
+          }}>{maxValue}</span>
+        </div>
       </div>
 
-      <div ref={trackRef} style={{ position: 'relative', height: 36, userSelect: 'none' }}>
-        {/* Track */}
+      {/* Interactive Color Scale */}
+      <div style={{ marginBottom: 20 }}>
+        <div
+          style={{
+            display: 'flex',
+            height: 24,
+            borderRadius: 6,
+            overflow: 'hidden',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+            border: '1px solid rgba(0,0,0,0.08)',
+            transition: 'all 0.2s ease'
+          }}
+        >
+          {legendSegments.map((segment, idx) => {
+            const widthPercent = toPercent(segment.from ?? min, segment.to ?? max);
+            if (widthPercent <= 0) return null;
+
+            const opacity = getSegmentOpacity(idx, segment.from ?? min, segment.to ?? max);
+
+            return (
+              <div
+                key={`${field}-band-${idx}`}
+                onMouseEnter={() => setHoveredSegment(idx)}
+                onMouseLeave={() => setHoveredSegment(null)}
+                style={{
+                  width: `${widthPercent}%`,
+                  backgroundColor: segment.color,
+                  opacity,
+                  transition: 'opacity 0.2s ease',
+                  cursor: 'pointer',
+                  position: 'relative'
+                }}
+                title={segment.label}
+              />
+            );
+          })}
+        </div>
+        
+        {/* Tooltip on hover */}
+        {hoveredSegment !== null && legendSegments[hoveredSegment] && (
+          <div style={{
+            marginTop: 8,
+            padding: '6px 12px',
+            backgroundColor: '#2c3e50',
+            color: '#fff',
+            borderRadius: 4,
+            fontSize: 12,
+            fontWeight: 500,
+            textAlign: 'center',
+            animation: 'fadeIn 0.2s ease'
+          }}>
+            {legendSegments[hoveredSegment].label}
+          </div>
+        )}
+      </div>
+
+      {/* Slider Track */}
+      <div ref={trackRef} style={{ position: 'relative', height: 40, userSelect: 'none', padding: '0 4px' }}>
+        {/* Background Track */}
         <div
           style={{
             position: 'absolute',
-            top: 16,
-            left: 0,
-            right: 0,
-            height: 4,
-            background: '#ddd',
-            borderRadius: 2
+            top: 18,
+            left: 4,
+            right: 4,
+            height: 6,
+            background: 'linear-gradient(to right, #e9ecef, #dee2e6)',
+            borderRadius: 3,
+            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)'
           }}
         />
-        {/* Selected range */}
+        
+        {/* Selected range highlight */}
         <div
           style={{
             position: 'absolute',
-            top: 16,
-            left: `${minPercent}%`,
-            width: `${Math.max(0, maxPercent - minPercent)}%`,
-            height: 4,
-            background: '#0079c1',
-            borderRadius: 2
+            top: 18,
+            left: `calc(${minPercent}% + 4px)`,
+            width: `calc(${Math.max(0, maxPercent - minPercent)}% - 4px)`,
+            height: 6,
+            background: 'linear-gradient(135deg, #0079c1 0%, #00a8e8 100%)',
+            borderRadius: 3,
+            boxShadow: '0 2px 4px rgba(0,121,193,0.3)',
+            transition: 'all 0.1s ease'
           }}
         />
+        
         {/* Min thumb */}
         <div
           onPointerDown={handlePointerDown('min')}
@@ -115,19 +234,22 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
           onPointerCancel={handlePointerUp('min')}
           style={{
             position: 'absolute',
-            top: 8,
-            left: `calc(${minPercent}% - 8px)`,
-            width: 16,
-            height: 16,
-            background: '#fff',
-            border: '2px solid #0079c1',
+            top: 10,
+            left: `calc(${minPercent}% - 6px)`,
+            width: 20,
+            height: 20,
+            background: 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)',
+            border: '3px solid #0079c1',
             borderRadius: '50%',
-            cursor: 'pointer',
-            boxShadow: '0 0 2px rgba(0,0,0,0.4)',
-            zIndex: 2
+            cursor: 'grab',
+            boxShadow: '0 3px 8px rgba(0,0,0,0.2)',
+            zIndex: 3,
+            transition: 'transform 0.1s ease',
+            transform: activeRef.current?.thumb === 'min' ? 'scale(1.2)' : 'scale(1)'
           }}
           title="Min"
         />
+        
         {/* Max thumb */}
         <div
           onPointerDown={handlePointerDown('max')}
@@ -136,16 +258,18 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
           onPointerCancel={handlePointerUp('max')}
           style={{
             position: 'absolute',
-            top: 8,
-            left: `calc(${maxPercent}% - 8px)`,
-            width: 16,
-            height: 16,
-            background: '#fff',
-            border: '2px solid #0079c1',
+            top: 10,
+            left: `calc(${maxPercent}% - 6px)`,
+            width: 20,
+            height: 20,
+            background: 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)',
+            border: '3px solid #0079c1',
             borderRadius: '50%',
-            cursor: 'pointer',
-            boxShadow: '0 0 2px rgba(0,0,0,0.4)',
-            zIndex: 2
+            cursor: 'grab',
+            boxShadow: '0 3px 8px rgba(0,0,0,0.2)',
+            zIndex: 3,
+            transition: 'transform 0.1s ease',
+            transform: activeRef.current?.thumb === 'max' ? 'scale(1.2)' : 'scale(1)'
           }}
           title="Max"
         />
@@ -154,7 +278,6 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
   );
 };
 
-/** Filtre tipi */
 interface FilterCondition {
   id: string;
   field: string;
@@ -188,27 +311,27 @@ interface LegendSegment {
 
 const KPI_LEGENDS: Record<string, LegendSegment[]> = {
   RSRP: [
-    { from: FIELD_RANGES.RSRP.min, to: -118, color: '#ff00ff', label: '< -118' },
-    { from: -118, to: -115, color: '#ff0000', label: '-118 to -115' },
-    { from: -115, to: -110, color: '#ff8c00', label: '-115 to -110' },
-    { from: -110, to: -105, color: '#ffd700', label: '-110 to -105' },
-    { from: -105, to: -95, color: '#40e0d0', label: '-105 to -95' },
-  { from: -95, to: -85, color: '#0000ff', label: '-95 to -85' },
-  { from: -85, to: FIELD_RANGES.RSRP.max, color: '#008000', label: '>= -85' }
+    { from: FIELD_RANGES.RSRP.min, to: -118, color: '#ff00ff', label: '< -118 dBm' },
+    { from: -118, to: -115, color: '#ff0000', label: '-118 to -115 dBm' },
+    { from: -115, to: -110, color: '#ff8c00', label: '-115 to -110 dBm' },
+    { from: -110, to: -105, color: '#ffd700', label: '-110 to -105 dBm' },
+    { from: -105, to: -95, color: '#40e0d0', label: '-105 to -95 dBm' },
+    { from: -95, to: -85, color: '#0000ff', label: '-95 to -85 dBm' },
+    { from: -85, to: FIELD_RANGES.RSRP.max, color: '#008000', label: '≥ -85 dBm' }
   ],
   RSRQ: [
-    { from: FIELD_RANGES.RSRQ.min, to: -16, color: '#ff0000', label: '< -16' },
-    { from: -16, to: -10, color: '#ffd700', label: '-16 to -10' },
-  { from: -10, to: -5, color: '#0000ff', label: '-10 to -5' },
-  { from: -5, to: FIELD_RANGES.RSRQ.max, color: '#008000', label: '>= -5' }
+    { from: FIELD_RANGES.RSRQ.min, to: -16, color: '#ff0000', label: '< -16 dB' },
+    { from: -16, to: -10, color: '#ffd700', label: '-16 to -10 dB' },
+    { from: -10, to: -5, color: '#0000ff', label: '-10 to -5 dB' },
+    { from: -5, to: FIELD_RANGES.RSRQ.max, color: '#008000', label: '≥ -5 dB' }
   ],
   SNR: [
-    { from: FIELD_RANGES.SNR.min, to: -10, color: '#ff0000', label: '< -10' },
-    { from: -10, to: -5, color: '#ff8c00', label: '-10 to -5' },
-    { from: -5, to: 0, color: '#ffd700', label: '-5 to 0' },
-    { from: 0, to: 5, color: '#40e0d0', label: '0 to 5' },
-    { from: 5, to: 10, color: '#0000ff', label: '5 to 10' },
-  { from: 10, to: FIELD_RANGES.SNR.max, color: '#008000', label: '>= 10' }
+    { from: FIELD_RANGES.SNR.min, to: -10, color: '#ff0000', label: '< -10 dB' },
+    { from: -10, to: -5, color: '#ff8c00', label: '-10 to -5 dB' },
+    { from: -5, to: 0, color: '#ffd700', label: '-5 to 0 dB' },
+    { from: 0, to: 5, color: '#40e0d0', label: '0 to 5 dB' },
+    { from: 5, to: 10, color: '#0000ff', label: '5 to 10 dB' },
+    { from: 10, to: FIELD_RANGES.SNR.max, color: '#008000', label: '≥ 10 dB' }
   ]
 };
 
@@ -228,7 +351,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
       tempMax: FIELD_RANGES.RSRP.def[1],
       activeWhere: null,
       usidInput: '',
-  activeUsid: null,
+      activeUsid: null,
       usidError: null
     };
   }
@@ -255,22 +378,18 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     const v: any = this.mapView.view;
     if (!v) return;
 
-    // Yeni layerView oluştuğunda (zoom/scale ile görünür olduğunda) tekrar uygula
     const hCreate = v.on('layerview-create', () => {
       if (this.state.activeWhere) this.applyActiveWhereToAll();
     });
 
-    // Layerview silinirse/yeniden yaratılırsa tekrar uygula
     const hDestroy = v.on('layerview-destroy', () => {
       if (this.state.activeWhere) this.applyActiveWhereToAll();
     });
 
-    // Navigasyon bittiğinde (zoom/pan sonrası) tekrar uygula
     const hStationary = v.watch('stationary', (st: boolean) => {
       if (st && this.state.activeWhere) this.applyActiveWhereToAll();
     });
 
-    // Katman listesinde değişiklik olursa
     const hLayersChange = v.map?.allLayers?.on?.('change', () => {
       if (this.state.activeWhere) this.applyActiveWhereToAll();
     });
@@ -307,7 +426,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
   };
 
   onSliderChange = (newMin: number, newMax: number) => {
-    // Slider sürüklenirken sadece geçici değerler güncellenir
     this.setState({ tempMin: newMin, tempMax: newMax });
   };
 
@@ -414,7 +532,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
     const view: any = this.mapView.view;
     const layers = view?.map?.allLayers;
-  if (!layers) return;
+    if (!layers) return;
 
     layers.forEach((layer: any) => {
       if (!layer) return;
@@ -447,81 +565,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     });
   };
 
-  renderLegend = (field: string): React.ReactNode => {
-    const segments = KPI_LEGENDS[field];
-    if (!segments?.length) return null;
-
-    const info = FIELD_RANGES[field];
-    if (!info) return null;
-
-    const total = info.max - info.min;
-    if (total <= 0) return null;
-
-    const toPercent = (start: number, end: number) => {
-      const clampedStart = Math.max(start, info.min);
-      const clampedEnd = Math.min(end, info.max);
-      const span = clampedEnd - clampedStart;
-      return Math.max((span / total) * 100, 0);
-    };
-
-    return (
-      <div style={{ marginTop: 12 }}>
-        <div
-          style={{
-            display: 'flex',
-            height: 8,
-            borderRadius: 4,
-            overflow: 'hidden',
-            boxShadow: '0 0 2px rgba(0,0,0,0.2)'
-          }}
-        >
-          {segments.map((segment, idx) => {
-            const widthPercent = toPercent(segment.from ?? info.min, segment.to ?? info.max);
-            if (widthPercent <= 0) {
-              return null;
-            }
-
-            return (
-              <div
-                key={`${field}-band-${idx}`}
-                style={{
-                  width: `${widthPercent}%`,
-                  backgroundColor: segment.color
-                }}
-                title={segment.label}
-              />
-            );
-          })}
-        </div>
-        <div style={{ display: 'flex', marginTop: 4, fontSize: 10, color: '#333' }}>
-          {segments.map((segment, idx) => {
-            const widthPercent = toPercent(segment.from ?? info.min, segment.to ?? info.max);
-            if (widthPercent <= 0) {
-              return null;
-            }
-
-            return (
-              <div
-                key={`${field}-label-${idx}`}
-                style={{
-                  width: `${widthPercent}%`,
-                  textAlign: 'center',
-                  padding: '2px 0',
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis'
-                }}
-                title={segment.label}
-              >
-                {segment.label}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
   isTargetFeatureLayer = (layer: any): boolean => {
     const fields = layer?.fields || [];
     return fields.some((f: any) => {
@@ -542,7 +585,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     const layers = view?.map?.allLayers;
     if (!layers) return;
 
-    // Mevcut sublayer watcher'larını temizle (yeniden eklenecek)
     this.layerHandles.forEach(h => { try { h?.remove?.(); } catch {} });
     this.layerHandles = [];
     this.sublayerHandles.forEach(h => { try { h?.remove?.(); } catch {} });
@@ -553,7 +595,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     layers.forEach((layer: any) => {
       if (!layer) return;
 
-      // FeatureLayer
       if (layer.type === 'feature') {
         if (this.isTargetFeatureLayer(layer)) {
           try { layer.definitionExpression = where; } catch {}
@@ -584,7 +625,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
         }
       }
 
-      // MapImageLayer
       if (layer.type === 'map-image' && layer.allSublayers) {
         layer.allSublayers.forEach((sublayer: any) => {
           if (!this.isTargetSublayer(sublayer)) return;
@@ -608,7 +648,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             if (hSubDef) this.sublayerHandles.push(hSubDef);
           }
 
-          // Sublayer görünürlük/scale etkilenirse yeniden uygula
           const hVis = sublayer.watch && sublayer.watch('visible', () => {
             if (this.state.activeWhere !== activeWhereSnapshot) return;
             try {
@@ -635,7 +674,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
           });
 
           [hVis, hMinScale, hMaxScale].forEach(h => { if (h) this.sublayerHandles.push(h); });
-
         });
 
         try { layer.refresh && layer.refresh(); } catch {}
@@ -664,36 +702,129 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
   render() {
     const { conditions, selectedField, tempMin, tempMax, activeWhere, usidInput, activeUsid, usidError } = this.state;
     const current = FIELD_RANGES[selectedField];
+    const legends = KPI_LEGENDS[selectedField];
 
     return (
-      <div style={{ padding: '15px', width: '100%', height: '100%', backgroundColor: '#fff', overflow: 'auto' }}>
+      <div style={{ 
+        padding: '20px', 
+        width: '100%', 
+        height: '100%', 
+        backgroundColor: '#f8f9fa', 
+        overflow: 'auto',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
+      }}>
         <JimuMapViewComponent
           useMapWidgetId={this.props.useMapWidgetIds?.[0]}
           onActiveViewChange={this.onActiveViewChange}
         />
 
-        <div>
-          <h3 style={{ margin: '0 0 15px 0', fontSize: 18, fontWeight: 'bold' }}>
-            IQI Custom Filter
-          </h3>
+        <style>
+          {`
+            @keyframes fadeIn {
+              from { opacity: 0; transform: translateY(-4px); }
+              to { opacity: 1; transform: translateY(0); }
+            }
+          `}
+        </style>
 
-          {/* Alan Seçimi */}
-          <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', marginBottom: 5, fontSize: 14, fontWeight: 600 }}>
-              KPI Selection : 
+        {/* Header */}
+        <div style={{ 
+          marginBottom: 24,
+          paddingBottom: 16,
+          borderBottom: '2px solid #dee2e6'
+        }}>
+          <h2 style={{ 
+            margin: 0, 
+            fontSize: 24, 
+            fontWeight: 700,
+            color: '#212529',
+            letterSpacing: '-0.5px'
+          }}>
+            IQI Custom Filter
+          </h2>
+          <p style={{
+            margin: '4px 0 0 0',
+            fontSize: 13,
+            color: '#6c757d',
+            fontWeight: 400
+          }}>
+            Advanced signal quality filtering
+          </p>
+        </div>
+
+        {/* KPI SECTION */}
+        <div style={{
+          backgroundColor: '#fff',
+          borderRadius: 8,
+          padding: 20,
+          marginBottom: 20,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          border: '1px solid #e9ecef'
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            marginBottom: 16,
+            paddingBottom: 12,
+            borderBottom: '1px solid #f1f3f5'
+          }}>
+            <div style={{
+              width: 4,
+              height: 24,
+              backgroundColor: '#0079c1',
+              borderRadius: 2,
+              marginRight: 12
+            }} />
+            <h3 style={{ 
+              margin: 0, 
+              fontSize: 16, 
+              fontWeight: 700,
+              color: '#212529',
+              letterSpacing: '-0.3px'
+            }}>
+              KPI Selection & Range
+            </h3>
+          </div>
+
+          {/* KPI Dropdown */}
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ 
+              display: 'block', 
+              marginBottom: 8, 
+              fontSize: 13, 
+              fontWeight: 600,
+              color: '#495057',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px'
+            }}>
+              Signal Parameter
             </label>
             <select
               value={selectedField}
               onChange={this.onFieldChange}
-              style={{ width: '100%', padding: 8, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
+              style={{ 
+                width: '100%', 
+                padding: '12px 16px', 
+                fontSize: 15, 
+                fontWeight: 500,
+                border: '2px solid #e9ecef', 
+                borderRadius: 6,
+                backgroundColor: '#fff',
+                color: '#212529',
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                outline: 'none'
+              }}
+              onFocus={(e) => e.currentTarget.style.borderColor = '#0079c1'}
+              onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
             >
-                <option value="RSRP">RSRP</option>
-                <option value="RSRQ">RSRQ</option>
-                <option value="SNR">SNR</option>
+              <option value="RSRP">RSRP - Reference Signal Received Power</option>
+              <option value="RSRQ">RSRQ - Reference Signal Received Quality</option>
+              <option value="SNR">SNR - Signal to Noise Ratio</option>
             </select>
           </div>
 
-          {/* İki uçlu Slider */}
+          {/* Slider with Interactive Legend */}
           <DualRangeSlider
             min={current.min}
             max={current.max}
@@ -701,91 +832,70 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             minValue={tempMin}
             maxValue={tempMax}
             onChange={this.onSliderChange}
+            field={selectedField}
+            legendSegments={legends}
           />
 
-          {this.renderLegend(selectedField)}
-
-          {/* USID Arama */}
-          <div style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', marginBottom: 5, fontSize: 14, fontWeight: 600 }}>
-              USID Filter:
-            </label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <input
-                type="text"
-                value={usidInput}
-                onChange={this.onUsidInputChange}
-                onKeyDown={this.onUsidKeyDown}
-                placeholder="Enter USID or comma-separated USIDs"
-                style={{ flex: 1, padding: 8, fontSize: 10, border: '1px solid #ccc', borderRadius: 4 }}
-              />
-              <button
-                onClick={this.applyUsidFilter}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor: '#28a745',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 4,
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                Search
-              </button>
-              <button
-                onClick={this.clearUsid}
-                disabled={!usidInput && !(activeUsid && activeUsid.length)}
-                style={{
-                  padding: '8px 12px',
-                  backgroundColor: usidInput || (activeUsid && activeUsid.length) ? '#6c757d' : '#ccc',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 4,
-                  fontSize: 14,
-                  fontWeight: 600,
-                  cursor: usidInput || (activeUsid && activeUsid.length) ? 'pointer' : 'not-allowed'
-                }}
-              >
-                Reset
-              </button>
-            </div>
-            {activeUsid && activeUsid.length > 0 && (
-              <div style={{ marginTop: 6, fontSize: 12, color: '#0079c1' }}>
-                USID Filter applied to :   <strong>{activeUsid.join(', ')}</strong>
-              </div>
-            )}
-            {usidError && (
-              <div style={{ marginTop: 6, fontSize: 12, color: '#dc3545' }}>
-                {usidError}
-              </div>
-            )}
-          </div>
-
-          {/* Koşul Ekle (otomatik uygular) */}
+          {/* Add Condition Button */}
           <button
             onClick={this.addCondition}
             style={{
               width: '100%',
-              padding: 10,
+              padding: '14px 20px',
               backgroundColor: '#0079c1',
               color: '#fff',
               border: 'none',
-              borderRadius: 4,
-              fontSize: 14,
+              borderRadius: 6,
+              fontSize: 15,
               fontWeight: 600,
               cursor: 'pointer',
-              marginBottom: 16
+              transition: 'all 0.2s ease',
+              boxShadow: '0 2px 4px rgba(0,121,193,0.2)',
+              marginTop: 16
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = '#006199';
+              e.currentTarget.style.transform = 'translateY(-1px)';
+              e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,121,193,0.3)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = '#0079c1';
+              e.currentTarget.style.transform = 'translateY(0)';
+              e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,121,193,0.2)';
             }}
           >
-            + Add Condition
+            + Add Filter Condition
           </button>
 
-          {/* Aktif Koşullar */}
+          {/* Active Conditions */}
           {conditions.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Active Conditions:</h4>
+            <div style={{ marginTop: 20 }}>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                marginBottom: 12
+              }}>
+                <span style={{ 
+                  fontSize: 13, 
+                  fontWeight: 600,
+                  color: '#495057',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px'
+                }}>
+                  Active Conditions
+                </span>
+                <span style={{
+                  marginLeft: 8,
+                  padding: '2px 8px',
+                  backgroundColor: '#0079c1',
+                  color: '#fff',
+                  borderRadius: 12,
+                  fontSize: 11,
+                  fontWeight: 700
+                }}>
+                  {conditions.length}
+                </span>
+              </div>
               {conditions.map((cond, idx) => (
                 <div
                   key={cond.id}
@@ -793,71 +903,295 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: '8px 10px',
-                    backgroundColor: '#f5f5f5',
-                    borderRadius: 4,
-                    marginBottom: 8,
-                    fontSize: 13
+                    padding: '12px 16px',
+                    backgroundColor: '#f8f9fa',
+                    borderLeft: '3px solid #0079c1',
+                    borderRadius: 6,
+                    marginBottom: 10,
+                    fontSize: 14,
+                    transition: 'all 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.backgroundColor = '#e9ecef';
+                    e.currentTarget.style.transform = 'translateX(4px)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.backgroundColor = '#f8f9fa';
+                    e.currentTarget.style.transform = 'translateX(0)';
                   }}
                 >
-                  <span>
-                    {idx > 0 && <strong>AND </strong>}
-                    <strong>{cond.field}</strong>: {cond.min} → {cond.max}
+                  <span style={{ color: '#495057', fontWeight: 500 }}>
+                    {idx > 0 && <span style={{ 
+                      fontWeight: 700, 
+                      color: '#6c757d',
+                      marginRight: 8 
+                    }}>AND</span>}
+                    <span style={{ 
+                      fontWeight: 700, 
+                      color: '#212529' 
+                    }}>{cond.field}</span>
+                    {' '}
+                    <span style={{ color: '#6c757d', fontWeight: 400 }}>between</span>
+                    {' '}
+                    <span style={{ 
+                      fontWeight: 700, 
+                      color: '#0079c1',
+                      fontVariantNumeric: 'tabular-nums'
+                    }}>{cond.min}</span>
+                    {' '}
+                    <span style={{ color: '#6c757d', fontWeight: 400 }}>and</span>
+                    {' '}
+                    <span style={{ 
+                      fontWeight: 700, 
+                      color: '#0079c1',
+                      fontVariantNumeric: 'tabular-nums'
+                    }}>{cond.max}</span>
                   </span>
                   <button
                     onClick={() => this.removeCondition(cond.id)}
                     style={{
-                      padding: '4px 8px',
-                      backgroundColor: '#d9534f',
+                      padding: '6px 10px',
+                      backgroundColor: '#dc3545',
                       color: 'white',
                       border: 'none',
-                      borderRadius: 3,
+                      borderRadius: 4,
                       fontSize: 12,
-                      cursor: 'pointer'
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      transition: 'all 0.2s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.backgroundColor = '#c82333';
+                      e.currentTarget.style.transform = 'scale(1.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.backgroundColor = '#dc3545';
+                      e.currentTarget.style.transform = 'scale(1)';
                     }}
                   >
-                    ✕
+                    Remove
                   </button>
                 </div>
               ))}
             </div>
           )}
+        </div>
 
-          {/* Temizle */}
-          <div style={{ display: 'flex', gap: 10 }}>
+        {/* USID SECTION */}
+        <div style={{
+          backgroundColor: '#fff',
+          borderRadius: 8,
+          padding: 20,
+          marginBottom: 20,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          border: '1px solid #e9ecef'
+        }}>
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            marginBottom: 16,
+            paddingBottom: 12,
+            borderBottom: '1px solid #f1f3f5'
+          }}>
+            <div style={{
+              width: 4,
+              height: 24,
+              backgroundColor: '#28a745',
+              borderRadius: 2,
+              marginRight: 12
+            }} />
+            <h3 style={{ 
+              margin: 0, 
+              fontSize: 16, 
+              fontWeight: 700,
+              color: '#212529',
+              letterSpacing: '-0.3px'
+            }}>
+              USID Filter
+            </h3>
+          </div>
+
+          <label style={{ 
+            display: 'block', 
+            marginBottom: 8, 
+            fontSize: 13, 
+            fontWeight: 600,
+            color: '#495057',
+            textTransform: 'uppercase',
+            letterSpacing: '0.5px'
+          }}>
+            User Site Identifier
+          </label>
+          
+          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+            <input
+              type="text"
+              value={usidInput}
+              onChange={this.onUsidInputChange}
+              onKeyDown={this.onUsidKeyDown}
+              placeholder="Enter USID or comma-separated values..."
+              style={{ 
+                flex: 1, 
+                padding: '12px 16px', 
+                fontSize: 14, 
+                border: '2px solid #e9ecef', 
+                borderRadius: 6,
+                outline: 'none',
+                transition: 'all 0.2s ease',
+                fontFamily: 'inherit'
+              }}
+              onFocus={(e) => e.currentTarget.style.borderColor = '#28a745'}
+              onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
+            />
             <button
-              onClick={this.clearFilter}
-              disabled={!activeWhere}
+              onClick={this.applyUsidFilter}
               style={{
-                flex: 1,
-                padding: 12,
-                backgroundColor: activeWhere ? '#dc3545' : '#ccc',
+                padding: '12px 20px',
+                backgroundColor: '#28a745',
                 color: '#fff',
                 border: 'none',
-                borderRadius: 4,
+                borderRadius: 6,
                 fontSize: 14,
                 fontWeight: 600,
-                cursor: activeWhere ? 'pointer' : 'not-allowed'
+                cursor: 'pointer',
+                transition: 'all 0.2s ease',
+                boxShadow: '0 2px 4px rgba(40,167,69,0.2)',
+                whiteSpace: 'nowrap'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.backgroundColor = '#218838';
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.boxShadow = '0 4px 8px rgba(40,167,69,0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = '#28a745';
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 2px 4px rgba(40,167,69,0.2)';
               }}
             >
-              ✗ Clear
+              Apply
+            </button>
+            <button
+              onClick={this.clearUsid}
+              disabled={!usidInput && !(activeUsid && activeUsid.length)}
+              style={{
+                padding: '12px 20px',
+                backgroundColor: usidInput || (activeUsid && activeUsid.length) ? '#6c757d' : '#e9ecef',
+                color: usidInput || (activeUsid && activeUsid.length) ? '#fff' : '#adb5bd',
+                border: 'none',
+                borderRadius: 6,
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: usidInput || (activeUsid && activeUsid.length) ? 'pointer' : 'not-allowed',
+                transition: 'all 0.2s ease',
+                whiteSpace: 'nowrap'
+              }}
+              onMouseEnter={(e) => {
+                if (usidInput || (activeUsid && activeUsid.length)) {
+                  e.currentTarget.style.backgroundColor = '#5a6268';
+                  e.currentTarget.style.transform = 'translateY(-1px)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (usidInput || (activeUsid && activeUsid.length)) {
+                  e.currentTarget.style.backgroundColor = '#6c757d';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }
+              }}
+            >
+              Clear
             </button>
           </div>
 
-          {/* Bilgi */}
-          <div
+          {activeUsid && activeUsid.length > 0 && (
+            <div style={{
+              padding: '12px 16px',
+              backgroundColor: '#d4edda',
+              borderLeft: '3px solid #28a745',
+              borderRadius: 6,
+              fontSize: 13,
+              color: '#155724'
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                Active USID Filter
+              </div>
+              <div style={{ fontWeight: 500 }}>
+                Filtering by: <span style={{ fontWeight: 700 }}>{activeUsid.join(', ')}</span>
+              </div>
+            </div>
+          )}
+
+          {usidError && (
+            <div style={{
+              marginTop: 8,
+              padding: '12px 16px',
+              backgroundColor: '#f8d7da',
+              borderLeft: '3px solid #dc3545',
+              borderRadius: 6,
+              fontSize: 13,
+              color: '#721c24',
+              fontWeight: 500
+            }}>
+              {usidError}
+            </div>
+          )}
+        </div>
+
+        {/* ACTION BUTTONS */}
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button
+            onClick={this.clearFilter}
+            disabled={!activeWhere}
             style={{
-              marginTop: 20,
-              padding: 10,
-              backgroundColor: '#e7f3ff',
-              borderLeft: '4px solid #0079c1',
-              fontSize: 12,
-              borderRadius: 4
+              flex: 1,
+              padding: '14px 20px',
+              backgroundColor: activeWhere ? '#dc3545' : '#e9ecef',
+              color: activeWhere ? '#fff' : '#adb5bd',
+              border: 'none',
+              borderRadius: 6,
+              fontSize: 15,
+              fontWeight: 600,
+              cursor: activeWhere ? 'pointer' : 'not-allowed',
+              transition: 'all 0.2s ease',
+              boxShadow: activeWhere ? '0 2px 4px rgba(220,53,69,0.2)' : 'none'
+            }}
+            onMouseEnter={(e) => {
+              if (activeWhere) {
+                e.currentTarget.style.backgroundColor = '#c82333';
+                e.currentTarget.style.transform = 'translateY(-1px)';
+                e.currentTarget.style.boxShadow = '0 4px 8px rgba(220,53,69,0.3)';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (activeWhere) {
+                e.currentTarget.style.backgroundColor = '#dc3545';
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.boxShadow = '0 2px 4px rgba(220,53,69,0.2)';
+              }
             }}
           >
-            CQX Quality Thresholds<br />
-            Weighted acceptable coverage (RSRP greater than -115dBm).<br />
-            and poor signal quality (scaled RSRQ &lt;-18 dB) 4G and 5G devices on 4G network
+            Clear All Filters
+          </button>
+        </div>
+
+        {/* INFO PANEL */}
+        <div
+          style={{
+            marginTop: 24,
+            padding: 16,
+            backgroundColor: '#e7f3ff',
+            borderLeft: '4px solid #0079c1',
+            borderRadius: 6,
+            fontSize: 13,
+            lineHeight: 1.6,
+            color: '#004085'
+          }}
+        >
+          <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14 }}>
+            CQX Quality Thresholds
+          </div>
+          <div style={{ fontWeight: 400 }}>
+            Weighted acceptable coverage (RSRP greater than -115 dBm) and poor signal quality (scaled RSRQ &lt; -18 dB) for 4G and 5G devices on 4G network.
           </div>
         </div>
       </div>
