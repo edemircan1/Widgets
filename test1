@@ -473,7 +473,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
     return parts.length ? parts.join(' AND ') : null;
   };
 
-  applyFromConditions = async () => {
+  applyFromConditions = () => {
     const { conditions, activeUsid } = this.state;
     const where = this.buildWhere(conditions, activeUsid);
 
@@ -482,52 +482,38 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
       return;
     }
 
-    this.setState({ activeWhere: where }, async () => {
+    this.setState({ activeWhere: where }, () => {
       this.applyActiveWhereToAll();
       // Auto-center if USID filter is active
       if (activeUsid && activeUsid.length > 0) {
-        await this.centerMapOnFilteredFeatures(where);
+        this.centerMapOnFilteredFeatures(where);
       }
     });
   };
 
   centerMapOnFilteredFeatures = async (whereClause: string) => {
-    if (!this.mapView) {
-      console.warn('MapView not available');
-      return;
-    }
+    if (!this.mapView) return;
 
     const view: any = this.mapView.view;
-    if (!view) {
-      console.warn('View not available');
-      return;
-    }
-
     const layers = view?.map?.allLayers;
-    if (!layers) {
-      console.warn('Layers not available');
-      return;
-    }
+    if (!layers) return;
 
     try {
+      // Import required ArcGIS modules dynamically
+      const geometryEngine = await (window as any).require('esri/geometry/geometryEngine');
+      
       const allGeometries: any[] = [];
-      const layersArray = layers.toArray();
 
-      // Query all target feature layers for matching features
-      for (const layer of layersArray) {
-        if (!layer || layer.type !== 'feature') continue;
-        
-        if (this.isTargetFeatureLayer(layer)) {
+      // Query all target feature layers
+      for (const layer of layers.toArray()) {
+        if (layer.type === 'feature' && this.isTargetFeatureLayer(layer)) {
           try {
             const query = layer.createQuery();
             query.where = whereClause;
             query.returnGeometry = true;
-            query.outSpatialReference = view.spatialReference;
-            
             const result = await layer.queryFeatures(query);
             
-            if (result && result.features && result.features.length > 0) {
-              console.log(`Found ${result.features.length} features in layer ${layer.title || layer.id}`);
+            if (result.features && result.features.length > 0) {
               result.features.forEach((feature: any) => {
                 if (feature.geometry) {
                   allGeometries.push(feature.geometry);
@@ -535,47 +521,23 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
               });
             }
           } catch (error) {
-            console.warn(`Error querying layer ${layer.title || layer.id}:`, error);
+            console.warn('Error querying layer:', error);
           }
         }
       }
 
-      console.log(`Total geometries found: ${allGeometries.length}`);
-
       // If we found geometries, zoom to them
       if (allGeometries.length > 0) {
-        // Load the geometryEngine module
-        const [geometryEngine] = await (window as any).loadModules(['esri/geometry/geometryEngine']);
+        const union = geometryEngine.union(allGeometries);
+        const extent = union.extent || union;
         
-        if (allGeometries.length === 1) {
-          // Single feature - zoom to it
-          const geom = allGeometries[0];
-          const target = geom.extent || geom;
-          await view.goTo({
-            target: target,
-            zoom: view.zoom < 15 ? 15 : view.zoom
-          }, {
-            duration: 1500,
-            easing: 'ease-in-out'
-          });
-        } else {
-          // Multiple features - union and zoom to extent
-          const union = geometryEngine.union(allGeometries);
-          const extent = union.extent || union;
-          
-          await view.goTo({
-            target: extent.expand(1.5)
-          }, {
-            duration: 1500,
-            easing: 'ease-in-out'
-          });
-        }
-        console.log('Map centered successfully');
-      } else {
-        console.warn('No geometries found to center map on');
+        await view.goTo(extent.expand(1.5), {
+          duration: 1000,
+          easing: 'ease-in-out'
+        });
       }
     } catch (error) {
-      console.error('Error centering map on filtered features:', error);
+      console.warn('Error centering map on filtered features:', error);
     }
   };
 
