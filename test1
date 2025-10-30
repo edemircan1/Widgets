@@ -299,7 +299,7 @@ interface State {
 const FIELD_RANGES: Record<string, { min: number; max: number; def: [number, number] }> = {
   RSRP: { min: -140, max: -50, def: [-140, -50] },
   RSRQ: { min: -25, max: 0, def: [-25, 0] },
-  SNR: { min: -20, max: 35, def: [-10, 35] }
+  SNR: { min: -20, max: 35, def: [-20, 35] }
 };
 
 interface LegendSegment {
@@ -740,16 +740,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             color: '#212529',
             letterSpacing: '-0.5px'
           }}>
-            IQI Custom Filter
+            IQI Custom Range Filter
           </h2>
-          <p style={{
-            margin: '4px 0 0 0',
-            fontSize: 13,
-            color: '#6c757d',
-            fontWeight: 400
-          }}>
-            Advanced signal quality filtering
-          </p>
         </div>
 
         {/* KPI SECTION */}
@@ -782,7 +774,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
               color: '#212529',
               letterSpacing: '-0.3px'
             }}>
-              KPI Selection & Range
+              KPI & Range Selection
             </h3>
           </div>
 
@@ -797,7 +789,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
               textTransform: 'uppercase',
               letterSpacing: '0.5px'
             }}>
-              Signal Parameter
+              Select KPI 
             </label>
             <select
               value={selectedField}
@@ -818,9 +810,9 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
               onFocus={(e) => e.currentTarget.style.borderColor = '#0079c1'}
               onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
             >
-              <option value="RSRP">RSRP - Reference Signal Received Power</option>
-              <option value="RSRQ">RSRQ - Reference Signal Received Quality</option>
-              <option value="SNR">SNR - Signal to Noise Ratio</option>
+              <option value="RSRP">RSRP</option>
+              <option value="RSRQ">RSRQ </option>
+              <option value="SNR">SNR</option>
             </select>
           </div>
 
@@ -1017,10 +1009,9 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             fontSize: 13, 
             fontWeight: 600,
             color: '#495057',
-            textTransform: 'uppercase',
             letterSpacing: '0.5px'
           }}>
-            User Site Identifier
+            Enter USID or Comma-Separated USID(s)
           </label>
           
           <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
@@ -1029,7 +1020,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
               value={usidInput}
               onChange={this.onUsidInputChange}
               onKeyDown={this.onUsidKeyDown}
-              placeholder="Enter USID or comma-separated values..."
+              placeholder="Enter USID(s) here"
               style={{ 
                 flex: 1, 
                 padding: '12px 16px', 
@@ -1175,7 +1166,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
         </div>
 
         {/* INFO PANEL */}
-        <div
+        {/* <div
           style={{
             marginTop: 24,
             padding: 16,
@@ -1192,8 +1183,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
           </div>
           <div style={{ fontWeight: 400 }}>
             Weighted acceptable coverage (RSRP greater than -115 dBm) and poor signal quality (scaled RSRQ &lt; -18 dB) for 4G and 5G devices on 4G network.
-          </div>
-        </div>
+          </div> */}
+        {/* </div> */}
       </div>
     );
   }
