@@ -92,7 +92,6 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
     const segStart = segmentFrom ?? min;
     const segEnd = segmentTo ?? max;
     
-    // Check if segment is within selected range
     const isInRange = !(segEnd < minValue || segStart > maxValue);
     
     if (hoveredSegment === segmentIndex) {
@@ -103,12 +102,12 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
   };
 
   return (
-    <div style={{ width: '100%', padding: '12px 0', touchAction: 'none' }}>
+    <div style={{ width: '100%', padding: '8px 0', touchAction: 'none' }}>
       {/* Value Display */}
       <div style={{ 
         display: 'flex', 
         justifyContent: 'space-between', 
-        marginBottom: 16,
+        marginBottom: 10,
         padding: '0 4px'
       }}>
         <div style={{ 
@@ -116,9 +115,9 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
           flexDirection: 'column',
           alignItems: 'flex-start'
         }}>
-          <span style={{ fontSize: 11, color: '#6c757d', fontWeight: 500, marginBottom: 2 }}>MIN</span>
+          <span style={{ fontSize: 10, color: '#6c757d', fontWeight: 500, marginBottom: 1 }}>MIN</span>
           <span style={{ 
-            fontSize: 20, 
+            fontSize: 18, 
             fontWeight: 700, 
             color: '#0079c1',
             fontVariantNumeric: 'tabular-nums'
@@ -129,9 +128,9 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
           flexDirection: 'column',
           alignItems: 'flex-end'
         }}>
-          <span style={{ fontSize: 11, color: '#6c757d', fontWeight: 500, marginBottom: 2 }}>MAX</span>
+          <span style={{ fontSize: 10, color: '#6c757d', fontWeight: 500, marginBottom: 1 }}>MAX</span>
           <span style={{ 
-            fontSize: 20, 
+            fontSize: 18, 
             fontWeight: 700, 
             color: '#0079c1',
             fontVariantNumeric: 'tabular-nums'
@@ -140,14 +139,14 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
       </div>
 
       {/* Interactive Color Scale */}
-      <div style={{ marginBottom: 20 }}>
+      <div style={{ marginBottom: 12 }}>
         <div
           style={{
             display: 'flex',
-            height: 24,
-            borderRadius: 6,
+            height: 20,
+            borderRadius: 4,
             overflow: 'hidden',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+            boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
             border: '1px solid rgba(0,0,0,0.08)',
             transition: 'all 0.2s ease'
           }}
@@ -177,15 +176,14 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
           })}
         </div>
         
-        {/* Tooltip on hover */}
         {hoveredSegment !== null && legendSegments[hoveredSegment] && (
           <div style={{
-            marginTop: 8,
-            padding: '6px 12px',
+            marginTop: 6,
+            padding: '4px 10px',
             backgroundColor: '#2c3e50',
             color: '#fff',
-            borderRadius: 4,
-            fontSize: 12,
+            borderRadius: 3,
+            fontSize: 11,
             fontWeight: 500,
             textAlign: 'center',
             animation: 'fadeIn 0.2s ease'
@@ -196,37 +194,34 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
       </div>
 
       {/* Slider Track */}
-      <div ref={trackRef} style={{ position: 'relative', height: 40, userSelect: 'none', padding: '0 4px' }}>
-        {/* Background Track */}
+      <div ref={trackRef} style={{ position: 'relative', height: 32, userSelect: 'none', padding: '0 4px' }}>
         <div
           style={{
             position: 'absolute',
-            top: 18,
+            top: 14,
             left: 4,
             right: 4,
-            height: 6,
+            height: 5,
             background: 'linear-gradient(to right, #e9ecef, #dee2e6)',
             borderRadius: 3,
             boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)'
           }}
         />
         
-        {/* Selected range highlight */}
         <div
           style={{
             position: 'absolute',
-            top: 18,
+            top: 14,
             left: `calc(${minPercent}% + 4px)`,
             width: `calc(${Math.max(0, maxPercent - minPercent)}% - 4px)`,
-            height: 6,
+            height: 5,
             background: 'linear-gradient(135deg, #0079c1 0%, #00a8e8 100%)',
             borderRadius: 3,
-            boxShadow: '0 2px 4px rgba(0,121,193,0.3)',
+            boxShadow: '0 1px 3px rgba(0,121,193,0.3)',
             transition: 'all 0.1s ease'
           }}
         />
         
-        {/* Min thumb */}
         <div
           onPointerDown={handlePointerDown('min')}
           onPointerMove={handlePointerMove('min')}
@@ -234,15 +229,15 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
           onPointerCancel={handlePointerUp('min')}
           style={{
             position: 'absolute',
-            top: 10,
-            left: `calc(${minPercent}% - 6px)`,
-            width: 20,
-            height: 20,
+            top: 8,
+            left: `calc(${minPercent}% - 5px)`,
+            width: 18,
+            height: 18,
             background: 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)',
-            border: '3px solid #0079c1',
+            border: '2.5px solid #0079c1',
             borderRadius: '50%',
             cursor: 'grab',
-            boxShadow: '0 3px 8px rgba(0,0,0,0.2)',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
             zIndex: 3,
             transition: 'transform 0.1s ease',
             transform: activeRef.current?.thumb === 'min' ? 'scale(1.2)' : 'scale(1)'
@@ -250,7 +245,6 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
           title="Min"
         />
         
-        {/* Max thumb */}
         <div
           onPointerDown={handlePointerDown('max')}
           onPointerMove={handlePointerMove('max')}
@@ -258,15 +252,15 @@ const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
           onPointerCancel={handlePointerUp('max')}
           style={{
             position: 'absolute',
-            top: 10,
-            left: `calc(${maxPercent}% - 6px)`,
-            width: 20,
-            height: 20,
+            top: 8,
+            left: `calc(${maxPercent}% - 5px)`,
+            width: 18,
+            height: 18,
             background: 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)',
-            border: '3px solid #0079c1',
+            border: '2.5px solid #0079c1',
             borderRadius: '50%',
             cursor: 'grab',
-            boxShadow: '0 3px 8px rgba(0,0,0,0.2)',
+            boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
             zIndex: 3,
             transition: 'transform 0.1s ease',
             transform: activeRef.current?.thumb === 'max' ? 'scale(1.2)' : 'scale(1)'
@@ -488,7 +482,63 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
       return;
     }
 
-    this.setState({ activeWhere: where }, () => this.applyActiveWhereToAll());
+    this.setState({ activeWhere: where }, () => {
+      this.applyActiveWhereToAll();
+      // Auto-center if USID filter is active
+      if (activeUsid && activeUsid.length > 0) {
+        this.centerMapOnFilteredFeatures(where);
+      }
+    });
+  };
+
+  centerMapOnFilteredFeatures = async (whereClause: string) => {
+    if (!this.mapView) return;
+
+    const view: any = this.mapView.view;
+    const layers = view?.map?.allLayers;
+    if (!layers) return;
+
+    try {
+      // Import required ArcGIS modules dynamically
+      const geometryEngine = await (window as any).require('esri/geometry/geometryEngine');
+      
+      const allGeometries: any[] = [];
+
+      // Query all target feature layers
+      for (const layer of layers.toArray()) {
+        if (layer.type === 'feature' && this.isTargetFeatureLayer(layer)) {
+          try {
+            const query = layer.createQuery();
+            query.where = whereClause;
+            query.returnGeometry = true;
+            const result = await layer.queryFeatures(query);
+            
+            if (result.features && result.features.length > 0) {
+              result.features.forEach((feature: any) => {
+                if (feature.geometry) {
+                  allGeometries.push(feature.geometry);
+                }
+              });
+            }
+          } catch (error) {
+            console.warn('Error querying layer:', error);
+          }
+        }
+      }
+
+      // If we found geometries, zoom to them
+      if (allGeometries.length > 0) {
+        const union = geometryEngine.union(allGeometries);
+        const extent = union.extent || union;
+        
+        await view.goTo(extent.expand(1.5), {
+          duration: 1000,
+          easing: 'ease-in-out'
+        });
+      }
+    } catch (error) {
+      console.warn('Error centering map on filtered features:', error);
+    }
   };
 
   onUsidInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -706,7 +756,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
     return (
       <div style={{ 
-        padding: '20px', 
+        padding: '14px', 
         width: '100%', 
         height: '100%', 
         backgroundColor: '#f8f9fa', 
@@ -729,13 +779,13 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
         {/* Header */}
         <div style={{ 
-          marginBottom: 24,
-          paddingBottom: 16,
+          marginBottom: 16,
+          paddingBottom: 10,
           borderBottom: '2px solid #dee2e6'
         }}>
           <h2 style={{ 
             margin: 0, 
-            fontSize: 24, 
+            fontSize: 22, 
             fontWeight: 700,
             color: '#212529',
             letterSpacing: '-0.5px'
@@ -747,29 +797,29 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
         {/* KPI SECTION */}
         <div style={{
           backgroundColor: '#fff',
-          borderRadius: 8,
-          padding: 20,
-          marginBottom: 20,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          borderRadius: 6,
+          padding: 14,
+          marginBottom: 14,
+          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
           border: '1px solid #e9ecef'
         }}>
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            marginBottom: 16,
-            paddingBottom: 12,
+            marginBottom: 12,
+            paddingBottom: 8,
             borderBottom: '1px solid #f1f3f5'
           }}>
             <div style={{
-              width: 4,
-              height: 24,
+              width: 3,
+              height: 20,
               backgroundColor: '#0079c1',
               borderRadius: 2,
-              marginRight: 12
+              marginRight: 10
             }} />
             <h3 style={{ 
               margin: 0, 
-              fontSize: 16, 
+              fontSize: 15, 
               fontWeight: 700,
               color: '#212529',
               letterSpacing: '-0.3px'
@@ -779,11 +829,11 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
           </div>
 
           {/* KPI Dropdown */}
-          <div style={{ marginBottom: 20 }}>
+          <div style={{ marginBottom: 14 }}>
             <label style={{ 
               display: 'block', 
-              marginBottom: 8, 
-              fontSize: 13, 
+              marginBottom: 6, 
+              fontSize: 12, 
               fontWeight: 600,
               color: '#495057',
               textTransform: 'uppercase',
@@ -796,11 +846,11 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
               onChange={this.onFieldChange}
               style={{ 
                 width: '100%', 
-                padding: '12px 16px', 
-                fontSize: 15, 
+                padding: '10px 14px', 
+                fontSize: 14, 
                 fontWeight: 500,
                 border: '2px solid #e9ecef', 
-                borderRadius: 6,
+                borderRadius: 5,
                 backgroundColor: '#fff',
                 color: '#212529',
                 cursor: 'pointer',
@@ -833,27 +883,27 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             onClick={this.addCondition}
             style={{
               width: '100%',
-              padding: '14px 20px',
+              padding: '11px 16px',
               backgroundColor: '#0079c1',
               color: '#fff',
               border: 'none',
-              borderRadius: 6,
-              fontSize: 15,
+              borderRadius: 5,
+              fontSize: 14,
               fontWeight: 600,
               cursor: 'pointer',
               transition: 'all 0.2s ease',
-              boxShadow: '0 2px 4px rgba(0,121,193,0.2)',
-              marginTop: 16
+              boxShadow: '0 1px 3px rgba(0,121,193,0.2)',
+              marginTop: 12
             }}
             onMouseEnter={(e) => {
               e.currentTarget.style.backgroundColor = '#006199';
               e.currentTarget.style.transform = 'translateY(-1px)';
-              e.currentTarget.style.boxShadow = '0 4px 8px rgba(0,121,193,0.3)';
+              e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,121,193,0.3)';
             }}
             onMouseLeave={(e) => {
               e.currentTarget.style.backgroundColor = '#0079c1';
               e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 2px 4px rgba(0,121,193,0.2)';
+              e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,121,193,0.2)';
             }}
           >
             + Add Filter Condition
@@ -861,14 +911,14 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
           {/* Active Conditions */}
           {conditions.length > 0 && (
-            <div style={{ marginTop: 20 }}>
+            <div style={{ marginTop: 14 }}>
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                marginBottom: 12
+                marginBottom: 8
               }}>
                 <span style={{ 
-                  fontSize: 13, 
+                  fontSize: 12, 
                   fontWeight: 600,
                   color: '#495057',
                   textTransform: 'uppercase',
@@ -877,12 +927,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
                   Active Conditions
                 </span>
                 <span style={{
-                  marginLeft: 8,
-                  padding: '2px 8px',
+                  marginLeft: 6,
+                  padding: '2px 7px',
                   backgroundColor: '#0079c1',
                   color: '#fff',
-                  borderRadius: 12,
-                  fontSize: 11,
+                  borderRadius: 10,
+                  fontSize: 10,
                   fontWeight: 700
                 }}>
                   {conditions.length}
@@ -895,17 +945,17 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: '12px 16px',
+                    padding: '9px 12px',
                     backgroundColor: '#f8f9fa',
                     borderLeft: '3px solid #0079c1',
-                    borderRadius: 6,
-                    marginBottom: 10,
-                    fontSize: 14,
+                    borderRadius: 4,
+                    marginBottom: 7,
+                    fontSize: 13,
                     transition: 'all 0.2s ease'
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.backgroundColor = '#e9ecef';
-                    e.currentTarget.style.transform = 'translateX(4px)';
+                    e.currentTarget.style.transform = 'translateX(3px)';
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.backgroundColor = '#f8f9fa';
@@ -916,7 +966,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
                     {idx > 0 && <span style={{ 
                       fontWeight: 700, 
                       color: '#6c757d',
-                      marginRight: 8 
+                      marginRight: 6 
                     }}>AND</span>}
                     <span style={{ 
                       fontWeight: 700, 
@@ -942,12 +992,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
                   <button
                     onClick={() => this.removeCondition(cond.id)}
                     style={{
-                      padding: '6px 10px',
+                      padding: '5px 9px',
                       backgroundColor: '#dc3545',
                       color: 'white',
                       border: 'none',
-                      borderRadius: 4,
-                      fontSize: 12,
+                      borderRadius: 3,
+                      fontSize: 11,
                       fontWeight: 600,
                       cursor: 'pointer',
                       transition: 'all 0.2s ease'
@@ -972,29 +1022,29 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
         {/* USID SECTION */}
         <div style={{
           backgroundColor: '#fff',
-          borderRadius: 8,
-          padding: 20,
-          marginBottom: 20,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+          borderRadius: 6,
+          padding: 14,
+          marginBottom: 14,
+          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
           border: '1px solid #e9ecef'
         }}>
           <div style={{
             display: 'flex',
             alignItems: 'center',
-            marginBottom: 16,
-            paddingBottom: 12,
+            marginBottom: 12,
+            paddingBottom: 8,
             borderBottom: '1px solid #f1f3f5'
           }}>
             <div style={{
-              width: 4,
-              height: 24,
+              width: 3,
+              height: 20,
               backgroundColor: '#28a745',
               borderRadius: 2,
-              marginRight: 12
+              marginRight: 10
             }} />
             <h3 style={{ 
               margin: 0, 
-              fontSize: 16, 
+              fontSize: 15, 
               fontWeight: 700,
               color: '#212529',
               letterSpacing: '-0.3px'
@@ -1005,8 +1055,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
           <label style={{ 
             display: 'block', 
-            marginBottom: 8, 
-            fontSize: 13, 
+            marginBottom: 6, 
+            fontSize: 12, 
             fontWeight: 600,
             color: '#495057',
             letterSpacing: '0.5px'
@@ -1014,7 +1064,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             Enter USID or Comma-Separated USID(s)
           </label>
           
-          <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
             <input
               type="text"
               value={usidInput}
@@ -1023,10 +1073,10 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
               placeholder="Enter USID(s) here"
               style={{ 
                 flex: 1, 
-                padding: '12px 16px', 
-                fontSize: 14, 
+                padding: '10px 14px', 
+                fontSize: 13, 
                 border: '2px solid #e9ecef', 
-                borderRadius: 6,
+                borderRadius: 5,
                 outline: 'none',
                 transition: 'all 0.2s ease',
                 fontFamily: 'inherit'
@@ -1037,27 +1087,27 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
             <button
               onClick={this.applyUsidFilter}
               style={{
-                padding: '12px 20px',
+                padding: '10px 16px',
                 backgroundColor: '#28a745',
                 color: '#fff',
                 border: 'none',
-                borderRadius: 6,
-                fontSize: 14,
+                borderRadius: 5,
+                fontSize: 13,
                 fontWeight: 600,
                 cursor: 'pointer',
                 transition: 'all 0.2s ease',
-                boxShadow: '0 2px 4px rgba(40,167,69,0.2)',
+                boxShadow: '0 1px 3px rgba(40,167,69,0.2)',
                 whiteSpace: 'nowrap'
               }}
               onMouseEnter={(e) => {
                 e.currentTarget.style.backgroundColor = '#218838';
                 e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 4px 8px rgba(40,167,69,0.3)';
+                e.currentTarget.style.boxShadow = '0 2px 6px rgba(40,167,69,0.3)';
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.backgroundColor = '#28a745';
                 e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 2px 4px rgba(40,167,69,0.2)';
+                e.currentTarget.style.boxShadow = '0 1px 3px rgba(40,167,69,0.2)';
               }}
             >
               Apply
@@ -1066,12 +1116,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
               onClick={this.clearUsid}
               disabled={!usidInput && !(activeUsid && activeUsid.length)}
               style={{
-                padding: '12px 20px',
+                padding: '10px 16px',
                 backgroundColor: usidInput || (activeUsid && activeUsid.length) ? '#6c757d' : '#e9ecef',
                 color: usidInput || (activeUsid && activeUsid.length) ? '#fff' : '#adb5bd',
                 border: 'none',
-                borderRadius: 6,
-                fontSize: 14,
+                borderRadius: 5,
+                fontSize: 13,
                 fontWeight: 600,
                 cursor: usidInput || (activeUsid && activeUsid.length) ? 'pointer' : 'not-allowed',
                 transition: 'all 0.2s ease',
@@ -1096,14 +1146,14 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
           {activeUsid && activeUsid.length > 0 && (
             <div style={{
-              padding: '12px 16px',
+              padding: '9px 12px',
               backgroundColor: '#d4edda',
               borderLeft: '3px solid #28a745',
-              borderRadius: 6,
-              fontSize: 13,
+              borderRadius: 4,
+              fontSize: 12,
               color: '#155724'
             }}>
-              <div style={{ fontWeight: 600, marginBottom: 4 }}>
+              <div style={{ fontWeight: 600, marginBottom: 3 }}>
                 Active USID Filter
               </div>
               <div style={{ fontWeight: 500 }}>
@@ -1114,12 +1164,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
 
           {usidError && (
             <div style={{
-              marginTop: 8,
-              padding: '12px 16px',
+              marginTop: 6,
+              padding: '9px 12px',
               backgroundColor: '#f8d7da',
               borderLeft: '3px solid #dc3545',
-              borderRadius: 6,
-              fontSize: 13,
+              borderRadius: 4,
+              fontSize: 12,
               color: '#721c24',
               fontWeight: 500
             }}>
@@ -1129,62 +1179,41 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, Sta
         </div>
 
         {/* ACTION BUTTONS */}
-        <div style={{ display: 'flex', gap: 12 }}>
+        <div style={{ display: 'flex', gap: 10 }}>
           <button
             onClick={this.clearFilter}
             disabled={!activeWhere}
             style={{
               flex: 1,
-              padding: '14px 20px',
+              padding: '11px 16px',
               backgroundColor: activeWhere ? '#dc3545' : '#e9ecef',
               color: activeWhere ? '#fff' : '#adb5bd',
               border: 'none',
-              borderRadius: 6,
-              fontSize: 15,
+              borderRadius: 5,
+              fontSize: 14,
               fontWeight: 600,
               cursor: activeWhere ? 'pointer' : 'not-allowed',
               transition: 'all 0.2s ease',
-              boxShadow: activeWhere ? '0 2px 4px rgba(220,53,69,0.2)' : 'none'
+              boxShadow: activeWhere ? '0 1px 3px rgba(220,53,69,0.2)' : 'none'
             }}
             onMouseEnter={(e) => {
               if (activeWhere) {
                 e.currentTarget.style.backgroundColor = '#c82333';
                 e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 4px 8px rgba(220,53,69,0.3)';
+                e.currentTarget.style.boxShadow = '0 2px 6px rgba(220,53,69,0.3)';
               }
             }}
             onMouseLeave={(e) => {
               if (activeWhere) {
                 e.currentTarget.style.backgroundColor = '#dc3545';
                 e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 2px 4px rgba(220,53,69,0.2)';
+                e.currentTarget.style.boxShadow = '0 1px 3px rgba(220,53,69,0.2)';
               }
             }}
           >
             Clear All Filters
           </button>
         </div>
-
-        {/* INFO PANEL */}
-        {/* <div
-          style={{
-            marginTop: 24,
-            padding: 16,
-            backgroundColor: '#e7f3ff',
-            borderLeft: '4px solid #0079c1',
-            borderRadius: 6,
-            fontSize: 13,
-            lineHeight: 1.6,
-            color: '#004085'
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 8, fontSize: 14 }}>
-            CQX Quality Thresholds
-          </div>
-          <div style={{ fontWeight: 400 }}>
-            Weighted acceptable coverage (RSRP greater than -115 dBm) and poor signal quality (scaled RSRQ &lt; -18 dB) for 4G and 5G devices on 4G network.
-          </div> */}
-        {/* </div> */}
       </div>
     );
   }
