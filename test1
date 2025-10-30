@@ -1,1966 +1,866 @@
 /** @jsx jsx */
-import { React, AllWidgetProps, jsx } from 'jimu-core';
-import { loadArcGISJSAPIModules, JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
-import { IMConfig } from '../config';
+import { React, jsx, AllWidgetProps } from 'jimu-core';
+import { JimuMapView, JimuMapViewComponent } from 'jimu-arcgis';
 
-interface FeatureLayerQuery {
-  where: string;
-  outFields: string[];
-  returnGeometry: boolean;
-  start?: number;
-  num?: number;
-  orderByFields?: string[];
-  objectIds?: number[];
-  returnExceededLimitFeatures?: boolean;
-}
-
-interface QueryFeature {
-  attributes: Record<string, any>;
-  geometry?: any;
-}
-
-interface FeatureLayerQueryResult {
-  features: QueryFeature[];
-  exceededTransferLimit?: boolean;
-}
-
-interface FeatureLayerInstance {
-  createQuery: () => FeatureLayerQuery;
-  queryFeatures: (query: FeatureLayerQuery) => Promise<FeatureLayerQueryResult>;
-  renderer?: any;
-  when?: () => Promise<any>;
-  load?: () => Promise<void>;
-  queryObjectIds?: (query: FeatureLayerQuery) => Promise<number[]>;
-  capabilities?: { query?: { supportsPagination?: boolean; maxRecordCount?: number } };
-  objectIdField?: string;
-}
-
-type FeatureLayerConstructor = new (params: any) => FeatureLayerInstance;
-
-interface SelectedCell {
-  raw: string;
-  key: string;
-}
-
-interface LegendBreak {
+/**
+ * Sağlam iki uçlu (dual-thumb) slider
+ * Pointer Events kullan, her iki uç sorunsuz hareket etsin.
+ */
+type DualRangeSliderProps = {
+  min: number;
+  max: number;
+  step?: number;
   minValue: number;
   maxValue: number;
-  color: string;
-  label: string;
-}
-
-interface KpiSeriesEntry {
-  key: string;
-  label: string;
-  value: number;
-}
-
-interface KpiTimeSeriesPoint {
-  timestamp: number;
-  value: number;
-  displayLabel: string;
-  tooltipLabel: string;
-}
-
-interface KpiTimeSeriesEntry {
-  key: string;
-  label: string;
-  points: KpiTimeSeriesPoint[];
-}
-
-interface ChartSeriesCoordinates {
-  point: KpiTimeSeriesPoint;
-  x: number;
-  y: number;
-}
-
-interface PreparedChartSeries {
-  key: string;
-  label: string;
-  color: string;
-  path: string;
-  coordinates: ChartSeriesCoordinates[];
-}
-
-const POLYGON_CELL_FIELD = 'cell';
-const KPI_JOIN_FIELD = 'eutrancellfdd';
-
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
-
-const formatLegendLabel = (minValue: number, maxValue: number): string => {
-  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
-    return '';
-  }
-  return `${minValue.toFixed(2)} - ${maxValue.toFixed(2)}`;
+  onChange: (newMin: number, newMax: number) => void;
 };
 
-const DEFAULT_LEGEND_COLORS = ['#ffffcc', '#ffeda0', '#fed976', '#feb24c', '#fd8d3c', '#fc4e2a', '#e31a1c', '#b10026'];
+const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
+  min,
+  max,
+  step = 1,
+  minValue,
+  maxValue,
+  onChange
+}) => {
+  const trackRef = React.useRef<HTMLDivElement>(null);
+  const activeRef = React.useRef<null | { thumb: 'min' | 'max'; pointerId: number }>(null);
 
-const KPI_COLOR_PALETTE = [
-  '#4361ee',
-  '#f15bb5',
-  '#ff8500',
-  '#43aa8b',
-  '#7209b7',
-  '#f94144',
-  '#277da1',
-  '#577590',
-  '#f8961e',
-  '#90be6d',
-  '#4d908e',
-  '#ffb5a7'
-];
-
-const getColorForIndex = (index: number): string => {
-  const paletteSize = KPI_COLOR_PALETTE.length;
-  if (paletteSize === 0) {
-    return '#2b2d42';
-  }
-  const safeIndex = ((index % paletteSize) + paletteSize) % paletteSize;
-  return KPI_COLOR_PALETTE[safeIndex];
-};
-
-const formatKpiValue = (value: number): string => {
-  if (!Number.isFinite(value)) {
-    return '-';
-  }
-  return value.toLocaleString(undefined, { maximumFractionDigits: 3 });
-};
-
-const parseDateTimeValue = (value: unknown): number | undefined => {
-  if (value === null || value === undefined) {
-    return undefined;
-  }
-  if (value instanceof Date) {
-    const time = value.getTime();
-    return Number.isFinite(time) ? time : undefined;
-  }
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value)) {
-      return undefined;
-    }
-    if (value > 1e12) {
-      return value;
-    }
-    if (value > 1e10) {
-      return value * 1000;
-    }
-    const numericAsString = value.toString();
-    const parsedNumericString = Date.parse(numericAsString);
-    if (!Number.isNaN(parsedNumericString)) {
-      return parsedNumericString;
-    }
-    return undefined;
-  }
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed) {
-      return undefined;
-    }
-    const parsed = Date.parse(trimmed);
-    if (!Number.isNaN(parsed)) {
-      return parsed;
-    }
-    const digitsOnly = trimmed.replace(/[^0-9]/g, '');
-    if (digitsOnly.length === 8) {
-      const year = Number(digitsOnly.slice(0, 4));
-      const month = Number(digitsOnly.slice(4, 6)) - 1;
-      const day = Number(digitsOnly.slice(6, 8));
-      const constructed = Date.UTC(year, month, day);
-      return Number.isFinite(constructed) ? constructed : undefined;
-    }
-    if (digitsOnly.length === 12 || digitsOnly.length === 14) {
-      const year = Number(digitsOnly.slice(0, 4));
-      const month = Number(digitsOnly.slice(4, 6)) - 1;
-      const day = Number(digitsOnly.slice(6, 8));
-      const hour = Number(digitsOnly.slice(8, 10));
-      const minute = Number(digitsOnly.slice(10, 12));
-      const second = digitsOnly.length === 14 ? Number(digitsOnly.slice(12, 14)) : 0;
-      const constructed = Date.UTC(year, month, day, hour, minute, second);
-      return Number.isFinite(constructed) ? constructed : undefined;
-    }
-  }
-  return undefined;
-};
-
-const formatDateInputValue = (timestamp?: number): string => {
-  if (!Number.isFinite(timestamp)) {
-    return '';
-  }
-  const date = new Date(timestamp as number);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-};
-
-const startOfDateInput = (value: string): number | undefined => {
-  if (!value) {
-    return undefined;
-  }
-  const date = new Date(`${value}T00:00:00`);
-  const time = date.getTime();
-  return Number.isFinite(time) ? time : undefined;
-};
-
-const endOfDateInput = (value: string): number | undefined => {
-  const start = startOfDateInput(value);
-  if (start === undefined) {
-    return undefined;
-  }
-  return start + DAY_IN_MS - 1;
-};
-
-const clampValue = (value: number, min: number, max: number): number => {
-  if (value < min) {
-    return min;
-  }
-  if (value > max) {
-    return max;
-  }
-  return value;
-};
-
-const cloneEsriValue = (value: any): any => {
-  if (value && typeof value === 'object') {
-    const cloneFn = (value as any).clone;
-    if (typeof cloneFn === 'function') {
-      try {
-        return cloneFn.call(value);
-      } catch (err) {
-        console.warn('Clone via clone() failed, falling back to JSON:', err);
-      }
-    }
-  }
-  if (value === undefined || value === null) {
-    return value;
-  }
-  try {
-    return JSON.parse(JSON.stringify(value));
-  } catch (err) {
-    console.warn('Clone via JSON failed, returning original value:', err);
-    return value;
-  }
-};
-
-const formatDateLabel = (timestamp: number): string => {
-  return new Date(timestamp).toLocaleDateString(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit'
-  });
-};
-
-const formatDateTooltip = (timestamp: number): string => new Date(timestamp).toLocaleString();
-
-interface WidgetState {
-  kpiFeatures: Record<string, unknown>[];
-  loading: boolean;
-  error?: string;
-  mapKpiField?: string;
-  chartKpiFields: string[];
-  applying: boolean;
-  candidateKpiFields: string[];
-  selectedCells: SelectedCell[];
-  selecting: boolean;
-  legendBreaks: LegendBreak[];
-  legendExpression?: string;
-  legendTitle?: string;
-  dateRange?: { min: number; max: number };
-  selectedDateRange?: { start: number; end: number };
-  useQuickDateRange: boolean;
-}
-
-const ensureFeatureLayer = async (
-  ref: React.MutableRefObject<FeatureLayerConstructor | undefined>
-): Promise<FeatureLayerConstructor> => {
-  if (ref.current) {
-    return ref.current;
-  }
-  const [FeatureLayer] = (await loadArcGISJSAPIModules([
-    'esri/layers/FeatureLayer'
-  ])) as [FeatureLayerConstructor];
-  ref.current = FeatureLayer;
-  return FeatureLayer;
-};
-
-const Widget = (props: AllWidgetProps<IMConfig>): jsx.JSX.Element => {
-  const { config } = props;
-  const [state, setState] = React.useState<WidgetState>({
-    kpiFeatures: [],
-    loading: false,
-    error: undefined,
-    mapKpiField: undefined,
-    chartKpiFields: [],
-    applying: false,
-    candidateKpiFields: [],
-    selectedCells: [],
-    selecting: false,
-    legendBreaks: [],
-    legendExpression: undefined,
-    legendTitle: undefined,
-    dateRange: undefined,
-    selectedDateRange: undefined,
-    useQuickDateRange: false
-  });
-  const [kpiSeries, setKpiSeries] = React.useState<KpiSeriesEntry[]>([]);
-  const [kpiTimeSeriesByField, setKpiTimeSeriesByField] = React.useState<Map<string, KpiTimeSeriesEntry[]>>(new Map());
-  const [isChartOpen, setChartOpen] = React.useState(false);
-  const chartContainerRef = React.useRef<HTMLDivElement | null>(null);
-  const [chartWidth, setChartWidth] = React.useState<number>(0);
-  const [legendExpanded, setLegendExpanded] = React.useState(false);
-  const featureLayerCtorRef = React.useRef<FeatureLayerConstructor>();
-  const cellsLayerRef = React.useRef<any>();
-  const selectionLayerRef = React.useRef<any>();
-  const sketchViewModelRef = React.useRef<any>();
-  const initialRendererRef = React.useRef<any>();
-  const initialFeatureEffectRef = React.useRef<any>();
-  const initialDefinitionExpressionRef = React.useRef<string | undefined>();
-  const initialViewpointRef = React.useRef<any>();
-  const [activeJimuMapView, setActiveJimuMapView] = React.useState<JimuMapView>();
-  const mapWidgetId = props.useMapWidgetIds?.[0];
-  const [hoveredPoint, setHoveredPoint] = React.useState<{ seriesKey: string; timestamp: number } | null>(null);
-  const [selectedCellKeys, setSelectedCellKeys] = React.useState<string[]>([]);
-  const [cellColorMap, setCellColorMap] = React.useState<Map<string, string>>(new Map());
-
-  const normalizeKey = React.useCallback((value: unknown): string | undefined => {
-    if (value === null || value === undefined) {
-      return undefined;
-    }
-    const text = String(value).trim();
-    if (!text) {
-      return undefined;
-    }
-    return text.toUpperCase();
-  }, []);
-
-  React.useEffect(() => {
-    if (!config?.kpisUrl?.trim()) {
-      setKpiSeries([]);
-      setKpiTimeSeriesByField(new Map());
-      setChartOpen(false);
-      setLegendExpanded(false);
-      setState((prev: WidgetState) => {
-        const alreadyCleared =
-          prev.mapKpiField === undefined &&
-          (!prev.chartKpiFields || prev.chartKpiFields.length === 0) &&
-          (!prev.legendBreaks || prev.legendBreaks.length === 0) &&
-          prev.legendExpression === undefined &&
-          prev.legendTitle === undefined;
-        if (alreadyCleared) {
-          return prev;
-        }
-        return {
-          ...prev,
-          mapKpiField: undefined,
-          chartKpiFields: [],
-          legendBreaks: [],
-          legendExpression: undefined,
-          legendTitle: undefined
-        };
-      });
-    }
-  }, [config?.kpisUrl]);
-
-  const fetchKpiDataForCells = React.useCallback(async (cellKeys: string[]) => {
-    const kpisUrl = config?.kpisUrl?.trim();
-    if (!kpisUrl || cellKeys.length === 0) {
-      setState((prev: WidgetState) => ({ ...prev, kpiFeatures: [], loading: false, error: undefined }));
-      return;
-    }
-    setState((prev: WidgetState) => ({ ...prev, loading: true, error: undefined }));
+  const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+  const valueToPercent = (v: number) => ((v - min) * 100) / (max - min);
+  const snap = (v: number) => Math.round(v / step) * step;
+  const handlePointerDown = (thumb: 'min' | 'max') => (e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    activeRef.current = { thumb, pointerId: e.pointerId };
     try {
-      const FeatureLayer = await ensureFeatureLayer(featureLayerCtorRef);
-      const safeValues = cellKeys.map((key) => `'${String(key).replace(/'/g, "''")}'`);
-      const where = safeValues.length === 1 ? `${KPI_JOIN_FIELD} = ${safeValues[0]}` : `${KPI_JOIN_FIELD} IN (${safeValues.join(', ')})`;
-      const layer = new FeatureLayer({ url: kpisUrl });
-      if (typeof layer.load === 'function') {
-        await layer.load();
-      }
-      const query = layer.createQuery();
-      query.where = where;
-      query.outFields = ['*'];
-      query.returnGeometry = false;
-      const result = await layer.queryFeatures(query);
-      const kpiFeatures = result.features.map((f: QueryFeature) => f.attributes);
-      const candidateKpiFields: string[] = (() => {
-        if (kpiFeatures.length === 0) return [];
-        const sample = kpiFeatures[0];
-        const joinField = KPI_JOIN_FIELD;
-        return Object.keys(sample)
-          .filter(k => k !== joinField && !/^objectid/i.test(k) && k !== 'date_time_id')
-          .filter(k => typeof (sample as any)[k] === 'number');
-      })();
-      const dateValues = kpiFeatures
-        .map((item: Record<string, unknown>) => parseDateTimeValue((item as any).date_time_id))
-        .filter((value: number | undefined): value is number => typeof value === 'number' && Number.isFinite(value));
-      const derivedDateRange = dateValues.length > 0
-        ? { min: Math.min(...dateValues), max: Math.max(...dateValues) }
-        : undefined;
-      setState((prev: WidgetState) => {
-        let chartKpiFields = Array.isArray(prev.chartKpiFields)
-          ? prev.chartKpiFields.filter((field: string) => candidateKpiFields.includes(field))
-          : [];
-        if (chartKpiFields.length === 0 && candidateKpiFields.length > 0) {
-          chartKpiFields = [candidateKpiFields[0]];
-        }
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+    } catch {}
+  };
 
-        let mapKpiField = prev.mapKpiField && candidateKpiFields.includes(prev.mapKpiField)
-          ? prev.mapKpiField
-          : undefined;
-
-        if (!mapKpiField && chartKpiFields.length > 0) {
-          mapKpiField = chartKpiFields[0];
-        }
-
-        if (mapKpiField && !chartKpiFields.includes(mapKpiField)) {
-          chartKpiFields = [mapKpiField, ...chartKpiFields];
-        }
-
-        chartKpiFields = Array.from(new Set(chartKpiFields));
-
-        return {
-          ...prev,
-          kpiFeatures,
-          candidateKpiFields,
-          mapKpiField,
-          chartKpiFields,
-          loading: false,
-          error: undefined,
-          dateRange: derivedDateRange,
-          selectedDateRange: (() => {
-            if (!derivedDateRange) {
-              return undefined;
-            }
-            const previous = prev.selectedDateRange;
-            const fallbackStart = clampValue(previous?.start ?? derivedDateRange.min, derivedDateRange.min, derivedDateRange.max);
-            const fallbackEndRaw = clampValue(previous?.end ?? derivedDateRange.max, derivedDateRange.min, derivedDateRange.max);
-            const fallbackEnd = Math.max(fallbackStart, fallbackEndRaw);
-            return { start: fallbackStart, end: fallbackEnd };
-          })()
-        };
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unknown error';
-      setState((prev: WidgetState) => ({ ...prev, loading: false, error: `Error loading data: ${message}` }));
-      console.error('KPI query error:', err);
-    }
-  }, [config?.kpisUrl]);
-
-  React.useEffect(() => () => {
-    if (sketchViewModelRef.current) {
-      try {
-        sketchViewModelRef.current.destroy?.();
-      } catch (err) {
-        console.warn('Sketch destroy warning:', err);
-      }
-      sketchViewModelRef.current = undefined;
-    }
-  }, []);
-
-  const restoreCellsLayerDefaults = React.useCallback((targetLayer?: any, options?: { preserveEffect?: boolean; preserveDefinitionExpression?: boolean }) => {
-    const layer = targetLayer ?? cellsLayerRef.current;
-    if (!layer) {
+  const handlePointerMove = (thumb: 'min' | 'max') => (e: React.PointerEvent) => {
+    const active = activeRef.current;
+    if (!active || active.thumb !== thumb || active.pointerId !== e.pointerId || !trackRef.current) {
       return;
     }
 
-    const preserveEffect = Boolean(options?.preserveEffect);
-    const preserveDefinitionExpression = Boolean(options?.preserveDefinitionExpression);
+    const rect = trackRef.current.getBoundingClientRect();
+    const ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+    let val = snap(min + ratio * (max - min));
+    val = clamp(val, min, max);
 
-    const initialRenderer = initialRendererRef.current;
-    const initialFeatureEffect = initialFeatureEffectRef.current;
-    const initialDefinitionExpression = initialDefinitionExpressionRef.current;
-
-    if (!preserveDefinitionExpression) {
-      if (initialDefinitionExpression !== undefined || layer.definitionExpression !== initialDefinitionExpression) {
-        layer.definitionExpression = initialDefinitionExpression;
-      }
-    }
-
-    if (!preserveEffect) {
-      if (initialFeatureEffect !== undefined) {
-        layer.featureEffect = cloneEsriValue(initialFeatureEffect);
-      } else if (layer.featureEffect) {
-        layer.featureEffect = undefined;
-      }
-    }
-
-    if (initialRenderer !== undefined) {
-      layer.renderer = cloneEsriValue(initialRenderer);
-    } else if (layer.renderer) {
-      layer.renderer = undefined;
-    }
-
-    if (typeof layer.refresh === 'function') {
-      layer.refresh();
-    }
-  }, []);
-
-  const handleReload = React.useCallback(() => {
-    if (selectionLayerRef.current?.removeAll) {
-      selectionLayerRef.current.removeAll();
-    }
-    restoreCellsLayerDefaults();
-    setKpiSeries([]);
-    setKpiTimeSeriesByField(new Map());
-    setChartOpen(false);
-    setLegendExpanded(false);
-    setSelectedCellKeys([]);
-    setCellColorMap(new Map());
-  }, [restoreCellsLayerDefaults]);
-
-  const handleActiveViewChange = React.useCallback((jmv: JimuMapView) => {
-    if (sketchViewModelRef.current) {
-      try {
-        sketchViewModelRef.current.destroy?.();
-      } catch (err) {
-        console.warn('Sketch destroy warning:', err);
-      }
-    }
-
-    const previousSelectionLayer = selectionLayerRef.current;
-    if (previousSelectionLayer?.removeAll) {
-      previousSelectionLayer.removeAll();
-    }
-    const previousView = activeJimuMapView?.view as any;
-    if (previousSelectionLayer && previousView?.map?.remove) {
-      try {
-        previousView.map.remove(previousSelectionLayer);
-      } catch (err) {
-        console.warn('Selection layer remove warning:', err);
-      }
-    }
-
-    restoreCellsLayerDefaults();
-
-    selectionLayerRef.current = undefined;
-    sketchViewModelRef.current = undefined;
-    cellsLayerRef.current = undefined;
-    initialRendererRef.current = undefined;
-    initialFeatureEffectRef.current = undefined;
-    initialDefinitionExpressionRef.current = undefined;
-
-    const view = jmv?.view as any;
-    if (view) {
-      const mapInitial = view?.map?.initialViewProperties?.viewpoint;
-      if (mapInitial) {
-        initialViewpointRef.current = cloneEsriValue(mapInitial);
-      } else if (view.viewpoint) {
-        initialViewpointRef.current = cloneEsriValue(view.viewpoint);
-      } else {
-        initialViewpointRef.current = undefined;
-      }
-      if (typeof view.when === 'function' && !initialViewpointRef.current) {
-        view.when(() => {
-          if (!initialViewpointRef.current) {
-            const readyInitial = view?.map?.initialViewProperties?.viewpoint ?? view?.viewpoint;
-            if (readyInitial) {
-              initialViewpointRef.current = cloneEsriValue(readyInitial);
-            }
-          }
-        }).catch((err: Error) => {
-          console.warn('View when() failed while capturing initial viewpoint:', err);
-        });
+    if (thumb === 'min') {
+      const newMin = Math.min(val, maxValue);
+      if (newMin !== minValue) {
+        onChange(newMin, maxValue);
       }
     } else {
-      initialViewpointRef.current = undefined;
-    }
-
-    setState((prev: WidgetState) => ({
-      ...prev,
-      selectedCells: [],
-      selecting: false,
-      legendBreaks: [],
-      legendExpression: undefined,
-      legendTitle: undefined
-    }));
-    setKpiSeries([]);
-    setKpiTimeSeriesByField(new Map());
-    setChartOpen(false);
-    setLegendExpanded(false);
-    setSelectedCellKeys([]);
-    setCellColorMap(new Map());
-    setActiveJimuMapView(jmv);
-  }, [activeJimuMapView, restoreCellsLayerDefaults]);
-
-  const detectCellsLayer = React.useCallback(async (view: any) => {
-    if (!view?.map?.layers) {
-      return undefined;
-    }
-    const allLayers = (view.map.layers as any).items ?? [];
-    for (const layer of allLayers) {
-      if (!layer || !layer.fields) {
-        continue;
+      const newMax = Math.max(val, minValue);
+      if (newMax !== maxValue) {
+        onChange(minValue, newMax);
       }
-      const fields = (layer.fields as any) ?? [];
-      const hasField = fields.some((field: any) => {
-        const name = field?.name;
-        return name && name.toLowerCase() === POLYGON_CELL_FIELD.toLowerCase();
-      });
-      if (hasField) {
-        return layer;
-      }
-    }
-    return undefined;
-  }, []);
-
-  const applyLegendRenderer = React.useCallback(async (
-    legendBreaks: LegendBreak[],
-    valueExpression: string,
-    title: string
-  ) => {
-    if (!activeJimuMapView?.view) {
-      throw new Error('Map view is not ready for legend updates.');
-    }
-    const view = activeJimuMapView.view as any;
-    let targetLayer = cellsLayerRef.current;
-    if (!targetLayer) {
-      targetLayer = await detectCellsLayer(view);
-      if (!targetLayer) {
-        throw new Error(`No layer with the field "${POLYGON_CELL_FIELD}" was found.`);
-      }
-      cellsLayerRef.current = targetLayer;
-      initialRendererRef.current = targetLayer.renderer ? cloneEsriValue(targetLayer.renderer) : undefined;
-      initialFeatureEffectRef.current = targetLayer.featureEffect ? cloneEsriValue(targetLayer.featureEffect) : undefined;
-      initialDefinitionExpressionRef.current = targetLayer.definitionExpression;
-    }
-
-    const [ClassBreaksRenderer, SimpleFillSymbol] = (await loadArcGISJSAPIModules([
-      'esri/renderers/ClassBreaksRenderer',
-      'esri/symbols/SimpleFillSymbol'
-    ])) as [any, any];
-
-    const classBreakInfos = legendBreaks.map((breakInfo: LegendBreak) => ({
-      minValue: breakInfo.minValue,
-      maxValue: breakInfo.maxValue,
-      symbol: new SimpleFillSymbol({
-        color: breakInfo.color,
-        outline: { color: [255, 255, 255, 0.6], width: 1 }
-      }),
-      label: breakInfo.label
-    }));
-
-    const renderer = new ClassBreaksRenderer({
-      valueExpression,
-      classBreakInfos
-    });
-
-    targetLayer.renderer = renderer;
-    if (typeof targetLayer.refresh === 'function') {
-      targetLayer.refresh();
-    }
-  }, [activeJimuMapView, detectCellsLayer]);
-
-  const startSelection = React.useCallback(async () => {
-    if (!activeJimuMapView?.view) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Map view not ready. Make sure a map widget is loaded.' }));
-      return;
-    }
-    const view = activeJimuMapView.view as any;
-    let targetLayer = cellsLayerRef.current;
-    if (!targetLayer) {
-      targetLayer = await detectCellsLayer(view);
-      if (!targetLayer) {
-        setState((prev: WidgetState) => ({ ...prev, error: `No layer with the field "${POLYGON_CELL_FIELD}" was found.` }));
-        return;
-      }
-      cellsLayerRef.current = targetLayer;
-      initialRendererRef.current = targetLayer.renderer ? cloneEsriValue(targetLayer.renderer) : undefined;
-      initialFeatureEffectRef.current = targetLayer.featureEffect ? cloneEsriValue(targetLayer.featureEffect) : undefined;
-      initialDefinitionExpressionRef.current = targetLayer.definitionExpression;
-    }
-
-    let selectionLayer = selectionLayerRef.current;
-    if (!selectionLayer) {
-      const [GraphicsLayer] = (await loadArcGISJSAPIModules(['esri/layers/GraphicsLayer'])) as [any];
-      selectionLayer = new GraphicsLayer({ title: 'Selection Layer' });
-      view.map.add(selectionLayer);
-      selectionLayerRef.current = selectionLayer;
-    } else if (selectionLayer.removeAll) {
-      selectionLayer.removeAll();
-    }
-
-    try {
-      const [SketchViewModel] = (await loadArcGISJSAPIModules(['esri/widgets/Sketch/SketchViewModel'])) as [any];
-      const sketchViewModel = new SketchViewModel({
-        view,
-        layer: selectionLayer,
-        updateOnGraphicClick: false
-      });
-      sketchViewModelRef.current = sketchViewModel;
-
-      setState((prev: WidgetState) => ({ ...prev, selecting: true, error: undefined }));
-
-      sketchViewModel.on('create', async (event: any) => {
-        if (event.state === 'complete') {
-          const geometry = event.graphic?.geometry;
-          if (!geometry) {
-            setState((prev: WidgetState) => ({ ...prev, selecting: false, error: 'No geometry from sketch.' }));
-            return;
-          }
-          const query = targetLayer.createQuery();
-          query.geometry = geometry;
-          query.spatialRelationship = 'intersects';
-          query.outFields = [POLYGON_CELL_FIELD];
-          query.returnGeometry = false;
-
-          try {
-            const result = await targetLayer.queryFeatures(query);
-            const features = result.features ?? [];
-            const selectedCells = features
-              .map((feature: any) => {
-                const rawValue = feature.attributes?.[POLYGON_CELL_FIELD];
-                const key = normalizeKey(rawValue);
-                if (!key) {
-                  return null;
-                }
-                return { raw: String(rawValue), key };
-              })
-              .filter((cell: SelectedCell | null): cell is SelectedCell => cell !== null);
-
-            setState((prev: WidgetState) => ({ ...prev, selectedCells, selecting: false }));
-            
-            const cellKeys = selectedCells.map((cell: SelectedCell) => cell.key);
-            await fetchKpiDataForCells(cellKeys);
-          } catch (err) {
-            console.error('Query error', err);
-            setState((prev: WidgetState) => ({
-              ...prev,
-              selecting: false,
-              error: err instanceof Error ? err.message : 'Selection query failed.'
-            }));
-          }
-        }
-      });
-
-      sketchViewModel.create('polygon');
-    } catch (err) {
-      console.error('Sketch creation error', err);
-      setState((prev: WidgetState) => ({
-        ...prev,
-        selecting: false,
-        error: err instanceof Error ? err.message : 'Failed to create sketch tool.'
-      }));
-    }
-  }, [activeJimuMapView, detectCellsLayer, normalizeKey, fetchKpiDataForCells]);
-
-  const clearSelection = React.useCallback(() => {
-    if (selectionLayerRef.current?.removeAll) {
-      selectionLayerRef.current.removeAll();
-    }
-    restoreCellsLayerDefaults();
-    setState((prev: WidgetState) => ({
-      ...prev,
-      selectedCells: [],
-      selecting: false,
-      legendBreaks: [],
-      legendExpression: undefined,
-      legendTitle: undefined
-    }));
-    setKpiSeries([]);
-    setKpiTimeSeriesByField(new Map());
-    setChartOpen(false);
-    setLegendExpanded(false);
-    setSelectedCellKeys([]);
-    setCellColorMap(new Map());
-  }, [restoreCellsLayerDefaults]);
-
-  const handleLegendBreakChange = React.useCallback((index: number, field: 'minValue' | 'maxValue' | 'color', rawValue: string) => {
-    setState((prev: WidgetState) => {
-      if (!prev.legendBreaks || !prev.legendBreaks[index]) {
-        return prev;
-      }
-      const legendBreaks = prev.legendBreaks.map((breakInfo: LegendBreak, i: number) => {
-        if (i !== index) {
-          return breakInfo;
-        }
-        const updated: LegendBreak = { ...breakInfo };
-        if (field === 'color') {
-          updated.color = rawValue;
-        } else {
-          if (rawValue === '') {
-            return updated;
-          }
-          const numeric = Number(rawValue);
-          if (!Number.isFinite(numeric)) {
-            return updated;
-          }
-          if (field === 'minValue') {
-            updated.minValue = numeric;
-          } else if (field === 'maxValue') {
-            updated.maxValue = numeric;
-          }
-        }
-        updated.label = formatLegendLabel(updated.minValue, updated.maxValue);
-        return updated;
-      });
-      return { ...prev, legendBreaks };
-    });
-  }, []);
-
-  const applyLegendUpdates = React.useCallback(async () => {
-    const legendBreaks = state.legendBreaks ?? [];
-    const legendExpression = state.legendExpression;
-    const legendTitle = state.legendTitle;
-
-    if (!legendBreaks || legendBreaks.length === 0 || !legendExpression || !legendTitle) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Apply a KPI before updating the legend.' }));
-      return;
-    }
-
-    const hasInvalid = legendBreaks.some((b: LegendBreak) => !Number.isFinite(b.minValue) || !Number.isFinite(b.maxValue));
-    if (hasInvalid) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Legend ranges must be numeric values.' }));
-      return;
-    }
-
-    const hasReversed = legendBreaks.some((b: LegendBreak) => b.maxValue < b.minValue);
-    if (hasReversed) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Each legend range must have Max ≥ Min.' }));
-      return;
-    }
-
-    const sortedBreaks = legendBreaks
-      .map((b: LegendBreak) => ({ ...b }))
-      .sort((a: LegendBreak, b: LegendBreak) => a.minValue - b.minValue)
-      .map((b: LegendBreak) => ({
-        ...b,
-        label: formatLegendLabel(b.minValue, b.maxValue)
-      }));
-
-    try {
-      await applyLegendRenderer(sortedBreaks, legendExpression, legendTitle);
-      setState((prev: WidgetState) => ({
-        ...prev,
-        legendBreaks: sortedBreaks,
-        error: undefined
-      }));
-    } catch (err) {
-      console.error('Legend update error', err);
-      setState((prev: WidgetState) => ({
-        ...prev,
-        error: err instanceof Error ? err.message : String(err)
-      }));
-    }
-  }, [applyLegendRenderer, state.legendBreaks, state.legendExpression, state.legendTitle]);
-
-  const applyKpi = React.useCallback(async () => {
-    const mapKpiField = state.mapKpiField;
-    const selectedCells = state.selectedCells ?? [];
-    const chartKpiFields = Array.isArray(state.chartKpiFields)
-      ? state.chartKpiFields.filter((field: string) => Boolean(field))
-      : [];
-
-    if (!mapKpiField) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Select a KPI to colorize the map before applying.' }));
-      return;
-    }
-    if (chartKpiFields.length === 0) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Pick at least one KPI to plot in the chart.' }));
-      return;
-    }
-    if (!config?.kpisUrl?.trim()) {
-      return;
-    }
-    if (!activeJimuMapView || !activeJimuMapView.view) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Map widget not ready. Ensure the selected map widget is active.' }));
-      return;
-    }
-    if (!selectedCells || selectedCells.length === 0) {
-      setState((prev: WidgetState) => ({ ...prev, error: 'Draw a selection area before applying KPIs.' }));
-      return;
-    }
-    setState((prev: WidgetState) => ({ ...prev, applying: true }));
-    try {
-      const FeatureLayer = await ensureFeatureLayer(featureLayerCtorRef);
-      const kpiJoinField = KPI_JOIN_FIELD;
-      const polygonField = POLYGON_CELL_FIELD;
-      const analysisFields = Array.from(new Set([...chartKpiFields, mapKpiField]));
-
-      const safeValues = selectedCells.map((cell: SelectedCell) => `'${String(cell.raw).replace(/'/g, "''")}'`);
-      const whereClause = safeValues.length === 1 ? `${kpiJoinField} = ${safeValues[0]}` : `${kpiJoinField} IN (${safeValues.join(', ')})`;
-      const kpiLayer = new FeatureLayer({ url: config.kpisUrl.trim() });
-      if (kpiLayer.load) { await kpiLayer.load(); }
-      const kpiQuery = kpiLayer.createQuery();
-      kpiQuery.where = whereClause;
-      kpiQuery.outFields = Array.from(new Set([...analysisFields, kpiJoinField, 'date_time_id']));
-      kpiQuery.returnGeometry = false;
-      const kpiResult = await kpiLayer.queryFeatures(kpiQuery);
-      const kpiFeaturesResult = kpiResult.features;
-      const selectedKeys = new Set(selectedCells.map((cell: SelectedCell) => cell.key));
-      if (selectedKeys.size === 0) {
-        throw new Error('Selection is empty. Draw an area covering the polygons you want to analyze.');
-      }
-
-      const labelByKey = new Map<string, string>(selectedCells.map((cell: SelectedCell) => [cell.key, cell.raw ?? cell.key]));
-      const activeDateRange = state.selectedDateRange ?? state.dateRange;
-
-      const dataByKpiField = new Map<string, Map<string, KpiTimeSeriesPoint[]>>();
-      chartKpiFields.forEach(field => dataByKpiField.set(field, new Map()));
-      
-      const mapSeriesByCell = new Map<string, { label: string; points: KpiTimeSeriesPoint[] }>();
-
-      kpiFeaturesResult.forEach((feature: QueryFeature) => {
-        const attributes = feature.attributes ?? {};
-        const rawKey = attributes[kpiJoinField];
-        const key = normalizeKey(rawKey);
-        if (!key || !selectedKeys.has(key)) {
-          return;
-        }
-
-        const timestamp = parseDateTimeValue(attributes.date_time_id);
-        if (timestamp === undefined || !Number.isFinite(timestamp)) {
-          return;
-        }
-        if (activeDateRange && (timestamp < activeDateRange.start || timestamp > activeDateRange.end)) {
-          return;
-        }
-
-        const label = labelByKey.get(key) ?? (rawKey ? String(rawKey) : key);
-
-        const mapValue = attributes[mapKpiField];
-        if (typeof mapValue === 'number' && Number.isFinite(mapValue)) {
-          const point: KpiTimeSeriesPoint = {
-            timestamp,
-            value: mapValue,
-            displayLabel: formatDateLabel(timestamp),
-            tooltipLabel: formatDateTooltip(timestamp)
-          };
-          const existingSeries = mapSeriesByCell.get(key);
-          if (existingSeries) {
-            existingSeries.points.push(point);
-          } else {
-            mapSeriesByCell.set(key, { label, points: [point] });
-          }
-        }
-
-        chartKpiFields.forEach((field: string) => {
-          const rawValue = attributes[field];
-          if (typeof rawValue !== 'number' || !Number.isFinite(rawValue)) {
-            return;
-          }
-          
-          const fieldData = dataByKpiField.get(field);
-          if (!fieldData) return;
-          
-          if (!fieldData.has(key)) {
-            fieldData.set(key, []);
-          }
-          
-          fieldData.get(key)!.push({
-            timestamp,
-            value: rawValue,
-            displayLabel: formatDateLabel(timestamp),
-            tooltipLabel: formatDateTooltip(timestamp)
-          });
-        });
-      });
-
-      const kpiTimeSeriesByFieldMap = new Map<string, KpiTimeSeriesEntry[]>();
-      
-      chartKpiFields.forEach(kpiField => {
-        const fieldData = dataByKpiField.get(kpiField);
-        if (!fieldData) return;
-        
-        const seriesForThisKpi: KpiTimeSeriesEntry[] = [];
-        fieldData.forEach((points, cellKey) => {
-          const sortedPoints = points.sort((a, b) => a.timestamp - b.timestamp);
-          seriesForThisKpi.push({
-            key: cellKey,
-            label: labelByKey.get(cellKey) ?? cellKey,
-            points: sortedPoints
-          });
-        });
-        
-        kpiTimeSeriesByFieldMap.set(kpiField, seriesForThisKpi);
-      });
-
-      const mapSeriesEntries = Array.from(mapSeriesByCell.entries())
-        .map(([key, data]) => ({
-          key,
-          label: data.label,
-          points: data.points
-            .slice()
-            .sort((a: KpiTimeSeriesPoint, b: KpiTimeSeriesPoint) => a.timestamp - b.timestamp)
-        }))
-        .filter((entry: KpiTimeSeriesEntry) => entry.points.length > 0);
-
-      if (mapSeriesEntries.length === 0) {
-        throw new Error('No KPI values matched the selected polygons for the chosen date range.');
-      }
-
-      const summaryEntries: KpiSeriesEntry[] = mapSeriesEntries
-        .map((entry: KpiTimeSeriesEntry) => {
-          const lastPoint = entry.points[entry.points.length - 1];
-          if (!lastPoint) {
-            return null;
-          }
-          return {
-            key: entry.key,
-            label: entry.label,
-            value: lastPoint.value
-          } as KpiSeriesEntry;
-        })
-        .filter((entry: KpiSeriesEntry | null): entry is KpiSeriesEntry => entry !== null);
-
-      if (summaryEntries.length === 0) {
-        throw new Error('No KPI summary values could be derived.');
-      }
-
-      const decodeArgs: string[] = [];
-      const values: number[] = summaryEntries.map((entry: KpiSeriesEntry) => {
-        const safeKey = entry.key.replace(/"/g, '\\"');
-        decodeArgs.push(`"${safeKey}"`, `${entry.value}`);
-        return entry.value;
-      });
-
-      const min = Math.min(...values);
-      const max = Math.max(...values);
-      const classCount = DEFAULT_LEGEND_COLORS.length;
-      const interval = classCount > 0 ? (max - min) / classCount : 0;
-      const breaks: { minValue: number; maxValue: number }[] = [];
-      for (let i = 0; i < classCount; i++) {
-        const bMin = min + interval * i;
-        const bMax = i === classCount - 1 ? max : min + interval * (i + 1);
-        breaks.push({ minValue: bMin, maxValue: bMax });
-      }
-      const legendBreaks = breaks.map((b, i) => ({
-        minValue: b.minValue,
-        maxValue: b.maxValue,
-        color: DEFAULT_LEGEND_COLORS[i] || DEFAULT_LEGEND_COLORS[DEFAULT_LEGEND_COLORS.length - 1] || '#800026',
-        label: formatLegendLabel(b.minValue, b.maxValue)
-      }));
-
-      const expressionField = polygonField.replace(/"/g, '\"');
-      const valueExpression = `Decode(Upper(Trim(Text($feature.${expressionField}))), ${decodeArgs.join(', ')}, Null)`;
-      await applyLegendRenderer(legendBreaks, valueExpression, mapKpiField);
-
-      const chartEntriesSorted = summaryEntries
-        .slice()
-        .sort((a: KpiSeriesEntry, b: KpiSeriesEntry) => b.value - a.value);
-      
-      setKpiTimeSeriesByField(kpiTimeSeriesByFieldMap);
-      setKpiSeries(chartEntriesSorted);
-      setLegendExpanded(false);
-
-      const newCellColorMap = new Map<string, string>();
-      Array.from(selectedKeys).forEach((key, index) => {
-        newCellColorMap.set(key, getColorForIndex(index));
-      });
-      setCellColorMap(newCellColorMap);
-      setSelectedCellKeys(Array.from(selectedKeys));
-
-      setState((prev: WidgetState) => ({
-        ...prev,
-        error: undefined,
-        legendBreaks,
-        legendExpression: valueExpression,
-        legendTitle: mapKpiField
-      }));
-    } catch (err) {
-      console.error('Apply KPI error', err);
-      setState((prev: WidgetState) => ({ ...prev, error: err instanceof Error ? err.message : String(err) }));
-      setKpiSeries([]);
-      setKpiTimeSeriesByField(new Map());
-      setChartOpen(false);
-      setLegendExpanded(false);
-      setSelectedCellKeys([]);
-      setCellColorMap(new Map());
-    } finally {
-      setState((prev: WidgetState) => ({ ...prev, applying: false }));
-    }
-  }, [
-    config?.kpisUrl,
-    state.mapKpiField,
-    state.chartKpiFields,
-    state.selectedCells,
-    state.selectedDateRange,
-    state.dateRange,
-    activeJimuMapView,
-    applyLegendRenderer,
-    normalizeKey
-  ]);
-
-  const handleChartKpiToggle = React.useCallback((field: string, checked: boolean) => {
-    restoreCellsLayerDefaults(undefined, { preserveEffect: true });
-    setState((prev: WidgetState) => {
-      const current = Array.isArray(prev.chartKpiFields) ? prev.chartKpiFields.slice() : [];
-      let nextChart: string[];
-      if (checked) {
-        if (current.includes(field)) {
-          nextChart = current;
-        } else {
-          nextChart = [...current, field];
-        }
-      } else {
-        nextChart = current.filter((item: string) => item !== field);
-        if (nextChart.length === 0) {
-          return prev;
-        }
-      }
-
-      let mapKpiField = prev.mapKpiField;
-      if (!mapKpiField || !nextChart.includes(mapKpiField)) {
-        mapKpiField = nextChart[0];
-      }
-
-      return {
-        ...prev,
-        chartKpiFields: nextChart,
-        mapKpiField,
-        legendBreaks: [],
-        legendExpression: undefined,
-        legendTitle: undefined
-      };
-    });
-    setKpiSeries([]);
-    setKpiTimeSeriesByField(new Map());
-    setChartOpen(false);
-    setLegendExpanded(false);
-  }, [restoreCellsLayerDefaults]);
-
-  const handleMapKpiChange = React.useCallback((field: string) => {
-    restoreCellsLayerDefaults(undefined, { preserveEffect: true });
-    setState((prev: WidgetState) => {
-      const current = Array.isArray(prev.chartKpiFields) ? prev.chartKpiFields.slice() : [];
-      const nextChart = current.includes(field) ? current : [...current, field];
-      return {
-        ...prev,
-        mapKpiField: field,
-        chartKpiFields: nextChart,
-        legendBreaks: [],
-        legendExpression: undefined,
-        legendTitle: undefined
-      };
-    });
-    setKpiSeries([]);
-    setKpiTimeSeriesByField(new Map());
-    setChartOpen(false);
-    setLegendExpanded(false);
-  }, [restoreCellsLayerDefaults]);
-
-  const handleQuickDateRange = React.useCallback((days: number) => {
-    setState((prev: WidgetState) => {
-      const baseRange = prev.dateRange;
-      if (!baseRange) {
-        return prev;
-      }
-      
-      const now = Date.now();
-      const end = Math.min(now, baseRange.max);
-      const start = Math.max(end - (days * DAY_IN_MS), baseRange.min);
-      
-      return {
-        ...prev,
-        selectedDateRange: { start, end },
-        useQuickDateRange: true,
-        legendBreaks: [],
-        legendExpression: undefined,
-        legendTitle: undefined
-      };
-    });
-    
-    restoreCellsLayerDefaults(undefined, { preserveEffect: true });
-    setKpiSeries([]);
-    setKpiTimeSeriesByField(new Map());
-    setChartOpen(false);
-    setLegendExpanded(false);
-  }, [restoreCellsLayerDefaults]);
-
-  const handleDateInputChange = React.useCallback((field: 'start' | 'end', rawValue: string) => {
-    let didUpdate = false;
-    setState((prev: WidgetState) => {
-      const baseRange = prev.dateRange;
-      if (!baseRange) {
-        return prev;
-      }
-      const current = prev.selectedDateRange ?? { start: baseRange.min, end: baseRange.max };
-      let start = current.start;
-      let end = current.end;
-
-      if (field === 'start') {
-        const parsed = startOfDateInput(rawValue);
-        if (parsed === undefined) {
-          return prev;
-        }
-        const clampedStart = clampValue(parsed, baseRange.min, baseRange.max);
-        if (clampedStart === start) {
-          return prev;
-        }
-        start = clampedStart;
-        if (start > end) {
-          end = start;
-        }
-      } else {
-        const parsed = endOfDateInput(rawValue);
-        if (parsed === undefined) {
-          return prev;
-        }
-        const clampedEnd = clampValue(parsed, baseRange.min, baseRange.max);
-        if (clampedEnd === end) {
-          return prev;
-        }
-        end = clampedEnd;
-        if (end < start) {
-          start = end;
-        }
-      }
-
-      didUpdate = true;
-      return {
-        ...prev,
-        selectedDateRange: { start, end },
-        useQuickDateRange: false,
-        legendBreaks: [],
-        legendExpression: undefined,
-        legendTitle: undefined
-      };
-    });
-
-    if (didUpdate) {
-      restoreCellsLayerDefaults(undefined, { preserveEffect: true });
-      setKpiSeries([]);
-      setKpiTimeSeriesByField(new Map());
-      setChartOpen(false);
-      setLegendExpanded(false);
-    }
-  }, [restoreCellsLayerDefaults]);
-
-  const toggleCellSelection = React.useCallback((cellKey: string) => {
-    setSelectedCellKeys(prev => {
-      if (prev.includes(cellKey)) {
-        return prev.filter(k => k !== cellKey);
-      } else {
-        return [...prev, cellKey];
-      }
-    });
-  }, []);
-
-  const kpisUrlConfigured = Boolean(config?.kpisUrl?.trim());
-  const candidateKpiFields = Array.isArray(state.candidateKpiFields) ? state.candidateKpiFields : [];
-  const {
-    loading,
-    error,
-    mapKpiField,
-    chartKpiFields: stateChartKpiFields = [],
-    applying,
-    selecting,
-    selectedCells,
-    legendBreaks = [],
-    legendExpression,
-    legendTitle,
-    dateRange,
-    selectedDateRange,
-    useQuickDateRange
-  } = state;
-  const chartKpiFields = Array.isArray(stateChartKpiFields) ? stateChartKpiFields : [];
-  const hasDateRange = Boolean(dateRange);
-  const effectiveSelectedRange = selectedDateRange ?? (dateRange ? { start: dateRange.min, end: dateRange.max } : undefined);
-  const dateStartValue = formatDateInputValue(effectiveSelectedRange?.start);
-  const dateEndValue = formatDateInputValue(effectiveSelectedRange?.end);
-  const dateMinValue = formatDateInputValue(dateRange?.min);
-  const dateMaxValue = formatDateInputValue(dateRange?.max);
-  const rangeSummaryStart = effectiveSelectedRange ? formatDateLabel(effectiveSelectedRange.start) : '';
-  const rangeSummaryEnd = effectiveSelectedRange ? formatDateLabel(effectiveSelectedRange.end) : '';
-
-  const hasBaseKpiData = kpiSeries.length > 0 && kpiTimeSeriesByField.size > 0;
-  const canApplyKpi = Boolean(mapKpiField && chartKpiFields.length > 0 && selectedCells.length > 0);
-  
-  const chartHeight = 300;
-  const chartMargins = { top: 20, right: 28, bottom: 50, left: 60 };
-
-  React.useEffect(() => {
-    if (!isChartOpen) {
-      return;
-    }
-    const element = chartContainerRef.current;
-    if (!element) {
-      return;
-    }
-    const updateWidth = () => {
-      const newWidth = element.clientWidth;
-      if (newWidth > 0) {
-        setChartWidth(newWidth);
-      }
-    };
-    updateWidth();
-
-    if (typeof ResizeObserver !== 'undefined') {
-      const observer = new ResizeObserver(() => updateWidth());
-      observer.observe(element);
-      return () => observer.disconnect();
-    }
-
-    window.addEventListener('resize', updateWidth);
-    return () => window.removeEventListener('resize', updateWidth);
-  }, [isChartOpen]);
-
-  const styles = {
-    container: {
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
-      padding: '16px',
-      height: '100%',
-      overflowY: 'auto' as const,
-      boxSizing: 'border-box' as const,
-      background: '#f5f7fa'
-    },
-    header: {
-      fontSize: 24,
-      fontWeight: 600,
-      color: '#1a202c',
-      marginBottom: 16,
-      paddingBottom: 12,
-      borderBottom: '2px solid #4361ee'
-    },
-    card: {
-      background: '#ffffff',
-      borderRadius: 8,
-      padding: 16,
-      marginTop: 12,
-      boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-      border: '1px solid #e2e8f0'
-    },
-    cardTitle: {
-      fontSize: 16,
-      fontWeight: 600,
-      color: '#2d3748',
-      marginTop: 0,
-      marginBottom: 12
-    },
-    button: {
-      padding: '8px 16px',
-      fontSize: 14,
-      fontWeight: 500,
-      borderRadius: 6,
-      border: 'none',
-      cursor: 'pointer',
-      transition: 'all 0.2s',
-      background: '#4361ee',
-      color: '#ffffff'
-    },
-    buttonSecondary: {
-      padding: '8px 16px',
-      fontSize: 14,
-      fontWeight: 500,
-      borderRadius: 6,
-      border: '1px solid #cbd5e0',
-      cursor: 'pointer',
-      transition: 'all 0.2s',
-      background: '#ffffff',
-      color: '#4a5568'
-    },
-    select: {
-      padding: '8px 12px',
-      fontSize: 14,
-      borderRadius: 6,
-      border: '1px solid #cbd5e0',
-      background: '#ffffff',
-      cursor: 'pointer',
-      width: '100%'
-    },
-    errorText: {
-      color: '#e53e3e',
-      fontSize: 14,
-      padding: 12,
-      background: '#fff5f5',
-      borderRadius: 6,
-      border: '1px solid #fc8181'
-    },
-    badge: {
-      display: 'inline-block' as const,
-      padding: '4px 10px',
-      borderRadius: 12,
-      fontSize: 12,
-      fontWeight: 500,
-      background: '#edf2f7',
-      color: '#2d3748'
     }
   };
 
-  if (!mapWidgetId) {
-    return (
-      <div style={styles.container}>
-        <h3 style={styles.header}>KPI Analysis Tool</h3>
-        <p style={{ color: '#718096' }}>Configure a map widget to begin analysis.</p>
-      </div>
-    );
-  }
-
-  if (!kpisUrlConfigured) {
-    return (
-      <div style={styles.container}>
-        <h3 style={styles.header}>KPI Analysis Tool</h3>
-        <p style={{ color: '#718096' }}>Please configure the KPI feature service URL in the widget settings.</p>
-      </div>
-    );
-  }
-
-  const renderChart = (kpiField: string, seriesData: KpiTimeSeriesEntry[]) => {
-    const filteredSeries = selectedCellKeys.length === 0
-      ? seriesData
-      : seriesData.filter(s => selectedCellKeys.includes(s.key));
-
-    if (filteredSeries.length === 0) {
-      return (
-        <div style={{ padding: 20, textAlign: 'center', color: '#718096' }}>
-          No data available for this KPI.
-        </div>
-      );
+  const handlePointerUp = (thumb: 'min' | 'max') => (e: React.PointerEvent) => {
+    const active = activeRef.current;
+    if (active && active.thumb === thumb && active.pointerId === e.pointerId) {
+      activeRef.current = null;
+      try {
+        (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+      } catch {}
     }
-
-    const allPoints = filteredSeries.flatMap(s => s.points);
-    if (allPoints.length === 0) {
-      return (
-        <div style={{ padding: 20, textAlign: 'center', color: '#718096' }}>
-          No chart data available.
-        </div>
-      );
-    }
-
-    const minTime = Math.min(...allPoints.map(p => p.timestamp));
-    const maxTime = Math.max(...allPoints.map(p => p.timestamp));
-    const minValue = Math.min(...allPoints.map(p => p.value));
-    const maxValue = Math.max(...allPoints.map(p => p.value));
-
-    const measuredWidth = chartWidth || 0;
-    const width = measuredWidth > 0 ? measuredWidth : 400;
-    const innerWidth = Math.max(width - chartMargins.left - chartMargins.right, 1);
-    const innerHeight = Math.max(chartHeight - chartMargins.top - chartMargins.bottom, 1);
-    const timeRange = maxTime - minTime;
-    const baseValueRange = maxValue - minValue;
-    const padding = baseValueRange === 0
-      ? Math.max(Math.abs(maxValue) * 0.1, 1)
-      : baseValueRange * 0.1;
-    const minValuePadded = minValue - padding;
-    const maxValuePadded = maxValue + padding;
-    const valueRange = maxValuePadded - minValuePadded || 1;
-
-    const getX = (timestamp: number) => {
-      if (timeRange === 0) {
-        return chartMargins.left + innerWidth / 2;
-      }
-      return chartMargins.left + ((timestamp - minTime) / timeRange) * innerWidth;
-    };
-    const getY = (value: number) => {
-      return chartMargins.top + innerHeight - ((value - minValuePadded) / valueRange) * innerHeight;
-    };
-
-    const preparedSeries = filteredSeries.map((series, index) => {
-      const coordinates = series.points.map(point => ({
-        point,
-        x: getX(point.timestamp),
-        y: getY(point.value)
-      }));
-      const path = coordinates
-        .map((coord, coordIndex) => `${coordIndex === 0 ? 'M' : 'L'}${coord.x},${coord.y}`)
-        .join(' ');
-      return {
-        key: series.key,
-        label: series.label,
-        color: cellColorMap.get(series.key) || getColorForIndex(index),
-        path,
-        coordinates
-      };
-    });
-
-    const xTicks = [];
-    const xTickCount = 5;
-    for (let i = 0; i <= xTickCount; i++) {
-      const ratio = i / xTickCount;
-      const timestamp = minTime + ratio * (maxTime - minTime);
-      xTicks.push({ x: getX(timestamp), label: formatDateLabel(timestamp) });
-    }
-
-    const yTicks = [];
-    const yTickCount = 6;
-    for (let i = 0; i <= yTickCount; i++) {
-      const ratio = i / yTickCount;
-      const value = minValuePadded + ratio * (maxValuePadded - minValuePadded);
-      yTicks.push({ y: getY(value), label: formatKpiValue(value) });
-    }
-
-    return (
-      <svg
-        width={width}
-        height={chartHeight}
-        style={{ maxWidth: '100%', background: '#ffffff', borderRadius: 8 }}
-      >
-        <defs>
-          <filter id={`shadow-${kpiField}`}>
-            <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.1" />
-          </filter>
-        </defs>
-        <rect
-          x={chartMargins.left}
-          y={chartMargins.top}
-          width={innerWidth}
-          height={innerHeight}
-          fill="#f9fafb"
-          stroke="#e2e8f0"
-          strokeWidth={1}
-          rx={4}
-        />
-        {yTicks.map((tick, index) => (
-          <g key={`y-${index}`}>
-            <line
-              x1={chartMargins.left}
-              y1={tick.y}
-              x2={chartMargins.left + innerWidth}
-              y2={tick.y}
-              stroke="#e2e8f0"
-              strokeWidth={1}
-              strokeDasharray="4,4"
-            />
-            <text
-              x={chartMargins.left - 8}
-              y={tick.y + 4}
-              fontSize={11}
-              fill="#718096"
-              textAnchor="end"
-              fontWeight={500}
-            >
-              {tick.label}
-            </text>
-          </g>
-        ))}
-        {xTicks.map((tick, index) => (
-          <g key={`x-${index}`}>
-            <line
-              x1={tick.x}
-              y1={chartMargins.top + innerHeight}
-              x2={tick.x}
-              y2={chartMargins.top + innerHeight + 6}
-              stroke="#cbd5e0"
-              strokeWidth={1.5}
-            />
-            <text
-              x={tick.x}
-              y={chartHeight - 10}
-              fontSize={10}
-              fill="#718096"
-              textAnchor="middle"
-              fontWeight={500}
-            >
-              {tick.label}
-            </text>
-          </g>
-        ))}
-        {preparedSeries.map((series) => (
-          <g key={series.key}>
-            <path
-              d={series.path}
-              fill="none"
-              stroke={series.color}
-              strokeWidth={2.5}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              filter={`url(#shadow-${kpiField})`}
-            />
-            {series.coordinates.map((coord, idx) => {
-              const isHovered = hoveredPoint?.seriesKey === series.key && hoveredPoint?.timestamp === coord.point.timestamp;
-              return (
-                <g key={`${series.key}-${idx}`}>
-                  <circle
-                    cx={coord.x}
-                    cy={coord.y}
-                    r={isHovered ? 6 : 4}
-                    fill="#ffffff"
-                    stroke={series.color}
-                    strokeWidth={isHovered ? 3 : 2}
-                    style={{ cursor: 'pointer', transition: 'all 0.2s' }}
-                    onMouseEnter={() => setHoveredPoint({ seriesKey: series.key, timestamp: coord.point.timestamp })}
-                    onMouseLeave={() => setHoveredPoint(null)}
-                  />
-                  <title>{`${series.label}\n${coord.point.tooltipLabel}\nValue: ${formatKpiValue(coord.point.value)}`}</title>
-                </g>
-              );
-            })}
-          </g>
-        ))}
-        <text
-          x={chartMargins.left + innerWidth / 2}
-          y={chartHeight - 2}
-          textAnchor="middle"
-          fontSize={12}
-          fill="#4a5568"
-          fontWeight={600}
-        >
-          Date
-        </text>
-        <text
-          x={chartMargins.left - 45}
-          y={chartMargins.top + innerHeight / 2}
-          textAnchor="middle"
-          fontSize={12}
-          fill="#4a5568"
-          fontWeight={600}
-          transform={`rotate(-90 ${chartMargins.left - 45} ${chartMargins.top + innerHeight / 2})`}
-        >
-          KPI Value
-        </text>
-      </svg>
-    );
   };
+
+  const minPercent = valueToPercent(minValue);
+  const maxPercent = valueToPercent(maxValue);
 
   return (
-    <div style={styles.container}>
-      <JimuMapViewComponent useMapWidgetId={mapWidgetId} onActiveViewChange={handleActiveViewChange} />
-      <h3 style={styles.header}>KPI Analysis Tool</h3>
+    <div style={{ width: '100%', padding: '8px 0', touchAction: 'none' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>
+        <span>Min: {minValue}</span>
+        <span>Max: {maxValue}</span>
+      </div>
 
-      {loading && <p style={{ color: '#718096' }}>Loading data…</p>}
-      {error && <div style={styles.errorText}>{error}</div>}
-
-      {!loading && !error && (
-        <div>
-          <div style={styles.card}>
-            <h4 style={styles.cardTitle}>1. Select Area of Interest</h4>
-            <p style={{ fontSize: 13, color: '#718096', marginBottom: 12 }}>Draw a polygon to select cells for analysis</p>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button
-                onClick={startSelection}
-                disabled={selecting || applying}
-                style={{
-                  ...styles.button,
-                  ...(selecting || applying ? { opacity: 0.5, cursor: 'not-allowed' } : {})
-                }}
-              >
-                {selecting ? 'Drawing…' : '✏️ Draw Selection'}
-              </button>
-              <button
-                onClick={clearSelection}
-                disabled={selecting || selectedCells.length === 0}
-                style={{
-                  ...styles.buttonSecondary,
-                  ...(selecting || selectedCells.length === 0 ? { opacity: 0.5, cursor: 'not-allowed' } : {})
-                }}
-              >
-                🗑️ Clear
-              </button>
-              <span style={styles.badge}>{selectedCells.length} cells selected</span>
-            </div>
-          </div>
-
-          <div style={styles.card}>
-            <h4 style={styles.cardTitle}>2. Configure KPI Parameters</h4>
-            {candidateKpiFields.length === 0 ? (
-              <p style={{ fontSize: 13, color: '#718096' }}>Select an area to load available KPIs</p>
-            ) : (
-              <div>
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 6 }}>
-                    Map Color KPI
-                  </label>
-                  <select
-                    value={mapKpiField || ''}
-                    onChange={(e) => handleMapKpiChange(e.target.value)}
-                    disabled={applying || selecting}
-                    style={styles.select}
-                  >
-                    {candidateKpiFields.map((field: string) => (
-                      <option key={field} value={field}>{field}</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div style={{ marginBottom: 16 }}>
-                  <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 8 }}>
-                    Chart KPIs (select multiple)
-                  </label>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                    {candidateKpiFields.map((field: string) => {
-                      const isSelected = chartKpiFields.includes(field);
-                      return (
-                        <label
-                          key={field}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 6,
-                            padding: '6px 12px',
-                            borderRadius: 6,
-                            border: isSelected ? '2px solid #4361ee' : '1px solid #cbd5e0',
-                            background: isSelected ? '#ebf4ff' : '#ffffff',
-                            cursor: applying || selecting ? 'not-allowed' : 'pointer',
-                            fontSize: 13,
-                            fontWeight: isSelected ? 500 : 400
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={(e) => handleChartKpiToggle(field, e.target.checked)}
-                            disabled={applying || selecting}
-                          />
-                          <span>{field}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {hasDateRange && (
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 8 }}>
-                      Date Range
-                    </label>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-                      <button
-                        onClick={() => handleQuickDateRange(1)}
-                        disabled={applying || selecting}
-                        style={{
-                          ...styles.buttonSecondary,
-                          fontSize: 12,
-                          padding: '6px 12px',
-                          ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
-                        }}
-                      >
-                        1 Day
-                      </button>
-                      <button
-                        onClick={() => handleQuickDateRange(7)}
-                        disabled={applying || selecting}
-                        style={{
-                          ...styles.buttonSecondary,
-                          fontSize: 12,
-                          padding: '6px 12px',
-                          ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
-                        }}
-                      >
-                        1 Week
-                      </button>
-                      <button
-                        onClick={() => handleQuickDateRange(30)}
-                        disabled={applying || selecting}
-                        style={{
-                          ...styles.buttonSecondary,
-                          fontSize: 12,
-                          padding: '6px 12px',
-                          ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
-                        }}
-                      >
-                        1 Month
-                      </button>
-                      <button
-                        onClick={() => handleQuickDateRange(365)}
-                        disabled={applying || selecting}
-                        style={{
-                          ...styles.buttonSecondary,
-                          fontSize: 12,
-                          padding: '6px 12px',
-                          ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
-                        }}
-                      >
-                        1 Year
-                      </button>
-                    </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                      <div>
-                        <label style={{ fontSize: 12, color: '#718096', display: 'block', marginBottom: 4 }}>Start</label>
-                        <input
-                          type="date"
-                          value={dateStartValue}
-                          min={dateMinValue || undefined}
-                          max={dateMaxValue || undefined}
-                          onChange={(e) => handleDateInputChange('start', e.target.value)}
-                          disabled={applying || selecting || useQuickDateRange}
-                          style={{
-                            ...styles.select,
-                            ...(useQuickDateRange ? { opacity: 0.6, cursor: 'not-allowed' } : {})
-                          }}
-                        />
-                      </div>
-                      <div>
-                        <label style={{ fontSize: 12, color: '#718096', display: 'block', marginBottom: 4 }}>End</label>
-                        <input
-                          type="date"
-                          value={dateEndValue}
-                          min={dateMinValue || undefined}
-                          max={dateMaxValue || undefined}
-                          onChange={(e) => handleDateInputChange('end', e.target.value)}
-                          disabled={applying || selecting || useQuickDateRange}
-                          style={{
-                            ...styles.select,
-                            ...(useQuickDateRange ? { opacity: 0.6, cursor: 'not-allowed' } : {})
-                          }}
-                        />
-                      </div>
-                    </div>
-                    {rangeSummaryStart && rangeSummaryEnd && (
-                      <div style={{ fontSize: 12, color: '#718096', marginTop: 8 }}>
-                        Selected: <strong>{rangeSummaryStart}</strong> to <strong>{rangeSummaryEnd}</strong>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                <button
-                  onClick={applyKpi}
-                  disabled={!canApplyKpi || applying || selecting}
-                  style={{
-                    ...styles.button,
-                    width: '100%',
-                    padding: '10px 16px',
-                    fontSize: 15,
-                    ...((!canApplyKpi || applying || selecting) ? { opacity: 0.5, cursor: 'not-allowed' } : {})
-                  }}
-                >
-                  {applying ? '⏳ Applying...' : '✓ Apply KPI Analysis'}
-                </button>
-              </div>
-            )}
-          </div>
-
-          {legendBreaks.length > 0 && legendExpression && legendTitle && (
-            <div style={styles.card}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h4 style={{ ...styles.cardTitle, marginBottom: 0 }}>Legend: {legendTitle}</h4>
-                <button
-                  onClick={() => setLegendExpanded(!legendExpanded)}
-                  style={styles.buttonSecondary}
-                >
-                  {legendExpanded ? '▲ Collapse' : '▼ Expand'}
-                </button>
-              </div>
-              {legendExpanded && (
-                <div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 240, overflowY: 'auto', marginBottom: 12 }}>
-                    {legendBreaks.map((legendBreak: LegendBreak, index: number) => (
-                      <div
-                        key={`legend-${index}`}
-                        style={{
-                          display: 'grid',
-                          gridTemplateColumns: '40px 1fr 1fr',
-                          gap: 8,
-                          alignItems: 'center',
-                          padding: 8,
-                          border: '1px solid #e2e8f0',
-                          borderRadius: 6,
-                          background: '#fafafa'
-                        }}
-                      >
-                        <input
-                          type="color"
-                          value={legendBreak.color}
-                          onChange={(e) => handleLegendBreakChange(index, 'color', e.target.value)}
-                          style={{ width: 36, height: 36, border: 'none', borderRadius: 4, cursor: 'pointer' }}
-                        />
-                        <input
-                          type="number"
-                          step="any"
-                          value={legendBreak.minValue}
-                          onChange={(e) => handleLegendBreakChange(index, 'minValue', e.target.value)}
-                          style={{ ...styles.select, width: '100%' }}
-                        />
-                        <input
-                          type="number"
-                          step="any"
-                          value={legendBreak.maxValue}
-                          onChange={(e) => handleLegendBreakChange(index, 'maxValue', e.target.value)}
-                          style={{ ...styles.select, width: '100%' }}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    onClick={applyLegendUpdates}
-                    disabled={applying || selecting}
-                    style={{
-                      ...styles.button,
-                      ...(applying || selecting ? { opacity: 0.5, cursor: 'not-allowed' } : {})
-                    }}
-                  >
-                    Update Legend
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {hasBaseKpiData && (
-            <div style={styles.card}>
-              <h4 style={styles.cardTitle}>3. Interactive KPI Graphs</h4>
-              <button
-                onClick={() => setChartOpen(!isChartOpen)}
-                style={styles.button}
-              >
-                {isChartOpen ? '▼ Hide Graphs' : '▶ Show Graphs'}
-              </button>
-
-              {isChartOpen && (
-                <div style={{ marginTop: 16 }}>
-                  {cellColorMap.size > 0 && (
-                    <div style={{ marginBottom: 16 }}>
-                      <label style={{ fontSize: 13, fontWeight: 500, color: '#4a5568', display: 'block', marginBottom: 8 }}>
-                        Filter by Cell
-                      </label>
-                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                        {Array.from(cellColorMap.keys()).map(cellKey => {
-                          const isSelected = selectedCellKeys.includes(cellKey);
-                          const cellColor = cellColorMap.get(cellKey) || '#4a5568';
-                          const cellLabel = kpiSeries.find(s => s.key === cellKey)?.label || cellKey;
-                          return (
-                            <button
-                              key={cellKey}
-                              onClick={() => toggleCellSelection(cellKey)}
-                              style={{
-                                padding: '6px 12px',
-                                fontSize: 12,
-                                borderRadius: 6,
-                                border: `2px solid ${isSelected ? cellColor : '#cbd5e0'}`,
-                                background: isSelected ? cellColor : '#ffffff',
-                                color: isSelected ? '#ffffff' : '#4a5568',
-                                cursor: 'pointer',
-                                fontWeight: isSelected ? 600 : 400,
-                                transition: 'all 0.2s',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 6
-                              }}
-                            >
-                              <span
-                                style={{
-                                  width: 12,
-                                  height: 12,
-                                  borderRadius: 2,
-                                  background: cellColor,
-                                  border: '1px solid rgba(255,255,255,0.3)'
-                                }}
-                              />
-                              {cellLabel}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <p style={{ fontSize: 12, color: '#718096', marginTop: 8 }}>
-                        {selectedCellKeys.length === 0 ? 'Showing all cells' : `Showing ${selectedCellKeys.length} cell(s)`}
-                      </p>
-                    </div>
-                  )}
-
-                  <div ref={chartContainerRef} style={{ width: '100%' }}>
-                    {Array.from(kpiTimeSeriesByField.entries()).map(([kpiField, seriesData]) => (
-                      <div key={kpiField} style={{ marginBottom: 24 }}>
-                        <h5 style={{ 
-                          fontSize: 14, 
-                          fontWeight: 600, 
-                          color: '#2d3748', 
-                          marginBottom: 12,
-                          marginTop: 0 
-                        }}>
-                          {kpiField}
-                        </h5>
-                        {renderChart(kpiField, seriesData)}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+      <div ref={trackRef} style={{ position: 'relative', height: 36, userSelect: 'none' }}>
+        {/* Track */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 16,
+            left: 0,
+            right: 0,
+            height: 4,
+            background: '#ddd',
+            borderRadius: 2
+          }}
+        />
+        {/* Selected range */}
+        <div
+          style={{
+            position: 'absolute',
+            top: 16,
+            left: `${minPercent}%`,
+            width: `${Math.max(0, maxPercent - minPercent)}%`,
+            height: 4,
+            background: '#0079c1',
+            borderRadius: 2
+          }}
+        />
+        {/* Min thumb */}
+        <div
+          onPointerDown={handlePointerDown('min')}
+          onPointerMove={handlePointerMove('min')}
+          onPointerUp={handlePointerUp('min')}
+          onPointerCancel={handlePointerUp('min')}
+          style={{
+            position: 'absolute',
+            top: 8,
+            left: `calc(${minPercent}% - 8px)`,
+            width: 16,
+            height: 16,
+            background: '#fff',
+            border: '2px solid #0079c1',
+            borderRadius: '50%',
+            cursor: 'pointer',
+            boxShadow: '0 0 2px rgba(0,0,0,0.4)',
+            zIndex: 2
+          }}
+          title="Min"
+        />
+        {/* Max thumb */}
+        <div
+          onPointerDown={handlePointerDown('max')}
+          onPointerMove={handlePointerMove('max')}
+          onPointerUp={handlePointerUp('max')}
+          onPointerCancel={handlePointerUp('max')}
+          style={{
+            position: 'absolute',
+            top: 8,
+            left: `calc(${maxPercent}% - 8px)`,
+            width: 16,
+            height: 16,
+            background: '#fff',
+            border: '2px solid #0079c1',
+            borderRadius: '50%',
+            cursor: 'pointer',
+            boxShadow: '0 0 2px rgba(0,0,0,0.4)',
+            zIndex: 2
+          }}
+          title="Max"
+        />
+      </div>
     </div>
   );
 };
 
-export default Widget;
+/** Filtre tipi */
+interface FilterCondition {
+  id: string;
+  field: string;
+  min: number;
+  max: number;
+}
+
+interface State {
+  conditions: FilterCondition[];
+  selectedField: string;
+  tempMin: number;
+  tempMax: number;
+  activeWhere: string | null;
+  usidInput: string;
+  activeUsid: string[] | null;
+  usidError: string | null;
+}
+
+const FIELD_RANGES: Record<string, { min: number; max: number; def: [number, number] }> = {
+  RSRP: { min: -140, max: -50, def: [-140, -50] },
+  RSRQ: { min: -25, max: 0, def: [-25, 0] },
+  SNR: { min: -20, max: 35, def: [-10, 35] }
+};
+
+interface LegendSegment {
+  from?: number;
+  to?: number;
+  color: string;
+  label: string;
+}
+
+const KPI_LEGENDS: Record<string, LegendSegment[]> = {
+  RSRP: [
+    { from: FIELD_RANGES.RSRP.min, to: -118, color: '#ff00ff', label: '< -118' },
+    { from: -118, to: -115, color: '#ff0000', label: '-118 to -115' },
+    { from: -115, to: -110, color: '#ff8c00', label: '-115 to -110' },
+    { from: -110, to: -105, color: '#ffd700', label: '-110 to -105' },
+    { from: -105, to: -95, color: '#40e0d0', label: '-105 to -95' },
+  { from: -95, to: -85, color: '#0000ff', label: '-95 to -85' },
+  { from: -85, to: FIELD_RANGES.RSRP.max, color: '#008000', label: '>= -85' }
+  ],
+  RSRQ: [
+    { from: FIELD_RANGES.RSRQ.min, to: -16, color: '#ff0000', label: '< -16' },
+    { from: -16, to: -10, color: '#ffd700', label: '-16 to -10' },
+  { from: -10, to: -5, color: '#0000ff', label: '-10 to -5' },
+  { from: -5, to: FIELD_RANGES.RSRQ.max, color: '#008000', label: '>= -5' }
+  ],
+  SNR: [
+    { from: FIELD_RANGES.SNR.min, to: -10, color: '#ff0000', label: '< -10' },
+    { from: -10, to: -5, color: '#ff8c00', label: '-10 to -5' },
+    { from: -5, to: 0, color: '#ffd700', label: '-5 to 0' },
+    { from: 0, to: 5, color: '#40e0d0', label: '0 to 5' },
+    { from: 5, to: 10, color: '#0000ff', label: '5 to 10' },
+  { from: 10, to: FIELD_RANGES.SNR.max, color: '#008000', label: '>= 10' }
+  ]
+};
+
+export default class Widget extends React.PureComponent<AllWidgetProps<any>, State> {
+  state: State;
+  private mapView: JimuMapView = null;
+  private viewHandles: any[] = [];
+  private layerHandles: any[] = [];
+  private sublayerHandles: any[] = [];
+
+  constructor(props: AllWidgetProps<any>) {
+    super(props);
+    this.state = {
+      conditions: [],
+      selectedField: 'RSRP',
+      tempMin: FIELD_RANGES.RSRP.def[0],
+      tempMax: FIELD_RANGES.RSRP.def[1],
+      activeWhere: null,
+      usidInput: '',
+  activeUsid: null,
+      usidError: null
+    };
+  }
+
+  componentWillUnmount(): void {
+    this.removeAllHandles();
+  }
+
+  removeAllHandles = () => {
+    const remove = (h: any) => { try { h?.remove?.(); } catch {} };
+    this.viewHandles.forEach(remove);
+    this.layerHandles.forEach(remove);
+    this.sublayerHandles.forEach(remove);
+    this.viewHandles = [];
+    this.layerHandles = [];
+    this.sublayerHandles = [];
+  };
+
+  onActiveViewChange = (jimuMapView: JimuMapView) => {
+    if (!jimuMapView) return;
+    this.mapView = jimuMapView;
+    this.removeAllHandles();
+
+    const v: any = this.mapView.view;
+    if (!v) return;
+
+    // Yeni layerView oluştuğunda (zoom/scale ile görünür olduğunda) tekrar uygula
+    const hCreate = v.on('layerview-create', () => {
+      if (this.state.activeWhere) this.applyActiveWhereToAll();
+    });
+
+    // Layerview silinirse/yeniden yaratılırsa tekrar uygula
+    const hDestroy = v.on('layerview-destroy', () => {
+      if (this.state.activeWhere) this.applyActiveWhereToAll();
+    });
+
+    // Navigasyon bittiğinde (zoom/pan sonrası) tekrar uygula
+    const hStationary = v.watch('stationary', (st: boolean) => {
+      if (st && this.state.activeWhere) this.applyActiveWhereToAll();
+    });
+
+    // Katman listesinde değişiklik olursa
+    const hLayersChange = v.map?.allLayers?.on?.('change', () => {
+      if (this.state.activeWhere) this.applyActiveWhereToAll();
+    });
+
+    const popupHandles: any[] = [];
+    const popup = v.popup;
+    if (popup?.watch) {
+      const hPopupVisible = popup.watch('visible', () => {
+        if (this.state.activeWhere) {
+          setTimeout(() => this.applyActiveWhereToAll(), 0);
+        }
+      });
+      if (hPopupVisible) popupHandles.push(hPopupVisible);
+
+      const hPopupSelected = popup.watch('selectedFeature', () => {
+        if (this.state.activeWhere) {
+          setTimeout(() => this.applyActiveWhereToAll(), 0);
+        }
+      });
+      if (hPopupSelected) popupHandles.push(hPopupSelected);
+    }
+
+    this.viewHandles.push(hCreate, hDestroy, hStationary, hLayersChange, ...popupHandles);
+  };
+
+  onFieldChange = (e: any) => {
+    const field = e.target.value;
+    const r = FIELD_RANGES[field];
+    this.setState({
+      selectedField: field,
+      tempMin: r.def[0],
+      tempMax: r.def[1]
+    });
+  };
+
+  onSliderChange = (newMin: number, newMax: number) => {
+    // Slider sürüklenirken sadece geçici değerler güncellenir
+    this.setState({ tempMin: newMin, tempMax: newMax });
+  };
+
+  addCondition = () => {
+    const { selectedField, tempMin, tempMax, conditions } = this.state;
+    const i = conditions.findIndex((c: FilterCondition) => c.field === selectedField);
+
+    let next: FilterCondition[];
+    if (i >= 0) {
+      next = [...conditions];
+      next[i] = { ...next[i], min: tempMin, max: tempMax };
+    } else {
+      next = [...conditions, { id: Date.now().toString(), field: selectedField, min: tempMin, max: tempMax }];
+    }
+
+    this.setState({ conditions: next }, () => this.applyFromConditions());
+  };
+
+  removeCondition = (id: string) => {
+    const next = this.state.conditions.filter((c: FilterCondition) => c.id !== id);
+    this.setState({ conditions: next }, () => this.applyFromConditions());
+  };
+
+  buildWhere = (conds: FilterCondition[], usids?: string[] | null) => {
+    const parts: string[] = [];
+
+    if (conds?.length) {
+      conds.forEach((c: FilterCondition) => {
+        parts.push(`${c.field} >= ${c.min} AND ${c.field} <= ${c.max}`);
+      });
+    }
+
+    if (Array.isArray(usids) && usids.length) {
+      const clauses = usids
+        .map((value: string) => {
+          const trimmed = value.trim();
+          if (!trimmed) return null;
+          const isNumeric = /^-?\d+(?:\.\d+)?$/.test(trimmed);
+          const sanitized = trimmed.replace(/'/g, "''");
+          return isNumeric ? `USID = ${sanitized}` : `USID = '${sanitized}'`;
+        })
+        .filter(Boolean) as string[];
+
+      if (clauses.length === 1) {
+        parts.push(clauses[0]);
+      } else if (clauses.length > 1) {
+        parts.push(`(${clauses.join(' OR ')})`);
+      }
+    }
+
+    return parts.length ? parts.join(' AND ') : null;
+  };
+
+  applyFromConditions = () => {
+    const { conditions, activeUsid } = this.state;
+    const where = this.buildWhere(conditions, activeUsid);
+
+    if (!where) {
+      this.setState({ activeWhere: null }, () => this.clearLayerDefinitions());
+      return;
+    }
+
+    this.setState({ activeWhere: where }, () => this.applyActiveWhereToAll());
+  };
+
+  onUsidInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    this.setState({ usidInput: e.target.value, usidError: null });
+  };
+
+  onUsidKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this.applyUsidFilter();
+    }
+  };
+
+  applyUsidFilter = () => {
+    const raw = (this.state.usidInput || '').trim();
+
+    if (!raw) {
+      this.setState({ activeUsid: null, usidError: null }, () => this.applyFromConditions());
+      return;
+    }
+
+    const entries = raw
+      .split(',')
+      .map(item => item.trim())
+      .filter(Boolean);
+
+    if (!entries.length) {
+      this.setState({ activeUsid: null, usidError: null }, () => this.applyFromConditions());
+      return;
+    }
+
+    this.setState({ activeUsid: entries, usidError: null }, () => this.applyFromConditions());
+  };
+
+  clearUsid = () => {
+    this.setState({ usidInput: '', activeUsid: null, usidError: null }, () => this.applyFromConditions());
+  };
+
+  clearLayerDefinitions = () => {
+    if (!this.mapView) return;
+
+    const view: any = this.mapView.view;
+    const layers = view?.map?.allLayers;
+  if (!layers) return;
+
+    layers.forEach((layer: any) => {
+      if (!layer) return;
+
+      if (layer.type === 'feature') {
+        try {
+          if (typeof layer.definitionExpression !== 'undefined') {
+            layer.definitionExpression = null;
+          }
+        } catch {}
+
+        try {
+          view.whenLayerView(layer).then((lv: any) => {
+            try { if (lv) lv.filter = null; } catch {}
+          }).catch(() => {});
+        } catch {}
+      }
+
+      if (layer.type === 'map-image' && layer.allSublayers) {
+        layer.allSublayers.forEach((sublayer: any) => {
+          try {
+            if (typeof sublayer.definitionExpression !== 'undefined') {
+              sublayer.definitionExpression = null;
+            }
+          } catch {}
+        });
+
+        try { layer.refresh && layer.refresh(); } catch {}
+      }
+    });
+  };
+
+  renderLegend = (field: string): React.ReactNode => {
+    const segments = KPI_LEGENDS[field];
+    if (!segments?.length) return null;
+
+    const info = FIELD_RANGES[field];
+    if (!info) return null;
+
+    const total = info.max - info.min;
+    if (total <= 0) return null;
+
+    const toPercent = (start: number, end: number) => {
+      const clampedStart = Math.max(start, info.min);
+      const clampedEnd = Math.min(end, info.max);
+      const span = clampedEnd - clampedStart;
+      return Math.max((span / total) * 100, 0);
+    };
+
+    return (
+      <div style={{ marginTop: 12 }}>
+        <div
+          style={{
+            display: 'flex',
+            height: 8,
+            borderRadius: 4,
+            overflow: 'hidden',
+            boxShadow: '0 0 2px rgba(0,0,0,0.2)'
+          }}
+        >
+          {segments.map((segment, idx) => {
+            const widthPercent = toPercent(segment.from ?? info.min, segment.to ?? info.max);
+            if (widthPercent <= 0) {
+              return null;
+            }
+
+            return (
+              <div
+                key={`${field}-band-${idx}`}
+                style={{
+                  width: `${widthPercent}%`,
+                  backgroundColor: segment.color
+                }}
+                title={segment.label}
+              />
+            );
+          })}
+        </div>
+        <div style={{ display: 'flex', marginTop: 4, fontSize: 10, color: '#333' }}>
+          {segments.map((segment, idx) => {
+            const widthPercent = toPercent(segment.from ?? info.min, segment.to ?? info.max);
+            if (widthPercent <= 0) {
+              return null;
+            }
+
+            return (
+              <div
+                key={`${field}-label-${idx}`}
+                style={{
+                  width: `${widthPercent}%`,
+                  textAlign: 'center',
+                  padding: '2px 0',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis'
+                }}
+                title={segment.label}
+              >
+                {segment.label}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  isTargetFeatureLayer = (layer: any): boolean => {
+    const fields = layer?.fields || [];
+    return fields.some((f: any) => {
+      const n = (f?.name || '').toUpperCase();
+      return n.includes('RSRP') || n.includes('RSRQ') || n.includes('SNR');
+    });
+  };
+
+  isTargetSublayer = (sublayer: any): boolean => {
+    const title = (sublayer?.title || '').toUpperCase();
+    return title.includes('RSRP') || title.includes('RSRQ') || title.includes('SNR');
+  };
+
+  applyActiveWhereToAll = () => {
+    const where = this.state.activeWhere;
+    if (!this.mapView || !where) return;
+    const view: any = this.mapView.view;
+    const layers = view?.map?.allLayers;
+    if (!layers) return;
+
+    // Mevcut sublayer watcher'larını temizle (yeniden eklenecek)
+    this.layerHandles.forEach(h => { try { h?.remove?.(); } catch {} });
+    this.layerHandles = [];
+    this.sublayerHandles.forEach(h => { try { h?.remove?.(); } catch {} });
+    this.sublayerHandles = [];
+
+    const activeWhereSnapshot = where;
+
+    layers.forEach((layer: any) => {
+      if (!layer) return;
+
+      // FeatureLayer
+      if (layer.type === 'feature') {
+        if (this.isTargetFeatureLayer(layer)) {
+          try { layer.definitionExpression = where; } catch {}
+          if (typeof layer.watch === 'function') {
+            const hLayerDef = layer.watch('definitionExpression', (value: string) => {
+              if (this.state.activeWhere !== activeWhereSnapshot) return;
+              if (value !== activeWhereSnapshot) {
+                try { layer.definitionExpression = activeWhereSnapshot; } catch {}
+              }
+            });
+            if (hLayerDef) this.layerHandles.push(hLayerDef);
+          }
+          try {
+            view.whenLayerView(layer).then((lv: any) => {
+              try { lv.filter = { where: activeWhereSnapshot }; } catch {}
+              if (typeof lv?.watch === 'function') {
+                const hLayerFilter = lv.watch('filter', (filterValue: any) => {
+                  if (this.state.activeWhere !== activeWhereSnapshot) return;
+                  const currentWhere = filterValue?.where;
+                  if (!currentWhere || currentWhere !== activeWhereSnapshot) {
+                    try { lv.filter = { where: activeWhereSnapshot }; } catch {}
+                  }
+                });
+                if (hLayerFilter) this.layerHandles.push(hLayerFilter);
+              }
+            }).catch(() => {});
+          } catch {}
+        }
+      }
+
+      // MapImageLayer
+      if (layer.type === 'map-image' && layer.allSublayers) {
+        layer.allSublayers.forEach((sublayer: any) => {
+          if (!this.isTargetSublayer(sublayer)) return;
+          try {
+            if (typeof sublayer.definitionExpression !== 'undefined') {
+              sublayer.definitionExpression = where;
+            }
+          } catch {}
+
+          if (typeof sublayer.watch === 'function') {
+            const hSubDef = sublayer.watch('definitionExpression', (value: string) => {
+              if (this.state.activeWhere !== activeWhereSnapshot) return;
+              if (value !== activeWhereSnapshot) {
+                try {
+                  if (typeof sublayer.definitionExpression !== 'undefined') {
+                    sublayer.definitionExpression = activeWhereSnapshot;
+                  }
+                } catch {}
+              }
+            });
+            if (hSubDef) this.sublayerHandles.push(hSubDef);
+          }
+
+          // Sublayer görünürlük/scale etkilenirse yeniden uygula
+          const hVis = sublayer.watch && sublayer.watch('visible', () => {
+            if (this.state.activeWhere !== activeWhereSnapshot) return;
+            try {
+              if (typeof sublayer.definitionExpression !== 'undefined') {
+                sublayer.definitionExpression = activeWhereSnapshot;
+              }
+            } catch {}
+          });
+          const hMinScale = sublayer.watch && sublayer.watch('minScale', () => {
+            if (this.state.activeWhere !== activeWhereSnapshot) return;
+            try {
+              if (typeof sublayer.definitionExpression !== 'undefined') {
+                sublayer.definitionExpression = activeWhereSnapshot;
+              }
+            } catch {}
+          });
+          const hMaxScale = sublayer.watch && sublayer.watch('maxScale', () => {
+            if (this.state.activeWhere !== activeWhereSnapshot) return;
+            try {
+              if (typeof sublayer.definitionExpression !== 'undefined') {
+                sublayer.definitionExpression = activeWhereSnapshot;
+              }
+            } catch {}
+          });
+
+          [hVis, hMinScale, hMaxScale].forEach(h => { if (h) this.sublayerHandles.push(h); });
+
+        });
+
+        try { layer.refresh && layer.refresh(); } catch {}
+      }
+    });
+  };
+
+  clearFilter = () => {
+    if (!this.mapView) return;
+    this.clearLayerDefinitions();
+    this.removeAllHandles();
+
+    const currentField = FIELD_RANGES[this.state.selectedField] || FIELD_RANGES.RSRP;
+
+    this.setState({
+      activeWhere: null,
+      conditions: [],
+      activeUsid: null,
+      usidInput: '',
+      usidError: null,
+      tempMin: currentField.def[0],
+      tempMax: currentField.def[1]
+    });
+  };
+
+  render() {
+    const { conditions, selectedField, tempMin, tempMax, activeWhere, usidInput, activeUsid, usidError } = this.state;
+    const current = FIELD_RANGES[selectedField];
+
+    return (
+      <div style={{ padding: '15px', width: '100%', height: '100%', backgroundColor: '#fff', overflow: 'auto' }}>
+        <JimuMapViewComponent
+          useMapWidgetId={this.props.useMapWidgetIds?.[0]}
+          onActiveViewChange={this.onActiveViewChange}
+        />
+
+        <div>
+          <h3 style={{ margin: '0 0 15px 0', fontSize: 18, fontWeight: 'bold' }}>
+            IQI Custom Filter
+          </h3>
+
+          {/* Alan Seçimi */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', marginBottom: 5, fontSize: 14, fontWeight: 600 }}>
+              KPI Selection : 
+            </label>
+            <select
+              value={selectedField}
+              onChange={this.onFieldChange}
+              style={{ width: '100%', padding: 8, fontSize: 14, border: '1px solid #ccc', borderRadius: 4 }}
+            >
+                <option value="RSRP">RSRP</option>
+                <option value="RSRQ">RSRQ</option>
+                <option value="SNR">SNR</option>
+            </select>
+          </div>
+
+          {/* İki uçlu Slider */}
+          <DualRangeSlider
+            min={current.min}
+            max={current.max}
+            step={1}
+            minValue={tempMin}
+            maxValue={tempMax}
+            onChange={this.onSliderChange}
+          />
+
+          {this.renderLegend(selectedField)}
+
+          {/* USID Arama */}
+          <div style={{ marginBottom: 16 }}>
+            <label style={{ display: 'block', marginBottom: 5, fontSize: 14, fontWeight: 600 }}>
+              USID Filter:
+            </label>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input
+                type="text"
+                value={usidInput}
+                onChange={this.onUsidInputChange}
+                onKeyDown={this.onUsidKeyDown}
+                placeholder="Enter USID or comma-separated USIDs"
+                style={{ flex: 1, padding: 8, fontSize: 10, border: '1px solid #ccc', borderRadius: 4 }}
+              />
+              <button
+                onClick={this.applyUsidFilter}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#28a745',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 4,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: 'pointer'
+                }}
+              >
+                Search
+              </button>
+              <button
+                onClick={this.clearUsid}
+                disabled={!usidInput && !(activeUsid && activeUsid.length)}
+                style={{
+                  padding: '8px 12px',
+                  backgroundColor: usidInput || (activeUsid && activeUsid.length) ? '#6c757d' : '#ccc',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 4,
+                  fontSize: 14,
+                  fontWeight: 600,
+                  cursor: usidInput || (activeUsid && activeUsid.length) ? 'pointer' : 'not-allowed'
+                }}
+              >
+                Reset
+              </button>
+            </div>
+            {activeUsid && activeUsid.length > 0 && (
+              <div style={{ marginTop: 6, fontSize: 12, color: '#0079c1' }}>
+                USID Filter applied to :   <strong>{activeUsid.join(', ')}</strong>
+              </div>
+            )}
+            {usidError && (
+              <div style={{ marginTop: 6, fontSize: 12, color: '#dc3545' }}>
+                {usidError}
+              </div>
+            )}
+          </div>
+
+          {/* Koşul Ekle (otomatik uygular) */}
+          <button
+            onClick={this.addCondition}
+            style={{
+              width: '100%',
+              padding: 10,
+              backgroundColor: '#0079c1',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 4,
+              fontSize: 14,
+              fontWeight: 600,
+              cursor: 'pointer',
+              marginBottom: 16
+            }}
+          >
+            + Add Condition
+          </button>
+
+          {/* Aktif Koşullar */}
+          {conditions.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>Active Conditions:</h4>
+              {conditions.map((cond, idx) => (
+                <div
+                  key={cond.id}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '8px 10px',
+                    backgroundColor: '#f5f5f5',
+                    borderRadius: 4,
+                    marginBottom: 8,
+                    fontSize: 13
+                  }}
+                >
+                  <span>
+                    {idx > 0 && <strong>AND </strong>}
+                    <strong>{cond.field}</strong>: {cond.min} → {cond.max}
+                  </span>
+                  <button
+                    onClick={() => this.removeCondition(cond.id)}
+                    style={{
+                      padding: '4px 8px',
+                      backgroundColor: '#d9534f',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: 3,
+                      fontSize: 12,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Temizle */}
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              onClick={this.clearFilter}
+              disabled={!activeWhere}
+              style={{
+                flex: 1,
+                padding: 12,
+                backgroundColor: activeWhere ? '#dc3545' : '#ccc',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 4,
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: activeWhere ? 'pointer' : 'not-allowed'
+              }}
+            >
+              ✗ Clear
+            </button>
+          </div>
+
+          {/* Bilgi */}
+          <div
+            style={{
+              marginTop: 20,
+              padding: 10,
+              backgroundColor: '#e7f3ff',
+              borderLeft: '4px solid #0079c1',
+              fontSize: 12,
+              borderRadius: 4
+            }}
+          >
+            CQX Quality Thresholds<br />
+            Weighted acceptable coverage (RSRP greater than -115dBm).<br />
+            and poor signal quality (scaled RSRQ &lt;-18 dB) 4G and 5G devices on 4G network
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
