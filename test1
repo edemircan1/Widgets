@@ -1,22 +1,23 @@
-.smart-filter-widget {
-background-color: #ffffff;
-font-family: “Avenir Next”, Arial, sans-serif;
+// src/settings/setting.tsx
+export default class Setting extends React.PureComponent {
+  render() {
+    return (
+      <div>
+        <SettingSection title="Map Ayarları">
+          <MapWidgetSelector 
+            useMapWidgetIds={this.props.useMapWidgetIds}
+            onSelect={this.onMapWidgetSelected}
+          />
+        </SettingSection>
+      </div>
+    );
+  }
 }
 
-.smart-filter-widget .jimu-widget-component {
-height: 100%;
-}
 
-/* Chat mesajları scroll */
-.smart-filter-widget::-webkit-scrollbar {
-width: 6px;
-}
+fff
 
-.smart-filter-widget::-webkit-scrollbar-thumb {
-background-color: rgba(0, 0, 0, 0.2);
-border-radius: 3px;
-}
 
-.smart-filter-widget::-webkit-scrollbar-track {
-background-color: rgba(0, 0, 0, 0.05);
+{
+  "useMapWidgetIds": []
 }
