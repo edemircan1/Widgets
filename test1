@@ -1,1220 +1,718 @@
 /** @jsx jsx */
-import { React, jsx, AllWidgetProps } from 'jimu-core';
-import { JimuMapView, JimuMapViewComponent } from 'jimu-arcgis';
-
-/**
- * Professional dual-thumb slider with interactive color scale
- */
-type DualRangeSliderProps = {
-  min: number;
-  max: number;
-  step?: number;
-  minValue: number;
-  maxValue: number;
-  onChange: (newMin: number, newMax: number) => void;
-  field: string;
-  legendSegments: LegendSegment[];
-};
-
-const DualRangeSlider: React.FC<DualRangeSliderProps> = ({
-  min,
-  max,
-  step = 1,
-  minValue,
-  maxValue,
-  onChange,
-  field,
-  legendSegments
-}) => {
-  const trackRef = React.useRef<HTMLDivElement>(null);
-  const activeRef = React.useRef<null | { thumb: 'min' | 'max'; pointerId: number }>(null);
-  const [hoveredSegment, setHoveredSegment] = React.useState<number | null>(null);
-
-  const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-  const valueToPercent = (v: number) => ((v - min) * 100) / (max - min);
-  const snap = (v: number) => Math.round(v / step) * step;
-
-  const handlePointerDown = (thumb: 'min' | 'max') => (e: React.PointerEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    activeRef.current = { thumb, pointerId: e.pointerId };
-    try {
-      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
-    } catch {}
-  };
-
-  const handlePointerMove = (thumb: 'min' | 'max') => (e: React.PointerEvent) => {
-    const active = activeRef.current;
-    if (!active || active.thumb !== thumb || active.pointerId !== e.pointerId || !trackRef.current) {
-      return;
-    }
-
-    const rect = trackRef.current.getBoundingClientRect();
-    const ratio = clamp((e.clientX - rect.left) / rect.width, 0, 1);
-    let val = snap(min + ratio * (max - min));
-    val = clamp(val, min, max);
-
-    if (thumb === 'min') {
-      const newMin = Math.min(val, maxValue);
-      if (newMin !== minValue) {
-        onChange(newMin, maxValue);
-      }
-    } else {
-      const newMax = Math.max(val, minValue);
-      if (newMax !== maxValue) {
-        onChange(minValue, newMax);
-      }
-    }
-  };
-
-  const handlePointerUp = (thumb: 'min' | 'max') => (e: React.PointerEvent) => {
-    const active = activeRef.current;
-    if (active && active.thumb === thumb && active.pointerId === e.pointerId) {
-      activeRef.current = null;
-      try {
-        (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
-      } catch {}
-    }
-  };
-
-  const minPercent = valueToPercent(minValue);
-  const maxPercent = valueToPercent(maxValue);
-
-  const total = max - min;
-  const toPercent = (start: number, end: number) => {
-    const clampedStart = Math.max(start, min);
-    const clampedEnd = Math.min(end, max);
-    const span = clampedEnd - clampedStart;
-    return Math.max((span / total) * 100, 0);
-  };
-
-  const getSegmentOpacity = (segmentIndex: number, segmentFrom: number, segmentTo: number): number => {
-    const segStart = segmentFrom ?? min;
-    const segEnd = segmentTo ?? max;
-    
-    const isInRange = !(segEnd < minValue || segStart > maxValue);
-    
-    if (hoveredSegment === segmentIndex) {
-      return 1;
-    }
-    
-    return isInRange ? 0.95 : 0.3;
-  };
-
-  return (
-    <div style={{ width: '100%', padding: '8px 0', touchAction: 'none' }}>
-      {/* Value Display */}
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        marginBottom: 10,
-        padding: '0 4px'
-      }}>
-        <div style={{ 
-          display: 'flex', 
-          flexDirection: 'column',
-          alignItems: 'flex-start'
-        }}>
-          <span style={{ fontSize: 10, color: '#6c757d', fontWeight: 500, marginBottom: 1 }}>MIN</span>
-          <span style={{ 
-            fontSize: 18, 
-            fontWeight: 700, 
-            color: '#0079c1',
-            fontVariantNumeric: 'tabular-nums'
-          }}>{minValue}</span>
-        </div>
-        <div style={{ 
-          display: 'flex', 
-          flexDirection: 'column',
-          alignItems: 'flex-end'
-        }}>
-          <span style={{ fontSize: 10, color: '#6c757d', fontWeight: 500, marginBottom: 1 }}>MAX</span>
-          <span style={{ 
-            fontSize: 18, 
-            fontWeight: 700, 
-            color: '#0079c1',
-            fontVariantNumeric: 'tabular-nums'
-          }}>{maxValue}</span>
-        </div>
-      </div>
-
-      {/* Interactive Color Scale */}
-      <div style={{ marginBottom: 12 }}>
-        <div
-          style={{
-            display: 'flex',
-            height: 20,
-            borderRadius: 4,
-            overflow: 'hidden',
-            boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
-            border: '1px solid rgba(0,0,0,0.08)',
-            transition: 'all 0.2s ease'
-          }}
-        >
-          {legendSegments.map((segment, idx) => {
-            const widthPercent = toPercent(segment.from ?? min, segment.to ?? max);
-            if (widthPercent <= 0) return null;
-
-            const opacity = getSegmentOpacity(idx, segment.from ?? min, segment.to ?? max);
-
-            return (
-              <div
-                key={`${field}-band-${idx}`}
-                onMouseEnter={() => setHoveredSegment(idx)}
-                onMouseLeave={() => setHoveredSegment(null)}
-                style={{
-                  width: `${widthPercent}%`,
-                  backgroundColor: segment.color,
-                  opacity,
-                  transition: 'opacity 0.2s ease',
-                  cursor: 'pointer',
-                  position: 'relative'
-                }}
-                title={segment.label}
-              />
-            );
-          })}
-        </div>
-        
-        {hoveredSegment !== null && legendSegments[hoveredSegment] && (
-          <div style={{
-            marginTop: 6,
-            padding: '4px 10px',
-            backgroundColor: '#2c3e50',
-            color: '#fff',
-            borderRadius: 3,
-            fontSize: 11,
-            fontWeight: 500,
-            textAlign: 'center',
-            animation: 'fadeIn 0.2s ease'
-          }}>
-            {legendSegments[hoveredSegment].label}
-          </div>
-        )}
-      </div>
-
-      {/* Slider Track */}
-      <div ref={trackRef} style={{ position: 'relative', height: 32, userSelect: 'none', padding: '0 4px' }}>
-        <div
-          style={{
-            position: 'absolute',
-            top: 14,
-            left: 4,
-            right: 4,
-            height: 5,
-            background: 'linear-gradient(to right, #e9ecef, #dee2e6)',
-            borderRadius: 3,
-            boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)'
-          }}
-        />
-        
-        <div
-          style={{
-            position: 'absolute',
-            top: 14,
-            left: `calc(${minPercent}% + 4px)`,
-            width: `calc(${Math.max(0, maxPercent - minPercent)}% - 4px)`,
-            height: 5,
-            background: 'linear-gradient(135deg, #0079c1 0%, #00a8e8 100%)',
-            borderRadius: 3,
-            boxShadow: '0 1px 3px rgba(0,121,193,0.3)',
-            transition: 'all 0.1s ease'
-          }}
-        />
-        
-        <div
-          onPointerDown={handlePointerDown('min')}
-          onPointerMove={handlePointerMove('min')}
-          onPointerUp={handlePointerUp('min')}
-          onPointerCancel={handlePointerUp('min')}
-          style={{
-            position: 'absolute',
-            top: 8,
-            left: `calc(${minPercent}% - 5px)`,
-            width: 18,
-            height: 18,
-            background: 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)',
-            border: '2.5px solid #0079c1',
-            borderRadius: '50%',
-            cursor: 'grab',
-            boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
-            zIndex: 3,
-            transition: 'transform 0.1s ease',
-            transform: activeRef.current?.thumb === 'min' ? 'scale(1.2)' : 'scale(1)'
-          }}
-          title="Min"
-        />
-        
-        <div
-          onPointerDown={handlePointerDown('max')}
-          onPointerMove={handlePointerMove('max')}
-          onPointerUp={handlePointerUp('max')}
-          onPointerCancel={handlePointerUp('max')}
-          style={{
-            position: 'absolute',
-            top: 8,
-            left: `calc(${maxPercent}% - 5px)`,
-            width: 18,
-            height: 18,
-            background: 'linear-gradient(135deg, #fff 0%, #f8f9fa 100%)',
-            border: '2.5px solid #0079c1',
-            borderRadius: '50%',
-            cursor: 'grab',
-            boxShadow: '0 2px 6px rgba(0,0,0,0.2)',
-            zIndex: 3,
-            transition: 'transform 0.1s ease',
-            transform: activeRef.current?.thumb === 'max' ? 'scale(1.2)' : 'scale(1)'
-          }}
-          title="Max"
-        />
-      </div>
-    </div>
-  );
-};
-
-interface FilterCondition {
-  id: string;
-  field: string;
-  min: number;
-  max: number;
-}
+import { React, jsx, AllWidgetProps } from ‘jimu-core’;
+import { JimuMapViewComponent, JimuMapView } from ‘jimu-arcgis’;
+import { Button, TextInput, Select, Option, Label, Alert } from ‘jimu-ui’;
+import FeatureLayer from ‘esri/layers/FeatureLayer’;
+import Query from ‘esri/rest/support/Query’;
+import ‘./style.css’;
 
 interface State {
-  conditions: FilterCondition[];
-  selectedField: string;
-  tempMin: number;
-  tempMax: number;
-  activeWhere: string | null;
-  usidInput: string;
-  activeUsid: string[] | null;
-  usidError: string | null;
+message: string;
+chatHistory: ChatMessage[];
+loading: boolean;
+jimuMapView: JimuMapView;
+layerCache: LayerMetadata[];
+clarificationNeeded: boolean;
+clarificationOptions: ClarificationOption[];
+pendingQuery: any;
 }
 
-const FIELD_RANGES: Record<string, { min: number; max: number; def: [number, number] }> = {
-  RSRP: { min: -140, max: -50, def: [-140, -50] },
-  RSRQ: { min: -25, max: 0, def: [-25, 0] },
-  SNR: { min: -20, max: 35, def: [-20, 35] }
-};
-
-interface LegendSegment {
-  from?: number;
-  to?: number;
-  color: string;
-  label: string;
+interface ChatMessage {
+type: ‘user’ | ‘bot’ | ‘clarification’;
+text: string;
+timestamp: Date;
+data?: any;
 }
 
-const KPI_LEGENDS: Record<string, LegendSegment[]> = {
-  RSRP: [
-    { from: FIELD_RANGES.RSRP.min, to: -118, color: '#ff00ff', label: '< -118 dBm' },
-    { from: -118, to: -115, color: '#ff0000', label: '-118 to -115 dBm' },
-    { from: -115, to: -110, color: '#ff8c00', label: '-115 to -110 dBm' },
-    { from: -110, to: -105, color: '#ffd700', label: '-110 to -105 dBm' },
-    { from: -105, to: -95, color: '#40e0d0', label: '-105 to -95 dBm' },
-    { from: -95, to: -85, color: '#0000ff', label: '-95 to -85 dBm' },
-    { from: -85, to: FIELD_RANGES.RSRP.max, color: '#008000', label: '≥ -85 dBm' }
-  ],
-  RSRQ: [
-    { from: FIELD_RANGES.RSRQ.min, to: -16, color: '#ff0000', label: '< -16 dB' },
-    { from: -16, to: -10, color: '#ffd700', label: '-16 to -10 dB' },
-    { from: -10, to: -5, color: '#0000ff', label: '-10 to -5 dB' },
-    { from: -5, to: FIELD_RANGES.RSRQ.max, color: '#008000', label: '≥ -5 dB' }
-  ],
-  SNR: [
-    { from: FIELD_RANGES.SNR.min, to: -10, color: '#ff0000', label: '< -10 dB' },
-    { from: -10, to: -5, color: '#ff8c00', label: '-10 to -5 dB' },
-    { from: -5, to: 0, color: '#ffd700', label: '-5 to 0 dB' },
-    { from: 0, to: 5, color: '#40e0d0', label: '0 to 5 dB' },
-    { from: 5, to: 10, color: '#0000ff', label: '5 to 10 dB' },
-    { from: 10, to: FIELD_RANGES.SNR.max, color: '#008000', label: '≥ 10 dB' }
-  ]
+interface LayerMetadata {
+id: string;
+title: string;
+url: string;
+layer: FeatureLayer;
+fields: FieldMetadata[];
+}
+
+interface FieldMetadata {
+name: string;
+alias: string;
+type: string;
+nameTokens: string[];
+}
+
+interface ClarificationOption {
+label: string;
+value: string;
+field?: string;
+}
+
+export default class SmartFilterWidget extends React.PureComponent<AllWidgetProps<any>, State> {
+constructor(props) {
+super(props);
+this.state = {
+message: ‘’,
+chatHistory: [],
+loading: false,
+jimuMapView: null,
+layerCache: [],
+clarificationNeeded: false,
+clarificationOptions: [],
+pendingQuery: null
+};
+}
+
+// Map view yüklendiğinde çağrılır
+onActiveViewChange = async (jimuMapView: JimuMapView) => {
+if (!jimuMapView) return;
+
+```
+this.setState({ jimuMapView, loading: true });
+
+// Layer'ları keşfet
+await this.discoverLayers(jimuMapView);
+
+this.addBotMessage('Merhaba! Map bağlantısı kuruldu. Tüm layer\'lar tarandı. Ne aramak istersiniz?');
+this.setState({ loading: false });
+```
+
 };
 
-export default class Widget extends React.PureComponent<AllWidgetProps<any>, State> {
-  state: State;
-  private mapView: JimuMapView = null;
-  private viewHandles: any[] = [];
-  private layerHandles: any[] = [];
-  private sublayerHandles: any[] = [];
+// Map’teki tüm Feature Layer’ları keşfet
+discoverLayers = async (jimuMapView: JimuMapView) => {
+const view = jimuMapView.view;
+const layerCache: LayerMetadata[] = [];
 
-  constructor(props: AllWidgetProps<any>) {
-    super(props);
-    this.state = {
-      conditions: [],
-      selectedField: 'RSRP',
-      tempMin: FIELD_RANGES.RSRP.def[0],
-      tempMax: FIELD_RANGES.RSRP.def[1],
-      activeWhere: null,
-      usidInput: '',
-      activeUsid: null,
-      usidError: null
+```
+// Map'teki tüm layer'ları tara
+view.map.allLayers.forEach((layer: any) => {
+  if (layer.type === 'feature') {
+    const featureLayer = layer as FeatureLayer;
+    
+    const fields: FieldMetadata[] = featureLayer.fields.map(f => ({
+      name: f.name,
+      alias: f.alias || f.name,
+      type: f.type,
+      nameTokens: f.name.toLowerCase().split('_')
+    }));
+
+    layerCache.push({
+      id: featureLayer.id,
+      title: featureLayer.title,
+      url: featureLayer.url,
+      layer: featureLayer,
+      fields: fields
+    });
+  }
+});
+
+this.setState({ layerCache });
+console.log('Discovered layers:', layerCache);
+```
+
+};
+
+// Kullanıcı mesajı gönder
+handleSendMessage = async () => {
+const { message, layerCache } = this.state;
+
+```
+if (!message.trim()) return;
+
+// Kullanıcı mesajını ekle
+this.addUserMessage(message);
+this.setState({ message: '', loading: true });
+
+try {
+  // Mesajı işle
+  const result = await this.processMessage(message, layerCache);
+  
+  if (result.type === 'clarification') {
+    // Açıklama gerekiyor
+    this.setState({
+      clarificationNeeded: true,
+      clarificationOptions: result.options,
+      pendingQuery: result.pendingQuery,
+      loading: false
+    });
+    this.addBotMessage('Birden fazla eşleşme buldum. Hangisini kastediyorsunuz?');
+  } else if (result.type === 'success') {
+    // Sorgu başarılı
+    await this.executeQuery(result);
+    this.addBotMessage(`✅ ${result.resultCount} sonuç bulundu ve haritada gösterildi.`);
+    this.setState({ loading: false });
+  } else if (result.type === 'error') {
+    this.addBotMessage(`❌ ${result.message}`);
+    this.setState({ loading: false });
+  }
+} catch (error) {
+  this.addBotMessage(`❌ Hata oluştu: ${error.message}`);
+  this.setState({ loading: false });
+}
+```
+
+};
+
+// Mesajı parse et ve işle
+processMessage = async (message: string, layerCache: LayerMetadata[]) => {
+// 1. Mesajı parse et
+const parsed = this.parseMessage(message);
+
+```
+// 2. En uygun layer'ı bul
+const layerMatch = this.findBestLayer(parsed, layerCache);
+
+if (!layerMatch || layerMatch.score < 20) {
+  return { type: 'error', message: 'Uygun layer bulunamadı. Lütfen daha spesifik olun.' };
+}
+
+// 3. Query oluştur
+const queryResult = await this.buildSmartQuery(parsed, layerMatch);
+
+return queryResult;
+```
+
+};
+
+// Mesaj parse
+parseMessage = (message: string) => {
+const lowerMessage = message.toLowerCase();
+const tokens = lowerMessage.split(/\s+/).filter(t => t.length > 1);
+
+```
+return {
+  original: message,
+  tokens: tokens,
+  potentialFields: this.extractPotentialFields(message),
+  dates: this.extractDates(message),
+  numbers: this.extractNumbers(message),
+  operators: this.extractOperators(message),
+  freeText: this.extractFreeText(message)
+};
+```
+
+};
+
+extractPotentialFields = (message: string) => {
+// Underscore veya camelCase kelimeler (field isimleri gibi)
+const regex = /\b[a-z_][a-z0-9_]*\b/gi;
+return (message.match(regex) || []).map(m => m.toLowerCase());
+};
+
+extractDates = (message: string) => {
+const dates = [];
+
+```
+// Yıl pattern
+const yearMatch = message.match(/\b(19|20)\d{2}\b/);
+if (yearMatch) {
+  dates.push({ type: 'year', value: parseInt(yearMatch[0]) });
+}
+
+// Ay-Yıl pattern (Türkçe)
+const monthNames = {
+  'ocak': '01', 'şubat': '02', 'mart': '03', 'nisan': '04',
+  'mayıs': '05', 'mayis': '05', 'haziran': '06', 'temmuz': '07',
+  'ağustos': '08', 'agustos': '08', 'eylül': '09', 'eylul': '09',
+  'ekim': '10', 'kasım': '11', 'kasim': '11', 'aralık': '12', 'aralik': '12'
+};
+
+for (const [month, num] of Object.entries(monthNames)) {
+  const regex = new RegExp(`${month}\\s*(\\d{4})`, 'i');
+  const match = message.match(regex);
+  if (match) {
+    dates.push({ type: 'month-year', year: parseInt(match[1]), month: num });
+  }
+}
+
+return dates;
+```
+
+};
+
+extractNumbers = (message: string) => {
+const numbers = message.match(/\d+(.\d+)?/g);
+return numbers ? numbers.map(n => parseFloat(n)) : [];
+};
+
+extractOperators = (message: string) => {
+const operators = [];
+const lowerMsg = message.toLowerCase();
+
+```
+if (/büyük|greater|fazla|üzeri|>/i.test(lowerMsg)) operators.push({ type: '>' });
+if (/küçük|less|az|altı|</i.test(lowerMsg)) operators.push({ type: '<' });
+if (/eşit|equal|=|olan/i.test(lowerMsg)) operators.push({ type: '=' });
+if (/arası|between/i.test(lowerMsg)) operators.push({ type: 'BETWEEN' });
+
+return operators;
+```
+
+};
+
+extractFreeText = (message: string) => {
+// Teknik olmayan kelimeler (şehir isimleri vs)
+const technical = this.extractPotentialFields(message);
+const words = message.toLowerCase().split(/\s+/);
+
+```
+return words.filter(w => 
+  w.length > 2 && 
+  !technical.includes(w) &&
+  !/^\d+$/.test(w) &&
+  !['olan', 'göster', 'çıkar', 'bul', 've', 'ile', 'için'].includes(w)
+);
+```
+
+};
+
+// En iyi layer’ı bul (scoring)
+findBestLayer = (parsed: any, layerCache: LayerMetadata[]) => {
+const scores = layerCache.map(layer => {
+let score = 0;
+const matchedFields = [];
+
+```
+  // Potential field'lar ile layer field'larını karşılaştır
+  parsed.potentialFields.forEach(token => {
+    layer.fields.forEach(field => {
+      // Exact match
+      if (field.name.toLowerCase() === token) {
+        score += 50;
+        matchedFields.push({ field, token, type: 'exact' });
+      }
+      // Partial match
+      else if (field.name.toLowerCase().includes(token)) {
+        score += 25;
+        matchedFields.push({ field, token, type: 'partial' });
+      }
+      // Token match (rsrp_value → rsrp)
+      else if (field.nameTokens.includes(token)) {
+        score += 30;
+        matchedFields.push({ field, token, type: 'token' });
+      }
+      // Alias match
+      else if (field.alias.toLowerCase().includes(token)) {
+        score += 20;
+        matchedFields.push({ field, token, type: 'alias' });
+      }
+    });
+  });
+
+  // Bonus: Tarih var ve date field var mı?
+  if (parsed.dates.length > 0) {
+    const hasDateField = layer.fields.some(f => f.type === 'date');
+    if (hasDateField) score += 15;
+  }
+
+  // Bonus: Sayı var ve numeric field var mı?
+  if (parsed.numbers.length > 0) {
+    const hasNumField = layer.fields.some(f => f.type === 'double' || f.type === 'integer');
+    if (hasNumField) score += 15;
+  }
+
+  return { layer, score, matchedFields };
+});
+
+return scores.sort((a, b) => b.score - a.score)[0];
+```
+
+};
+
+// Smart query oluştur (value matching ile)
+buildSmartQuery = async (parsed: any, layerMatch: any) => {
+const { layer, matchedFields } = layerMatch;
+const conditions = [];
+
+```
+// Matched field'lar için query oluştur
+for (const match of matchedFields) {
+  const field = match.field;
+
+  // DATE FIELD
+  if (field.type === 'date' && parsed.dates.length > 0) {
+    const dateCond = this.buildDateCondition(field, parsed.dates[0]);
+    if (dateCond) conditions.push(dateCond);
+  }
+
+  // NUMERIC FIELD
+  else if ((field.type === 'double' || field.type === 'integer') && parsed.numbers.length > 0) {
+    const numCond = this.buildNumericCondition(field, parsed);
+    if (numCond) conditions.push(numCond);
+  }
+
+  // STRING FIELD - Value matching yap
+  else if (field.type === 'string' && parsed.freeText.length > 0) {
+    const textMatch = await this.matchTextValue(parsed.freeText, field, layer.layer);
+    
+    if (textMatch.type === 'clarification') {
+      return {
+        type: 'clarification',
+        options: textMatch.options,
+        pendingQuery: { parsed, layerMatch, field }
+      };
+    } else if (textMatch.type === 'success') {
+      conditions.push(textMatch.condition);
+    }
+  }
+}
+
+// Diğer string field'lara free text uygula
+const unmatchedStringFields = layer.layer.fields.filter(f => 
+  f.type === 'string' && 
+  !matchedFields.some(m => m.field.name === f.name)
+);
+
+if (parsed.freeText.length > 0 && unmatchedStringFields.length > 0 && conditions.length === 0) {
+  const orConditions = [];
+  parsed.freeText.forEach(text => {
+    unmatchedStringFields.forEach(field => {
+      orConditions.push(`UPPER(${field.name}) LIKE UPPER('%${text}%')`);
+    });
+  });
+  if (orConditions.length > 0) {
+    conditions.push(`(${orConditions.join(' OR ')})`);
+  }
+}
+
+const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
+
+return {
+  type: 'success',
+  layer: layer.layer,
+  whereClause: whereClause,
+  layerTitle: layer.layer.title
+};
+```
+
+};
+
+// Text value matching (distinct values ile)
+matchTextValue = async (freeTextArray: string[], field: any, layer: FeatureLayer) => {
+try {
+// Distinct values çek
+const query = new Query();
+query.where = ‘1=1’;
+query.returnDistinctValues = true;
+query.outFields = [field.name];
+query.returnGeometry = false;
+query.num = 1000; // Max 1000 unique değer
+
+```
+  const results = await layer.queryFeatures(query);
+  const distinctValues = results.features
+    .map(f => f.attributes[field.name])
+    .filter(v => v !== null && v !== undefined);
+
+  if (distinctValues.length === 0) {
+    return { type: 'fallback' };
+  }
+
+  // Her free text için match yap
+  const allMatches = [];
+
+  freeTextArray.forEach(userText => {
+    const variations = this.generateVariations(userText);
+    
+    distinctValues.forEach(dbValue => {
+      const score = this.calculateSimilarity(variations, String(dbValue).toLowerCase());
+      if (score > 0.3) {
+        allMatches.push({ value: dbValue, score, userText });
+      }
+    });
+  });
+
+  if (allMatches.length === 0) {
+    // Match yok - fallback: LIKE query
+    const likeConditions = freeTextArray.map(text => 
+      `UPPER(${field.name}) LIKE UPPER('%${text}%')`
+    );
+    return {
+      type: 'success',
+      condition: `(${likeConditions.join(' OR ')})`
     };
   }
 
-  componentWillUnmount(): void {
-    this.removeAllHandles();
+  // En iyi match'i al
+  allMatches.sort((a, b) => b.score - a.score);
+  const topMatches = allMatches.slice(0, 5);
+
+  // Eğer ilk match çok yüksek skor → otomatik kullan
+  if (topMatches[0].score > 0.8) {
+    return {
+      type: 'success',
+      condition: `${field.name} = '${topMatches[0].value}'`
+    };
   }
 
-  removeAllHandles = () => {
-    const remove = (h: any) => { try { h?.remove?.(); } catch {} };
-    this.viewHandles.forEach(remove);
-    this.layerHandles.forEach(remove);
-    this.sublayerHandles.forEach(remove);
-    this.viewHandles = [];
-    this.layerHandles = [];
-    this.sublayerHandles = [];
+  // Eğer birden fazla benzer match → clarification iste
+  if (topMatches.length > 1) {
+    return {
+      type: 'clarification',
+      options: topMatches.map(m => ({
+        label: `${m.value} (${m.userText} için)`,
+        value: m.value,
+        field: field.name
+      }))
+    };
+  }
+
+  return {
+    type: 'success',
+    condition: `${field.name} = '${topMatches[0].value}'`
   };
 
-  onActiveViewChange = (jimuMapView: JimuMapView) => {
-    if (!jimuMapView) return;
-    this.mapView = jimuMapView;
-    this.removeAllHandles();
-
-    const v: any = this.mapView.view;
-    if (!v) return;
-
-    const hCreate = v.on('layerview-create', () => {
-      if (this.state.activeWhere) this.applyActiveWhereToAll();
-    });
-
-    const hDestroy = v.on('layerview-destroy', () => {
-      if (this.state.activeWhere) this.applyActiveWhereToAll();
-    });
-
-    const hStationary = v.watch('stationary', (st: boolean) => {
-      if (st && this.state.activeWhere) this.applyActiveWhereToAll();
-    });
-
-    const hLayersChange = v.map?.allLayers?.on?.('change', () => {
-      if (this.state.activeWhere) this.applyActiveWhereToAll();
-    });
-
-    const popupHandles: any[] = [];
-    const popup = v.popup;
-    if (popup?.watch) {
-      const hPopupVisible = popup.watch('visible', () => {
-        if (this.state.activeWhere) {
-          setTimeout(() => this.applyActiveWhereToAll(), 0);
-        }
-      });
-      if (hPopupVisible) popupHandles.push(hPopupVisible);
-
-      const hPopupSelected = popup.watch('selectedFeature', () => {
-        if (this.state.activeWhere) {
-          setTimeout(() => this.applyActiveWhereToAll(), 0);
-        }
-      });
-      if (hPopupSelected) popupHandles.push(hPopupSelected);
-    }
-
-    this.viewHandles.push(hCreate, hDestroy, hStationary, hLayersChange, ...popupHandles);
-  };
-
-  onFieldChange = (e: any) => {
-    const field = e.target.value;
-    const r = FIELD_RANGES[field];
-    this.setState({
-      selectedField: field,
-      tempMin: r.def[0],
-      tempMax: r.def[1]
-    });
-  };
-
-  onSliderChange = (newMin: number, newMax: number) => {
-    this.setState({ tempMin: newMin, tempMax: newMax });
-  };
-
-  addCondition = () => {
-    const { selectedField, tempMin, tempMax, conditions } = this.state;
-    const i = conditions.findIndex((c: FilterCondition) => c.field === selectedField);
-
-    let next: FilterCondition[];
-    if (i >= 0) {
-      next = [...conditions];
-      next[i] = { ...next[i], min: tempMin, max: tempMax };
-    } else {
-      next = [...conditions, { id: Date.now().toString(), field: selectedField, min: tempMin, max: tempMax }];
-    }
-
-    this.setState({ conditions: next }, () => this.applyFromConditions());
-  };
-
-  removeCondition = (id: string) => {
-    const next = this.state.conditions.filter((c: FilterCondition) => c.id !== id);
-    this.setState({ conditions: next }, () => this.applyFromConditions());
-  };
-
-  buildWhere = (conds: FilterCondition[], usids?: string[] | null) => {
-    const parts: string[] = [];
-
-    if (conds?.length) {
-      conds.forEach((c: FilterCondition) => {
-        parts.push(`${c.field} >= ${c.min} AND ${c.field} <= ${c.max}`);
-      });
-    }
-
-    if (Array.isArray(usids) && usids.length) {
-      const clauses = usids
-        .map((value: string) => {
-          const trimmed = value.trim();
-          if (!trimmed) return null;
-          const isNumeric = /^-?\d+(?:\.\d+)?$/.test(trimmed);
-          const sanitized = trimmed.replace(/'/g, "''");
-          return isNumeric ? `USID = ${sanitized}` : `USID = '${sanitized}'`;
-        })
-        .filter(Boolean) as string[];
-
-      if (clauses.length === 1) {
-        parts.push(clauses[0]);
-      } else if (clauses.length > 1) {
-        parts.push(`(${clauses.join(' OR ')})`);
-      }
-    }
-
-    return parts.length ? parts.join(' AND ') : null;
-  };
-
-  applyFromConditions = () => {
-    const { conditions, activeUsid } = this.state;
-    const where = this.buildWhere(conditions, activeUsid);
-
-    if (!where) {
-      this.setState({ activeWhere: null }, () => this.clearLayerDefinitions());
-      return;
-    }
-
-    this.setState({ activeWhere: where }, () => {
-      this.applyActiveWhereToAll();
-      // Auto-center if USID filter is active
-      if (activeUsid && activeUsid.length > 0) {
-        this.centerMapOnFilteredFeatures(where);
-      }
-    });
-  };
-
-  centerMapOnFilteredFeatures = async (whereClause: string) => {
-    if (!this.mapView) return;
-
-    const view: any = this.mapView.view;
-    const layers = view?.map?.allLayers;
-    if (!layers) return;
-
-    try {
-      // Import required ArcGIS modules dynamically
-      const geometryEngine = await (window as any).require('esri/geometry/geometryEngine');
-      
-      const allGeometries: any[] = [];
-
-      // Query all target feature layers
-      for (const layer of layers.toArray()) {
-        if (layer.type === 'feature' && this.isTargetFeatureLayer(layer)) {
-          try {
-            const query = layer.createQuery();
-            query.where = whereClause;
-            query.returnGeometry = true;
-            const result = await layer.queryFeatures(query);
-            
-            if (result.features && result.features.length > 0) {
-              result.features.forEach((feature: any) => {
-                if (feature.geometry) {
-                  allGeometries.push(feature.geometry);
-                }
-              });
-            }
-          } catch (error) {
-            console.warn('Error querying layer:', error);
-          }
-        }
-      }
-
-      // If we found geometries, zoom to them
-      if (allGeometries.length > 0) {
-        const union = geometryEngine.union(allGeometries);
-        const extent = union.extent || union;
-        
-        await view.goTo(extent.expand(1.5), {
-          duration: 1000,
-          easing: 'ease-in-out'
-        });
-      }
-    } catch (error) {
-      console.warn('Error centering map on filtered features:', error);
-    }
-  };
-
-  onUsidInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    this.setState({ usidInput: e.target.value, usidError: null });
-  };
-
-  onUsidKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      this.applyUsidFilter();
-    }
-  };
-
-  applyUsidFilter = () => {
-    const raw = (this.state.usidInput || '').trim();
-
-    if (!raw) {
-      this.setState({ activeUsid: null, usidError: null }, () => this.applyFromConditions());
-      return;
-    }
-
-    const entries = raw
-      .split(',')
-      .map(item => item.trim())
-      .filter(Boolean);
-
-    if (!entries.length) {
-      this.setState({ activeUsid: null, usidError: null }, () => this.applyFromConditions());
-      return;
-    }
-
-    this.setState({ activeUsid: entries, usidError: null }, () => this.applyFromConditions());
-  };
-
-  clearUsid = () => {
-    this.setState({ usidInput: '', activeUsid: null, usidError: null }, () => this.applyFromConditions());
-  };
-
-  clearLayerDefinitions = () => {
-    if (!this.mapView) return;
-
-    const view: any = this.mapView.view;
-    const layers = view?.map?.allLayers;
-    if (!layers) return;
-
-    layers.forEach((layer: any) => {
-      if (!layer) return;
-
-      if (layer.type === 'feature') {
-        try {
-          if (typeof layer.definitionExpression !== 'undefined') {
-            layer.definitionExpression = null;
-          }
-        } catch {}
-
-        try {
-          view.whenLayerView(layer).then((lv: any) => {
-            try { if (lv) lv.filter = null; } catch {}
-          }).catch(() => {});
-        } catch {}
-      }
-
-      if (layer.type === 'map-image' && layer.allSublayers) {
-        layer.allSublayers.forEach((sublayer: any) => {
-          try {
-            if (typeof sublayer.definitionExpression !== 'undefined') {
-              sublayer.definitionExpression = null;
-            }
-          } catch {}
-        });
-
-        try { layer.refresh && layer.refresh(); } catch {}
-      }
-    });
-  };
-
-  isTargetFeatureLayer = (layer: any): boolean => {
-    const fields = layer?.fields || [];
-    return fields.some((f: any) => {
-      const n = (f?.name || '').toUpperCase();
-      return n.includes('RSRP') || n.includes('RSRQ') || n.includes('SNR');
-    });
-  };
-
-  isTargetSublayer = (sublayer: any): boolean => {
-    const title = (sublayer?.title || '').toUpperCase();
-    return title.includes('RSRP') || title.includes('RSRQ') || title.includes('SNR');
-  };
-
-  applyActiveWhereToAll = () => {
-    const where = this.state.activeWhere;
-    if (!this.mapView || !where) return;
-    const view: any = this.mapView.view;
-    const layers = view?.map?.allLayers;
-    if (!layers) return;
-
-    this.layerHandles.forEach(h => { try { h?.remove?.(); } catch {} });
-    this.layerHandles = [];
-    this.sublayerHandles.forEach(h => { try { h?.remove?.(); } catch {} });
-    this.sublayerHandles = [];
-
-    const activeWhereSnapshot = where;
-
-    layers.forEach((layer: any) => {
-      if (!layer) return;
-
-      if (layer.type === 'feature') {
-        if (this.isTargetFeatureLayer(layer)) {
-          try { layer.definitionExpression = where; } catch {}
-          if (typeof layer.watch === 'function') {
-            const hLayerDef = layer.watch('definitionExpression', (value: string) => {
-              if (this.state.activeWhere !== activeWhereSnapshot) return;
-              if (value !== activeWhereSnapshot) {
-                try { layer.definitionExpression = activeWhereSnapshot; } catch {}
-              }
-            });
-            if (hLayerDef) this.layerHandles.push(hLayerDef);
-          }
-          try {
-            view.whenLayerView(layer).then((lv: any) => {
-              try { lv.filter = { where: activeWhereSnapshot }; } catch {}
-              if (typeof lv?.watch === 'function') {
-                const hLayerFilter = lv.watch('filter', (filterValue: any) => {
-                  if (this.state.activeWhere !== activeWhereSnapshot) return;
-                  const currentWhere = filterValue?.where;
-                  if (!currentWhere || currentWhere !== activeWhereSnapshot) {
-                    try { lv.filter = { where: activeWhereSnapshot }; } catch {}
-                  }
-                });
-                if (hLayerFilter) this.layerHandles.push(hLayerFilter);
-              }
-            }).catch(() => {});
-          } catch {}
-        }
-      }
-
-      if (layer.type === 'map-image' && layer.allSublayers) {
-        layer.allSublayers.forEach((sublayer: any) => {
-          if (!this.isTargetSublayer(sublayer)) return;
-          try {
-            if (typeof sublayer.definitionExpression !== 'undefined') {
-              sublayer.definitionExpression = where;
-            }
-          } catch {}
-
-          if (typeof sublayer.watch === 'function') {
-            const hSubDef = sublayer.watch('definitionExpression', (value: string) => {
-              if (this.state.activeWhere !== activeWhereSnapshot) return;
-              if (value !== activeWhereSnapshot) {
-                try {
-                  if (typeof sublayer.definitionExpression !== 'undefined') {
-                    sublayer.definitionExpression = activeWhereSnapshot;
-                  }
-                } catch {}
-              }
-            });
-            if (hSubDef) this.sublayerHandles.push(hSubDef);
-          }
-
-          const hVis = sublayer.watch && sublayer.watch('visible', () => {
-            if (this.state.activeWhere !== activeWhereSnapshot) return;
-            try {
-              if (typeof sublayer.definitionExpression !== 'undefined') {
-                sublayer.definitionExpression = activeWhereSnapshot;
-              }
-            } catch {}
-          });
-          const hMinScale = sublayer.watch && sublayer.watch('minScale', () => {
-            if (this.state.activeWhere !== activeWhereSnapshot) return;
-            try {
-              if (typeof sublayer.definitionExpression !== 'undefined') {
-                sublayer.definitionExpression = activeWhereSnapshot;
-              }
-            } catch {}
-          });
-          const hMaxScale = sublayer.watch && sublayer.watch('maxScale', () => {
-            if (this.state.activeWhere !== activeWhereSnapshot) return;
-            try {
-              if (typeof sublayer.definitionExpression !== 'undefined') {
-                sublayer.definitionExpression = activeWhereSnapshot;
-              }
-            } catch {}
-          });
-
-          [hVis, hMinScale, hMaxScale].forEach(h => { if (h) this.sublayerHandles.push(h); });
-        });
-
-        try { layer.refresh && layer.refresh(); } catch {}
-      }
-    });
-  };
-
-  clearFilter = () => {
-    if (!this.mapView) return;
-    this.clearLayerDefinitions();
-    this.removeAllHandles();
-
-    const currentField = FIELD_RANGES[this.state.selectedField] || FIELD_RANGES.RSRP;
-
-    this.setState({
-      activeWhere: null,
-      conditions: [],
-      activeUsid: null,
-      usidInput: '',
-      usidError: null,
-      tempMin: currentField.def[0],
-      tempMax: currentField.def[1]
-    });
-  };
-
-  render() {
-    const { conditions, selectedField, tempMin, tempMax, activeWhere, usidInput, activeUsid, usidError } = this.state;
-    const current = FIELD_RANGES[selectedField];
-    const legends = KPI_LEGENDS[selectedField];
-
-    return (
-      <div style={{ 
-        padding: '14px', 
-        width: '100%', 
-        height: '100%', 
-        backgroundColor: '#f8f9fa', 
-        overflow: 'auto',
-        fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif'
-      }}>
-        <JimuMapViewComponent
-          useMapWidgetId={this.props.useMapWidgetIds?.[0]}
-          onActiveViewChange={this.onActiveViewChange}
-        />
-
-        <style>
-          {`
-            @keyframes fadeIn {
-              from { opacity: 0; transform: translateY(-4px); }
-              to { opacity: 1; transform: translateY(0); }
-            }
-          `}
-        </style>
-
-        {/* Header */}
-        <div style={{ 
-          marginBottom: 16,
-          paddingBottom: 10,
-          borderBottom: '2px solid #dee2e6'
-        }}>
-          <h2 style={{ 
-            margin: 0, 
-            fontSize: 22, 
-            fontWeight: 700,
-            color: '#212529',
-            letterSpacing: '-0.5px'
-          }}>
-            IQI Custom Range Filter
-          </h2>
-        </div>
-
-        {/* KPI SECTION */}
-        <div style={{
-          backgroundColor: '#fff',
-          borderRadius: 6,
-          padding: 14,
-          marginBottom: 14,
-          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-          border: '1px solid #e9ecef'
-        }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            marginBottom: 12,
-            paddingBottom: 8,
-            borderBottom: '1px solid #f1f3f5'
-          }}>
-            <div style={{
-              width: 3,
-              height: 20,
-              backgroundColor: '#0079c1',
-              borderRadius: 2,
-              marginRight: 10
-            }} />
-            <h3 style={{ 
-              margin: 0, 
-              fontSize: 15, 
-              fontWeight: 700,
-              color: '#212529',
-              letterSpacing: '-0.3px'
-            }}>
-              KPI & Range Selection
-            </h3>
-          </div>
-
-          {/* KPI Dropdown */}
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ 
-              display: 'block', 
-              marginBottom: 6, 
-              fontSize: 12, 
-              fontWeight: 600,
-              color: '#495057',
-              textTransform: 'uppercase',
-              letterSpacing: '0.5px'
-            }}>
-              Select KPI 
-            </label>
-            <select
-              value={selectedField}
-              onChange={this.onFieldChange}
-              style={{ 
-                width: '100%', 
-                padding: '10px 14px', 
-                fontSize: 14, 
-                fontWeight: 500,
-                border: '2px solid #e9ecef', 
-                borderRadius: 5,
-                backgroundColor: '#fff',
-                color: '#212529',
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                outline: 'none'
-              }}
-              onFocus={(e) => e.currentTarget.style.borderColor = '#0079c1'}
-              onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
-            >
-              <option value="RSRP">RSRP</option>
-              <option value="RSRQ">RSRQ </option>
-              <option value="SNR">SNR</option>
-            </select>
-          </div>
-
-          {/* Slider with Interactive Legend */}
-          <DualRangeSlider
-            min={current.min}
-            max={current.max}
-            step={1}
-            minValue={tempMin}
-            maxValue={tempMax}
-            onChange={this.onSliderChange}
-            field={selectedField}
-            legendSegments={legends}
-          />
-
-          {/* Add Condition Button */}
-          <button
-            onClick={this.addCondition}
+} catch (error) {
+  console.error('Text matching error:', error);
+  return { type: 'fallback' };
+}
+```
+
+};
+
+generateVariations = (text: string) => {
+const variations = [text.toLowerCase()];
+variations.push(text.toLowerCase().replace(/\s+/g, ‘’)); // “newyork”
+variations.push(text.toLowerCase().replace(/\s+/g, ‘_’)); // “new_york”
+
+```
+// İlk harfler (abbreviation)
+const words = text.split(/\s+/);
+if (words.length > 1) {
+  variations.push(words.map(w => w[0]).join('').toLowerCase());
+}
+
+return variations;
+```
+
+};
+
+calculateSimilarity = (variations: string[], dbValue: string) => {
+let maxScore = 0;
+
+```
+variations.forEach(variation => {
+  // Exact match
+  if (variation === dbValue) {
+    maxScore = Math.max(maxScore, 1.0);
+  }
+  // Contains
+  else if (dbValue.includes(variation) || variation.includes(dbValue)) {
+    maxScore = Math.max(maxScore, 0.8);
+  }
+  // Starts with
+  else if (dbValue.startsWith(variation) || variation.startsWith(dbValue)) {
+    maxScore = Math.max(maxScore, 0.7);
+  }
+});
+
+return maxScore;
+```
+
+};
+
+buildDateCondition = (field: any, dateInfo: any) => {
+if (dateInfo.type === ‘year’) {
+return `${field.name} >= TIMESTAMP '${dateInfo.value}-01-01 00:00:00' AND ${field.name} < TIMESTAMP '${dateInfo.value + 1}-01-01 00:00:00'`;
+}
+
+```
+if (dateInfo.type === 'month-year') {
+  const nextMonth = parseInt(dateInfo.month) === 12 ? 1 : parseInt(dateInfo.month) + 1;
+  const nextYear = parseInt(dateInfo.month) === 12 ? dateInfo.year + 1 : dateInfo.year;
+  return `${field.name} >= TIMESTAMP '${dateInfo.year}-${dateInfo.month}-01 00:00:00' AND ${field.name} < TIMESTAMP '${nextYear}-${nextMonth.toString().padStart(2, '0')}-01 00:00:00'`;
+}
+
+return null;
+```
+
+};
+
+buildNumericCondition = (field: any, parsed: any) => {
+const numbers = parsed.numbers;
+const operators = parsed.operators;
+
+```
+if (operators.length === 0 || numbers.length === 0) return null;
+
+const op = operators[0].type;
+const num = numbers[0];
+
+if (op === '>') return `${field.name} > ${num}`;
+if (op === '<') return `${field.name} < ${num}`;
+if (op === '=') return `${field.name} = ${num}`;
+if (op === 'BETWEEN' && numbers.length >= 2) {
+  return `${field.name} BETWEEN ${numbers[0]} AND ${numbers[1]}`;
+}
+
+return null;
+```
+
+};
+
+// Clarification cevabı seçildiğinde
+handleClarificationSelect = async (selectedValue: string) => {
+const { pendingQuery, clarificationOptions } = this.state;
+const selected = clarificationOptions.find(o => o.value === selectedValue);
+
+```
+this.setState({ clarificationNeeded: false, loading: true });
+
+// Seçilen değeri query'ye ekle
+const field = selected.field;
+const condition = `${field} = '${selectedValue}'`;
+
+// Query'yi tamamla
+const { parsed, layerMatch } = pendingQuery;
+const whereClause = condition; // Basit şimdilik
+
+await this.executeQueryDirect(layerMatch.layer.layer, whereClause, layerMatch.layer.layer.title);
+
+this.setState({ loading: false, pendingQuery: null, clarificationOptions: [] });
+```
+
+};
+
+// Query’yi çalıştır ve haritada göster
+executeQuery = async (result: any) => {
+await this.executeQueryDirect(result.layer, result.whereClause, result.layerTitle);
+};
+
+executeQueryDirect = async (layer: FeatureLayer, whereClause: string, layerTitle: string) => {
+const { jimuMapView } = this.state;
+
+```
+try {
+  // Query çalıştır
+  const query = new Query();
+  query.where = whereClause;
+  query.returnGeometry = true;
+  query.outFields = ['*'];
+
+  const results = await layer.queryFeatures(query);
+
+  if (results.features.length === 0) {
+    this.addBotMessage('⚠️ Hiç sonuç bulunamadı.');
+    return;
+  }
+
+  // Layer'ı highlight et ve zoom yap
+  layer.definitionExpression = whereClause;
+
+  // İlk feature'a zoom yap
+  if (results.features.length > 0) {
+    const extent = results.features[0].geometry.extent;
+    jimuMapView.view.goTo(results.features);
+  }
+
+  this.addBotMessage(`✅ ${results.features.length} sonuç "${layerTitle}" layer'ında bulundu ve gösterildi.`);
+
+} catch (error) {
+  this.addBotMessage(`❌ Query hatası: ${error.message}`);
+}
+```
+
+};
+
+// Chat mesajları
+addUserMessage = (text: string) => {
+this.setState(prev => ({
+chatHistory: […prev.chatHistory, { type: ‘user’, text, timestamp: new Date() }]
+}));
+};
+
+addBotMessage = (text: string) => {
+this.setState(prev => ({
+chatHistory: […prev.chatHistory, { type: ‘bot’, text, timestamp: new Date() }]
+}));
+};
+
+render() {
+const { message, chatHistory, loading, clarificationNeeded, clarificationOptions } = this.state;
+
+```
+return (
+  <div className="smart-filter-widget jimu-widget" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    {/* Map View Selector */}
+    <JimuMapViewComponent
+      useMapWidgetId={this.props.useMapWidgetIds?.[0]}
+      onActiveViewChange={this.onActiveViewChange}
+    />
+
+    {/* Chat Container */}
+    <div style={{ flex: 1, padding: '15px', overflowY: 'auto', backgroundColor: '#f5f5f5' }}>
+      {chatHistory.map((msg, idx) => (
+        <div
+          key={idx}
+          style={{
+            marginBottom: '10px',
+            textAlign: msg.type === 'user' ? 'right' : 'left'
+          }}
+        >
+          <div
             style={{
-              width: '100%',
-              padding: '11px 16px',
-              backgroundColor: '#0079c1',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 5,
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-              boxShadow: '0 1px 3px rgba(0,121,193,0.2)',
-              marginTop: 12
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.backgroundColor = '#006199';
-              e.currentTarget.style.transform = 'translateY(-1px)';
-              e.currentTarget.style.boxShadow = '0 2px 6px rgba(0,121,193,0.3)';
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.backgroundColor = '#0079c1';
-              e.currentTarget.style.transform = 'translateY(0)';
-              e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,121,193,0.2)';
+              display: 'inline-block',
+              padding: '8px 12px',
+              borderRadius: '12px',
+              backgroundColor: msg.type === 'user' ? '#0079c1' : '#fff',
+              color: msg.type === 'user' ? '#fff' : '#333',
+              maxWidth: '80%',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
             }}
           >
-            + Add Filter Condition
-          </button>
-
-          {/* Active Conditions */}
-          {conditions.length > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                marginBottom: 8
-              }}>
-                <span style={{ 
-                  fontSize: 12, 
-                  fontWeight: 600,
-                  color: '#495057',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.5px'
-                }}>
-                  Active Conditions
-                </span>
-                <span style={{
-                  marginLeft: 6,
-                  padding: '2px 7px',
-                  backgroundColor: '#0079c1',
-                  color: '#fff',
-                  borderRadius: 10,
-                  fontSize: 10,
-                  fontWeight: 700
-                }}>
-                  {conditions.length}
-                </span>
-              </div>
-              {conditions.map((cond, idx) => (
-                <div
-                  key={cond.id}
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    padding: '9px 12px',
-                    backgroundColor: '#f8f9fa',
-                    borderLeft: '3px solid #0079c1',
-                    borderRadius: 4,
-                    marginBottom: 7,
-                    fontSize: 13,
-                    transition: 'all 0.2s ease'
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = '#e9ecef';
-                    e.currentTarget.style.transform = 'translateX(3px)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#f8f9fa';
-                    e.currentTarget.style.transform = 'translateX(0)';
-                  }}
-                >
-                  <span style={{ color: '#495057', fontWeight: 500 }}>
-                    {idx > 0 && <span style={{ 
-                      fontWeight: 700, 
-                      color: '#6c757d',
-                      marginRight: 6 
-                    }}>AND</span>}
-                    <span style={{ 
-                      fontWeight: 700, 
-                      color: '#212529' 
-                    }}>{cond.field}</span>
-                    {' '}
-                    <span style={{ color: '#6c757d', fontWeight: 400 }}>between</span>
-                    {' '}
-                    <span style={{ 
-                      fontWeight: 700, 
-                      color: '#0079c1',
-                      fontVariantNumeric: 'tabular-nums'
-                    }}>{cond.min}</span>
-                    {' '}
-                    <span style={{ color: '#6c757d', fontWeight: 400 }}>and</span>
-                    {' '}
-                    <span style={{ 
-                      fontWeight: 700, 
-                      color: '#0079c1',
-                      fontVariantNumeric: 'tabular-nums'
-                    }}>{cond.max}</span>
-                  </span>
-                  <button
-                    onClick={() => this.removeCondition(cond.id)}
-                    style={{
-                      padding: '5px 9px',
-                      backgroundColor: '#dc3545',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: 3,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      transition: 'all 0.2s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.backgroundColor = '#c82333';
-                      e.currentTarget.style.transform = 'scale(1.05)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.backgroundColor = '#dc3545';
-                      e.currentTarget.style.transform = 'scale(1)';
-                    }}
-                  >
-                    Remove
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* USID SECTION */}
-        <div style={{
-          backgroundColor: '#fff',
-          borderRadius: 6,
-          padding: 14,
-          marginBottom: 14,
-          boxShadow: '0 1px 4px rgba(0,0,0,0.08)',
-          border: '1px solid #e9ecef'
-        }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            marginBottom: 12,
-            paddingBottom: 8,
-            borderBottom: '1px solid #f1f3f5'
-          }}>
-            <div style={{
-              width: 3,
-              height: 20,
-              backgroundColor: '#28a745',
-              borderRadius: 2,
-              marginRight: 10
-            }} />
-            <h3 style={{ 
-              margin: 0, 
-              fontSize: 15, 
-              fontWeight: 700,
-              color: '#212529',
-              letterSpacing: '-0.3px'
-            }}>
-              USID Filter
-            </h3>
+            {msg.text}
           </div>
-
-          <label style={{ 
-            display: 'block', 
-            marginBottom: 6, 
-            fontSize: 12, 
-            fontWeight: 600,
-            color: '#495057',
-            letterSpacing: '0.5px'
-          }}>
-            Enter USID or Comma-Separated USID(s)
-          </label>
-          
-          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-            <input
-              type="text"
-              value={usidInput}
-              onChange={this.onUsidInputChange}
-              onKeyDown={this.onUsidKeyDown}
-              placeholder="Enter USID(s) here"
-              style={{ 
-                flex: 1, 
-                padding: '10px 14px', 
-                fontSize: 13, 
-                border: '2px solid #e9ecef', 
-                borderRadius: 5,
-                outline: 'none',
-                transition: 'all 0.2s ease',
-                fontFamily: 'inherit'
-              }}
-              onFocus={(e) => e.currentTarget.style.borderColor = '#28a745'}
-              onBlur={(e) => e.currentTarget.style.borderColor = '#e9ecef'}
-            />
-            <button
-              onClick={this.applyUsidFilter}
-              style={{
-                padding: '10px 16px',
-                backgroundColor: '#28a745',
-                color: '#fff',
-                border: 'none',
-                borderRadius: 5,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                boxShadow: '0 1px 3px rgba(40,167,69,0.2)',
-                whiteSpace: 'nowrap'
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = '#218838';
-                e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 2px 6px rgba(40,167,69,0.3)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = '#28a745';
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 1px 3px rgba(40,167,69,0.2)';
-              }}
-            >
-              Apply
-            </button>
-            <button
-              onClick={this.clearUsid}
-              disabled={!usidInput && !(activeUsid && activeUsid.length)}
-              style={{
-                padding: '10px 16px',
-                backgroundColor: usidInput || (activeUsid && activeUsid.length) ? '#6c757d' : '#e9ecef',
-                color: usidInput || (activeUsid && activeUsid.length) ? '#fff' : '#adb5bd',
-                border: 'none',
-                borderRadius: 5,
-                fontSize: 13,
-                fontWeight: 600,
-                cursor: usidInput || (activeUsid && activeUsid.length) ? 'pointer' : 'not-allowed',
-                transition: 'all 0.2s ease',
-                whiteSpace: 'nowrap'
-              }}
-              onMouseEnter={(e) => {
-                if (usidInput || (activeUsid && activeUsid.length)) {
-                  e.currentTarget.style.backgroundColor = '#5a6268';
-                  e.currentTarget.style.transform = 'translateY(-1px)';
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (usidInput || (activeUsid && activeUsid.length)) {
-                  e.currentTarget.style.backgroundColor = '#6c757d';
-                  e.currentTarget.style.transform = 'translateY(0)';
-                }
-              }}
-            >
-              Clear
-            </button>
-          </div>
-
-          {activeUsid && activeUsid.length > 0 && (
-            <div style={{
-              padding: '9px 12px',
-              backgroundColor: '#d4edda',
-              borderLeft: '3px solid #28a745',
-              borderRadius: 4,
-              fontSize: 12,
-              color: '#155724'
-            }}>
-              <div style={{ fontWeight: 600, marginBottom: 3 }}>
-                Active USID Filter
-              </div>
-              <div style={{ fontWeight: 500 }}>
-                Filtering by: <span style={{ fontWeight: 700 }}>{activeUsid.join(', ')}</span>
-              </div>
-            </div>
-          )}
-
-          {usidError && (
-            <div style={{
-              marginTop: 6,
-              padding: '9px 12px',
-              backgroundColor: '#f8d7da',
-              borderLeft: '3px solid #dc3545',
-              borderRadius: 4,
-              fontSize: 12,
-              color: '#721c24',
-              fontWeight: 500
-            }}>
-              {usidError}
-            </div>
-          )}
         </div>
+      ))}
 
-        {/* ACTION BUTTONS */}
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button
-            onClick={this.clearFilter}
-            disabled={!activeWhere}
-            style={{
-              flex: 1,
-              padding: '11px 16px',
-              backgroundColor: activeWhere ? '#dc3545' : '#e9ecef',
-              color: activeWhere ? '#fff' : '#adb5bd',
-              border: 'none',
-              borderRadius: 5,
-              fontSize: 14,
-              fontWeight: 600,
-              cursor: activeWhere ? 'pointer' : 'not-allowed',
-              transition: 'all 0.2s ease',
-              boxShadow: activeWhere ? '0 1px 3px rgba(220,53,69,0.2)' : 'none'
-            }}
-            onMouseEnter={(e) => {
-              if (activeWhere) {
-                e.currentTarget.style.backgroundColor = '#c82333';
-                e.currentTarget.style.transform = 'translateY(-1px)';
-                e.currentTarget.style.boxShadow = '0 2px 6px rgba(220,53,69,0.3)';
-              }
-            }}
-            onMouseLeave={(e) => {
-              if (activeWhere) {
-                e.currentTarget.style.backgroundColor = '#dc3545';
-                e.currentTarget.style.transform = 'translateY(0)';
-                e.currentTarget.style.boxShadow = '0 1px 3px rgba(220,53,69,0.2)';
-              }
-            }}
-          >
-            Clear All Filters
-          </button>
+      {loading && (
+        <div style={{ textAlign: 'center', padding: '10px' }}>
+          <span>⏳ İşleniyor...</span>
         </div>
+      )}
+    </div>
+
+    {/* Clarification Panel */}
+    {clarificationNeeded && (
+      <div style={{ padding: '15px', backgroundColor: '#fff3cd', borderTop: '1px solid #ccc' }}>
+        <Label style={{ marginBottom: '10px', fontWeight: 'bold' }}>
+          Lütfen birini seçin:
+        </Label>
+        <Select
+          placeholder="Seçiniz..."
+          onChange={(e) => this.handleClarificationSelect(e.target.value)}
+        >
+          {clarificationOptions.map((opt, idx) => (
+            <Option key={idx} value={opt.value}>
+              {opt.label}
+            </Option>
+          ))}
+        </Select>
       </div>
-    );
-  }
+    )}
+
+    {/* Input Area */}
+    <div style={{ padding: '15px', borderTop: '1px solid #ccc', backgroundColor: '#fff' }}>
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <TextInput
+          placeholder="Mesajınızı yazın... (örn: 2024 mayıs new york rsrp)"
+          value={message}
+          onChange={(e) => this.setState({ message: e.target.value })}
+          onKeyPress={(e) => {
+            if (e.key === 'Enter') this.handleSendMessage();
+          }}
+          style={{ flex: 1 }}
+        />
+        <Button
+          type="primary"
+          onClick={this.handleSendMessage}
+          disabled={loading || !message.trim()}
+        >
+          Gönder
+        </Button>
+      </div>
+    </div>
+  </div>
+);
+```
+
+}
 }
