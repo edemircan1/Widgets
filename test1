@@ -1,3 +1,5 @@
+-----nlp 
+
 /** @jsx jsx */
 import { React, jsx, AllWidgetProps } from 'jimu-core';
 import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
@@ -32,6 +34,7 @@ interface FieldMetadata {
 	alias: string;
 	type: string;
 	nameTokens: string[];
+	synonyms?: string[];
 }
 
 interface LayerMetadata {
@@ -59,24 +62,49 @@ interface ClarificationOption {
 interface MatchedField {
 	field: FieldMetadata;
 	token: string;
-	type: 'exact' | 'partial' | 'token' | 'alias';
+	type: 'exact' | 'partial' | 'token' | 'alias' | 'synonym';
+	confidence: number;
 }
 
-type OperatorInfo = { type: '>' | '<' | '=' | '>=' | '<=' | '!=' | 'BETWEEN' | 'IN' | 'LIKE' };
-type LogicalOperator = 'AND' | 'OR';
+type OperatorInfo = { 
+	type: '>' | '<' | '=' | '>=' | '<=' | '!=' | 'BETWEEN' | 'IN' | 'LIKE' | 'IS NULL' | 'IS NOT NULL';
+	confidence: number;
+};
+
+type LogicalOperator = 'AND' | 'OR' | 'NOT';
+
 type DateInfo =
 	| { type: 'year'; value: number }
-	| { type: 'month-year'; year: number; month: string };
+	| { type: 'month-year'; year: number; month: string }
+	| { type: 'full-date'; year: number; month: string; day: string }
+	| { type: 'relative'; unit: 'day' | 'week' | 'month' | 'year'; offset: number };
+
+interface QueryIntent {
+	action: 'filter' | 'find' | 'show' | 'search' | 'display' | 'list' | 'count' | 'clear';
+	confidence: number;
+}
 
 interface ParsedCondition {
 	field?: string;
 	operator?: string;
-	value?: string | number;
+	value?: string | number | null;
 	raw: string;
+	confidence: number;
+	negated?: boolean;
+}
+
+interface SemanticContext {
+	hasLocation: boolean;
+	hasTimeReference: boolean;
+	hasComparison: boolean;
+	hasAggregation: boolean;
+	isQuestion: boolean;
+	suggestedFieldTypes: Set<string>;
 }
 
 interface ParsedMessage {
 	original: string;
+	normalized: string;
 	tokens: string[];
 	potentialFields: string[];
 	dates: DateInfo[];
@@ -85,12 +113,16 @@ interface ParsedMessage {
 	logicalOperators: LogicalOperator[];
 	conditions: ParsedCondition[];
 	freeText: string[];
+	intent: QueryIntent;
+	context: SemanticContext;
+	entities: Map<string, any>;
 }
 
 interface LayerMatch {
 	layer: LayerMetadata;
 	score: number;
 	matchedFields: MatchedField[];
+	confidence: number;
 }
 
 interface PendingQuery {
@@ -126,19 +158,57 @@ type ProcessResult =
 	| { type: 'error'; message: string };
 
 const NUMERIC_FIELD_TYPES = new Set([
-	'double',
-	'single',
-	'integer',
-	'small-integer',
-	'smallinteger',
-	'short-integer',
-	'shortinteger',
-	'long',
-	'float',
-	'oid',
+	'double', 'single', 'integer', 'small-integer', 'smallinteger',
+	'short-integer', 'shortinteger', 'long', 'float', 'oid',
 ]);
 
 const STRING_FIELD_TYPES = new Set(['string', 'guid', 'global-id', 'globalid']);
+
+// Enhanced field name synonyms for common patterns
+const FIELD_SYNONYMS: Record<string, string[]> = {
+	'rsrp': ['signal', 'power', 'strength', 'reception'],
+	'rsrq': ['quality', 'signal_quality'],
+	'snr': ['noise', 'ratio', 'signal_noise'],
+	'latitude': ['lat', 'y', 'northing'],
+	'longitude': ['lon', 'lng', 'x', 'easting'],
+	'status': ['state', 'condition', 'situation'],
+	'type': ['category', 'class', 'kind'],
+	'date': ['time', 'timestamp', 'when', 'datetime'],
+	'name': ['title', 'label', 'identifier'],
+	'id': ['identifier', 'key', 'code'],
+	'count': ['number', 'total', 'quantity', 'amount'],
+	'area': ['region', 'zone', 'location', 'place'],
+};
+
+// Operator synonyms for natural language
+const OPERATOR_PATTERNS: Array<{ pattern: RegExp; operator: string; confidence: number }> = [
+	{ pattern: /\b(greater|more|above|over|higher|larger|bigger)\s+(than|to)?\b/i, operator: '>', confidence: 0.9 },
+	{ pattern: /\b(less|fewer|below|under|lower|smaller)\s+(than|to)?\b/i, operator: '<', confidence: 0.9 },
+	{ pattern: /\b(equal|equals|exactly|precisely|is)\s+(to)?\b/i, operator: '=', confidence: 0.85 },
+	{ pattern: /\b(not\s+equal|not\s+equals|different|!=|<>)\s+(to)?\b/i, operator: '!=', confidence: 0.9 },
+	{ pattern: /\b(at\s+least|minimum|min|>=|≥)\b/i, operator: '>=', confidence: 0.85 },
+	{ pattern: /\b(at\s+most|maximum|max|<=|≤)\b/i, operator: '<=', confidence: 0.85 },
+	{ pattern: /\b(between)\b/i, operator: 'BETWEEN', confidence: 0.95 },
+	{ pattern: /\b(contains|includes|has|like)\b/i, operator: 'LIKE', confidence: 0.8 },
+	{ pattern: /\b(is\s+null|null|empty|missing|blank)\b/i, operator: 'IS NULL', confidence: 0.9 },
+	{ pattern: /\b(is\s+not\s+null|not\s+null|exists|present|has\s+value)\b/i, operator: 'IS NOT NULL', confidence: 0.9 },
+	{ pattern: />=/i, operator: '>=', confidence: 1.0 },
+	{ pattern: /<=/i, operator: '<=', confidence: 1.0 },
+	{ pattern: /!=/i, operator: '!=', confidence: 1.0 },
+	{ pattern: /<>/i, operator: '!=', confidence: 1.0 },
+	{ pattern: />/i, operator: '>', confidence: 1.0 },
+	{ pattern: /</i, operator: '<', confidence: 1.0 },
+	{ pattern: /=/i, operator: '=', confidence: 1.0 },
+];
+
+// Intent patterns
+const INTENT_PATTERNS: Array<{ pattern: RegExp; action: string; confidence: number }> = [
+	{ pattern: /\b(filter|where|with|having)\b/i, action: 'filter', confidence: 0.9 },
+	{ pattern: /\b(find|search|look\s+for|locate)\b/i, action: 'find', confidence: 0.9 },
+	{ pattern: /\b(show|display|view|see|list)\b/i, action: 'show', confidence: 0.85 },
+	{ pattern: /\b(count|how\s+many|number\s+of)\b/i, action: 'count', confidence: 0.9 },
+	{ pattern: /\b(clear|reset|remove\s+filter)\b/i, action: 'clear', confidence: 0.95 },
+];
 
 const normalizeFieldType = (fieldType: string): string => fieldType?.toLowerCase?.() ?? '';
 const isNumericFieldType = (fieldType: string): boolean => NUMERIC_FIELD_TYPES.has(normalizeFieldType(fieldType));
@@ -156,9 +226,12 @@ interface State {
 	pendingQuery: PendingQuery | null;
 	connectionStatus: 'idle' | 'connecting' | 'ready' | 'error';
 	statusMessage: string;
+	lastFilters: Map<string, string>;
 }
 
 export default class SmartFilterWidget extends React.PureComponent<AllWidgetProps<any>, State> {
+	private levenshteinCache: Map<string, Map<string, number>> = new Map();
+
 	constructor(props: AllWidgetProps<any>) {
 		super(props);
 		this.state = {
@@ -172,8 +245,73 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			pendingQuery: null,
 			connectionStatus: 'idle',
 			statusMessage: 'Select a map in the widget settings to connect.',
+			lastFilters: new Map(),
 		};
 	}
+
+	// Levenshtein distance for fuzzy string matching
+	levenshteinDistance = (str1: string, str2: string): number => {
+		const key = `${str1}:${str2}`;
+		
+		if (!this.levenshteinCache.has(str1)) {
+			this.levenshteinCache.set(str1, new Map());
+		}
+		
+		const cache = this.levenshteinCache.get(str1)!;
+		if (cache.has(str2)) {
+			return cache.get(str2)!;
+		}
+
+		const m = str1.length;
+		const n = str2.length;
+		const dp: number[][] = Array(m + 1).fill(null).map(() => Array(n + 1).fill(0));
+
+		for (let i = 0; i <= m; i++) dp[i][0] = i;
+		for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+		for (let i = 1; i <= m; i++) {
+			for (let j = 1; j <= n; j++) {
+				if (str1[i - 1] === str2[j - 1]) {
+					dp[i][j] = dp[i - 1][j - 1];
+				} else {
+					dp[i][j] = Math.min(
+						dp[i - 1][j] + 1,
+						dp[i][j - 1] + 1,
+						dp[i - 1][j - 1] + 1
+					);
+				}
+			}
+		}
+
+		const distance = dp[m][n];
+		cache.set(str2, distance);
+		return distance;
+	};
+
+	// Compute similarity score (0 to 1)
+	computeSimilarity = (str1: string, str2: string): number => {
+		const maxLen = Math.max(str1.length, str2.length);
+		if (maxLen === 0) return 1.0;
+		const distance = this.levenshteinDistance(str1, str2);
+		return 1 - (distance / maxLen);
+	};
+
+	// Enhanced tokenization with stemming
+	tokenizeWithStemming = (text: string): string[] => {
+		const tokens = text.toLowerCase()
+			.replace(/[^\w\s-]/g, ' ')
+			.split(/\s+/)
+			.filter(t => t.length > 1);
+
+		// Simple stemming rules
+		return tokens.map(token => {
+			// Remove common suffixes
+			if (token.endsWith('ing')) return token.slice(0, -3);
+			if (token.endsWith('ed')) return token.slice(0, -2);
+			if (token.endsWith('s') && token.length > 3) return token.slice(0, -1);
+			return token;
+		});
+	};
 
 	onActiveViewChange = async (jimuMapView: JimuMapView) => {
 		if (!jimuMapView) {
@@ -209,9 +347,9 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			this.setState({
 				loading: false,
 				connectionStatus: 'ready',
-				statusMessage: 'Ready. Enter a query to filter.',
+				statusMessage: `Ready. ${layerCache.length} layer(s) indexed.`,
 			});
-			this.addBotMessage('Hello! The map connection is ready and layers are indexed. What would you like to find?');
+			this.addBotMessage(`✅ Connected! I found ${layerCache.length} layer(s). Try queries like:\n• "rsrp < -110"\n• "show New York data from 2024"\n• "filter active status"`);
 		} catch (error) {
 			const messageText = error instanceof Error ? error.message : 'Unknown error';
 			this.setState({
@@ -234,23 +372,37 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		const layerCache: LayerMetadata[] = [];
 
 		const toArray = (collection: any): any[] => {
-			if (!collection) {
-				return [];
-			}
-			if (typeof collection.toArray === 'function') {
-				return collection.toArray();
-			}
+			if (!collection) return [];
+			if (typeof collection.toArray === 'function') return collection.toArray();
 			return Array.isArray(collection) ? collection : [];
 		};
 
 		const tokenizeTitlePath = (path: string[]): string[] =>
-			path
-				.flatMap((segment) =>
-					String(segment)
-						.toLowerCase()
-						.split(/[\s_>›/-]+/)
-						.filter((token) => token.length > 0),
-				);
+			path.flatMap((segment) =>
+				String(segment)
+					.toLowerCase()
+					.split(/[\s_>›/-]+/)
+					.filter((token) => token.length > 0)
+			);
+
+		const inferSynonyms = (fieldName: string): string[] => {
+			const normalized = fieldName.toLowerCase();
+			const synonyms: string[] = [];
+
+			// Check predefined synonyms
+			for (const [key, values] of Object.entries(FIELD_SYNONYMS)) {
+				if (normalized.includes(key) || values.some(v => normalized.includes(v))) {
+					synonyms.push(key, ...values);
+				}
+			}
+
+			// Add common abbreviations
+			if (normalized.length > 4) {
+				synonyms.push(normalized.slice(0, 3)); // First 3 chars
+			}
+
+			return [...new Set(synonyms)];
+		};
 
 		const collectFeatureLayer = async (
 			featureLayer: FeatureLayer,
@@ -268,7 +420,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					await (featureLayer as any).when();
 				}
 			} catch (error) {
-				console.warn('Failed to load layer metadata.', featureLayer?.title ?? options.sourceId ?? 'feature-layer', error);
+				console.warn('Failed to load layer metadata.', featureLayer?.title ?? options.sourceId, error);
 			}
 
 			const fieldsSource = Array.isArray(featureLayer.fields) ? featureLayer.fields : [];
@@ -283,12 +435,11 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 						alias,
 						type,
 						nameTokens: name.toLowerCase().split(/[_\s]+/),
+						synonyms: inferSynonyms(name),
 					};
 				});
 
-			if (fields.length === 0) {
-				return;
-			}
+			if (fields.length === 0) return;
 
 			const titlePathClean = titlePath.filter((segment) => segment && segment.trim().length > 0);
 			const title = titlePathClean.length > 0 ? titlePathClean.join(' › ') : featureLayer.title ?? options.sourceId ?? 'Layer';
@@ -298,19 +449,17 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				id = `${id}-${layerCache.length}`;
 			}
 
-			const applyDefinitionExpression = options.applyDefinitionExpression
-				? options.applyDefinitionExpression
-				: (whereClause: string | null) => {
+			const applyDefinitionExpression = options.applyDefinitionExpression ?? 
+				((whereClause: string | null) => {
 					featureLayer.definitionExpression = whereClause ?? '1=1';
-				};
+				});
 
-			const setVisible = options.setVisible
-				? options.setVisible
-				: (visible: boolean) => {
+			const setVisible = options.setVisible ?? 
+				((visible: boolean) => {
 					if ('visible' in featureLayer) {
 						(featureLayer as any).visible = visible;
 					}
-				};
+				});
 
 			layerCache.push({
 				id,
@@ -354,12 +503,8 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 						}
 					},
 					setVisible: (visible: boolean) => {
-						if ('visible' in sublayer) {
-							sublayer.visible = visible;
-						}
-						if ('visible' in parentLayer) {
-							parentLayer.visible = visible;
-						}
+						if ('visible' in sublayer) sublayer.visible = visible;
+						if ('visible' in parentLayer) parentLayer.visible = visible;
 					},
 				});
 			}
@@ -381,9 +526,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 						(layer as FeatureLayer).definitionExpression = whereClause ?? '1=1';
 					},
 					setVisible: (visible: boolean) => {
-						if ('visible' in layer) {
-							layer.visible = visible;
-						}
+						if ('visible' in layer) layer.visible = visible;
 					},
 				});
 			}
@@ -411,9 +554,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 	handleSendMessage = async () => {
 		const { message, layerCache, connectionStatus } = this.state;
 
-		if (!message.trim()) {
-			return;
-		}
+		if (!message.trim()) return;
 
 		if (connectionStatus !== 'ready') {
 			this.addBotMessage('⚠️ The map connection is not ready yet. Select a map and wait for the layers to load.');
@@ -439,16 +580,17 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					loading: false,
 				});
 				if (result.pendingQuery?.candidateLayers?.length) {
-					this.addBotMessage('Multiple layers contain matching fields. Please choose which layer to filter:');
+					this.addBotMessage('🤔 I found multiple layers that might match. Please select one:');
 				} else if (result.pendingQuery?.candidateFields?.length) {
-					this.addBotMessage('Multiple fields match your query. Please choose which field to use:');
+					this.addBotMessage('🤔 Multiple fields match your query. Which one do you mean?');
 				} else {
-					this.addBotMessage('I found multiple matches. Which one did you mean?');
+					this.addBotMessage('🤔 I found several possible matches. Please clarify:');
 				}
 			} else if (result.type === 'success') {
 				const featureCount = await this.executeQuery(result);
 				if (featureCount !== null) {
-					this.addBotMessage(`✅ Filter applied to "${result.layerTitle}". ${featureCount} feature(s) found and highlighted.`);
+					this.state.lastFilters.set(result.metadata.id, result.whereClause);
+					this.addBotMessage(`✅ Filter applied to "${result.layerTitle}"\n📍 Found ${featureCount} feature(s)`);
 				}
 				this.setState({ loading: false });
 			} else {
@@ -465,14 +607,35 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 	processMessage = async (message: string, layerCache: LayerMetadata[]): Promise<ProcessResult> => {
 		const parsed = this.parseMessage(message);
 
-		// Check for exact field name matches across all layers
+		// Handle clear filter intent
+		if (parsed.intent.action === 'clear' && parsed.intent.confidence > 0.8) {
+			return this.handleClearFilters(layerCache);
+		}
+
+		// Check for exact field name matches with advanced scoring
 		const exactFieldMatches = this.findExactFieldMatches(parsed, layerCache);
 		
 		if (exactFieldMatches.length > 1) {
-			// Multiple layers have the exact field - ask user to clarify
+			// Sort by confidence and layer relevance
+			exactFieldMatches.sort((a, b) => {
+				const aScore = this.scoreLayerRelevance(parsed, a.layer);
+				const bScore = this.scoreLayerRelevance(parsed, b.layer);
+				return bScore - aScore;
+			});
+
+			// If top match is significantly better, use it
+			if (exactFieldMatches[0] && exactFieldMatches[1]) {
+				const topScore = this.scoreLayerRelevance(parsed, exactFieldMatches[0].layer);
+				const secondScore = this.scoreLayerRelevance(parsed, exactFieldMatches[1].layer);
+				
+				if (topScore > secondScore * 1.5) {
+					return this.buildDirectQuery(parsed, exactFieldMatches[0].layer, exactFieldMatches[0].field);
+				}
+			}
+
 			return {
 				type: 'clarification',
-				options: exactFieldMatches.map((match) => ({
+				options: exactFieldMatches.slice(0, 5).map((match) => ({
 					label: `${match.field.name} in ${match.layer.path.join(' › ')}`,
 					value: match.layer.id,
 					field: match.field.name,
@@ -482,46 +645,89 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				pendingQuery: {
 					parsed,
 					layerMatch: null,
-					candidateFields: exactFieldMatches,
+					candidateFields: exactFieldMatches.slice(0, 5),
 				},
 			};
 		}
 
 		if (exactFieldMatches.length === 1) {
-			// Perfect match - use it directly
-			const match = exactFieldMatches[0];
-			return this.buildDirectQuery(parsed, match.layer, match.field);
+			return this.buildDirectQuery(parsed, exactFieldMatches[0].layer, exactFieldMatches[0].field);
 		}
 
-		// Fall back to smart ranking
-		const layerMatches = this.rankLayers(parsed, layerCache);
+		// Enhanced smart ranking with confidence scores
+		const layerMatches = this.rankLayersAdvanced(parsed, layerCache);
 		const minScore = layerCache.length > 1 ? 10 : 0;
-		const viableMatches = layerMatches.filter((match) => match.score >= minScore);
+		const viableMatches = layerMatches.filter((match) => match.score >= minScore && match.confidence > 0.5);
 
 		if (viableMatches.length === 0) {
-			return { type: 'error', message: 'No suitable layer was identified. Try mentioning a specific field or layer name.' };
+			return { 
+				type: 'error', 
+				message: 'No suitable layer found. Try:\n• Mentioning a specific field name\n• Including layer name\n• Using simpler terms' 
+			};
 		}
 
 		const topScore = viableMatches[0].score;
-		const closeMatches = viableMatches.filter((match) => match.score >= Math.max(5, topScore - 10));
+		const closeMatches = viableMatches.filter((match) => 
+			match.score >= Math.max(5, topScore * 0.7) && match.confidence > 0.6
+		);
 
 		if (closeMatches.length > 1) {
 			return {
 				type: 'clarification',
-				options: closeMatches.map((match) => ({
-					label: `${match.layer.path.join(' › ')}`,
+				options: closeMatches.slice(0, 5).map((match) => ({
+					label: `${match.layer.path.join(' › ')} (${match.matchedFields.length} field matches)`,
 					value: match.layer.id,
 					context: 'layer' as ClarificationContext,
 				})),
 				pendingQuery: {
 					parsed,
 					layerMatch: null,
-					candidateLayers: closeMatches,
+					candidateLayers: closeMatches.slice(0, 5),
 				},
 			};
 		}
 
 		return this.buildSmartQuery(parsed, viableMatches[0]);
+	};
+
+	handleClearFilters = async (layerCache: LayerMetadata[]): Promise<ProcessResult> => {
+		let cleared = 0;
+		for (const layer of layerCache) {
+			if (this.state.lastFilters.has(layer.id)) {
+				layer.applyDefinitionExpression?.('1=1');
+				this.state.lastFilters.delete(layer.id);
+				cleared++;
+			}
+		}
+
+		if (cleared > 0) {
+			this.addBotMessage(`✅ Cleared filters from ${cleared} layer(s)`);
+		} else {
+			this.addBotMessage('ℹ️ No active filters to clear');
+		}
+
+		return { type: 'error', message: '' }; // Dummy return
+	};
+
+	scoreLayerRelevance = (parsed: ParsedMessage, layer: LayerMetadata): number => {
+		let score = 0;
+
+		// Title token matches
+		parsed.tokens.forEach(token => {
+			if (layer.titleTokens.some(tt => this.computeSimilarity(token, tt) > 0.8)) {
+				score += 10;
+			}
+		});
+
+		// Field type relevance
+		if (parsed.context.hasTimeReference && layer.fields.some(f => isDateFieldType(f.type))) {
+			score += 15;
+		}
+		if (parsed.context.hasComparison && layer.fields.some(f => isNumericFieldType(f.type))) {
+			score += 10;
+		}
+
+		return score;
 	};
 
 	findExactFieldMatches = (parsed: ParsedMessage, layerCache: LayerMetadata[]): Array<{ field: FieldMetadata; layer: LayerMetadata }> => {
@@ -531,8 +737,29 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		layerCache.forEach((layer) => {
 			layer.fields.forEach((field) => {
 				const fieldNameLower = field.name.toLowerCase();
+				
+				// Exact match
 				if (searchTokens.includes(fieldNameLower)) {
 					matches.push({ field, layer });
+					return;
+				}
+
+				// Synonym match
+				if (field.synonyms) {
+					for (const synonym of field.synonyms) {
+						if (searchTokens.includes(synonym.toLowerCase())) {
+							matches.push({ field, layer });
+							return;
+						}
+					}
+				}
+
+				// Fuzzy match with high threshold
+				for (const token of searchTokens) {
+					if (this.computeSimilarity(token, fieldNameLower) > 0.9) {
+						matches.push({ field, layer });
+						return;
+					}
 				}
 			});
 		});
@@ -544,29 +771,53 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		const conditions: string[] = [];
 		const fieldType = normalizeFieldType(field.type);
 
-		// Build condition based on field type and parsed data
-		if (isNumericFieldType(fieldType) && parsed.numbers.length > 0) {
-			const numCond = this.buildNumericCondition(field, parsed);
-			if (numCond) {
-				conditions.push(numCond);
-			}
-		} else if (isDateFieldType(fieldType) && parsed.dates.length > 0) {
-			const dateCond = this.buildDateCondition(field, parsed.dates[0]);
-			if (dateCond) {
-				conditions.push(dateCond);
-			}
-		} else if (isStringFieldType(fieldType)) {
-			const textTokens = parsed.freeText.length > 0 ? parsed.freeText : parsed.tokens;
-			if (textTokens.length > 0) {
-				const textMatch = await this.matchTextValue(textTokens, field, layer.queryLayer);
-				if (textMatch.type === 'success') {
-					conditions.push(textMatch.condition);
+		// Check for parsed conditions first
+		const fieldCondition = parsed.conditions.find(c => 
+			c.field?.toLowerCase() === field.name.toLowerCase()
+		);
+
+		if (fieldCondition && fieldCondition.operator && fieldCondition.value !== undefined) {
+			if (isNumericFieldType(fieldType)) {
+				const numValue = parseFloat(String(fieldCondition.value));
+				if (!isNaN(numValue)) {
+					const op = fieldCondition.operator;
+					if (op === 'IS NULL') {
+						conditions.push(`${field.name} IS NULL`);
+					} else if (op === 'IS NOT NULL') {
+						conditions.push(`${field.name} IS NOT NULL`);
+					} else {
+						conditions.push(`${field.name} ${op} ${numValue}`);
+					}
+				}
+			} else if (isStringFieldType(fieldType)) {
+				const sanitized = String(fieldCondition.value).replace(/'/g, "''");
+				if (fieldCondition.operator === 'LIKE') {
+					conditions.push(`UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`);
 				} else {
-					const likeConditions = textTokens.map((text) => {
-						const sanitized = text.replace(/'/g, "''");
-						return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
-					});
-					conditions.push(`(${likeConditions.join(' OR ')})`);
+					conditions.push(`${field.name} ${fieldCondition.operator} '${sanitized}'`);
+				}
+			}
+		} else {
+			// Build condition based on field type and parsed data
+			if (isNumericFieldType(fieldType) && parsed.numbers.length > 0) {
+				const numCond = this.buildNumericCondition(field, parsed);
+				if (numCond) conditions.push(numCond);
+			} else if (isDateFieldType(fieldType) && parsed.dates.length > 0) {
+				const dateCond = this.buildDateCondition(field, parsed.dates[0]);
+				if (dateCond) conditions.push(dateCond);
+			} else if (isStringFieldType(fieldType)) {
+				const textTokens = parsed.freeText.length > 0 ? parsed.freeText : parsed.tokens;
+				if (textTokens.length > 0) {
+					const textMatch = await this.matchTextValue(textTokens, field, layer.queryLayer);
+					if (textMatch.type === 'success') {
+						conditions.push(textMatch.condition);
+					} else {
+						const likeConditions = textTokens.map((text) => {
+							const sanitized = text.replace(/'/g, "''");
+							return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
+						});
+						conditions.push(`(${likeConditions.join(' OR ')})`);
+					}
 				}
 			}
 		}
@@ -593,44 +844,175 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 	};
 
 	parseMessage = (message: string): ParsedMessage => {
-		const lowerMessage = message.toLowerCase();
-		const tokens = lowerMessage.split(/\s+/).filter((token) => token.length > 1);
+		const original = message;
+		const normalized = this.normalizeMessage(message);
+		const lowerMessage = normalized.toLowerCase();
+		const tokens = this.tokenizeWithStemming(normalized);
 
-		// Parse logical operators
-		const logicalOperators: LogicalOperator[] = [];
-		if (/\band\b/i.test(message)) logicalOperators.push('AND');
-		if (/\bor\b/i.test(message)) logicalOperators.push('OR');
+		// Detect intent
+		let intent: QueryIntent = { action: 'filter', confidence: 0.7 };
+		for (const pattern of INTENT_PATTERNS) {
+			if (pattern.pattern.test(lowerMessage)) {
+				intent = { action: pattern.action as any, confidence: pattern.confidence };
+				break;
+			}
+		}
 
-		// Parse conditions (simple pattern matching)
-		const conditions = this.parseConditions(message);
+		// Build semantic context
+		const context: SemanticContext = {
+			hasLocation: /\b(in|at|near|around|from)\s+[A-Z][a-z]+/i.test(message),
+			hasTimeReference: this.extractDates(message).length > 0 || /\b(today|yesterday|tomorrow|last|recent|current)\b/i.test(lowerMessage),
+			hasComparison: this.extractOperators(message).length > 0,
+			hasAggregation: /\b(count|sum|average|total|max|min)\b/i.test(lowerMessage),
+			isQuestion: message.trim().endsWith('?'),
+			suggestedFieldTypes: new Set(),
+		};
+
+		// Infer likely field types from context
+		if (context.hasTimeReference) context.suggestedFieldTypes.add('date');
+		if (context.hasComparison) context.suggestedFieldTypes.add('numeric');
+		if (context.hasLocation) context.suggestedFieldTypes.add('string');
+
+		// Parse conditions with context awareness
+		const conditions = this.parseConditionsAdvanced(message, context);
 
 		return {
-			original: message,
+			original,
+			normalized,
 			tokens,
 			potentialFields: this.extractPotentialFields(message),
 			dates: this.extractDates(message),
 			numbers: this.extractNumbers(message),
 			operators: this.extractOperators(message),
-			logicalOperators,
+			logicalOperators: this.extractLogicalOperators(message),
 			conditions,
 			freeText: this.extractFreeText(message),
+			intent,
+			context,
+			entities: this.extractEntities(message),
 		};
 	};
 
-	parseConditions = (message: string): ParsedCondition[] => {
+	normalizeMessage = (message: string): string => {
+		// Expand contractions
+		let normalized = message
+			.replace(/\bcan't\b/gi, 'cannot')
+			.replace(/\bwon't\b/gi, 'will not')
+			.replace(/\bisn't\b/gi, 'is not')
+			.replace(/\baren't\b/gi, 'are not')
+			.replace(/\bwasn't\b/gi, 'was not')
+			.replace(/\bweren't\b/gi, 'were not')
+			.replace(/\bhasn't\b/gi, 'has not')
+			.replace(/\bhaven't\b/gi, 'have not')
+			.replace(/\bhadn't\b/gi, 'had not')
+			.replace(/\bdoesn't\b/gi, 'does not')
+			.replace(/\bdon't\b/gi, 'do not')
+			.replace(/\bdidn't\b/gi, 'did not');
+
+		// Normalize spacing around operators
+		normalized = normalized
+			.replace(/\s*>=\s*/g, ' >= ')
+			.replace(/\s*<=\s*/g, ' <= ')
+			.replace(/\s*!=\s*/g, ' != ')
+			.replace(/\s*<>\s*/g, ' <> ')
+			.replace(/\s*>\s*/g, ' > ')
+			.replace(/\s*<\s*/g, ' < ')
+			.replace(/\s*=\s*/g, ' = ');
+
+		return normalized;
+	};
+
+	extractLogicalOperators = (message: string): LogicalOperator[] => {
+		const operators: LogicalOperator[] = [];
+		const lower = message.toLowerCase();
+		
+		if (/\b(and|&&)\b/i.test(lower)) operators.push('AND');
+		if (/\b(or|\|\|)\b/i.test(lower)) operators.push('OR');
+		if (/\b(not|!)\b/i.test(lower)) operators.push('NOT');
+		
+		return operators;
+	};
+
+	extractEntities = (message: string): Map<string, any> => {
+		const entities = new Map<string, any>();
+
+		// Extract quoted strings
+		const quotedStrings = message.match(/'([^']*)'/g) || message.match(/"([^"]*)"/g);
+		if (quotedStrings) {
+			entities.set('quoted_values', quotedStrings.map(s => s.replace(/['"]/g, '')));
+		}
+
+		// Extract location names (capitalized words)
+		const locationPattern = /\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b/g;
+		const locations = [...message.matchAll(locationPattern)].map(m => m[1]);
+		if (locations.length > 0) {
+			entities.set('locations', locations);
+		}
+
+		// Extract ranges (e.g., "between 10 and 20")
+		const rangePattern = /between\s+(-?\d+(?:\.\d+)?)\s+and\s+(-?\d+(?:\.\d+)?)/i;
+		const rangeMatch = message.match(rangePattern);
+		if (rangeMatch) {
+			entities.set('range', { min: parseFloat(rangeMatch[1]), max: parseFloat(rangeMatch[2]) });
+		}
+
+		return entities;
+	};
+
+	parseConditionsAdvanced = (message: string, context: SemanticContext): ParsedCondition[] => {
 		const conditions: ParsedCondition[] = [];
 		
-		// Pattern: field operator value
-		// e.g., "rsrp<-110" or "status = 'active'" or "year > 2020"
-		const conditionPattern = /([a-z_][a-z0-9_]*)\s*(>=|<=|!=|<>|>|<|=)\s*(-?\d+(?:\.\d+)?|'[^']*')/gi;
+		// Pattern 1: field operator value (e.g., "rsrp<-110")
+		const directPattern = /([a-z_][a-z0-9_]*)\s*(>=|<=|!=|<>|>|<|=)\s*(-?\d+(?:\.\d+)?|'[^']*')/gi;
 		let match;
 		
-		while ((match = conditionPattern.exec(message)) !== null) {
+		while ((match = directPattern.exec(message)) !== null) {
 			conditions.push({
 				field: match[1],
 				operator: match[2],
 				value: match[3].replace(/'/g, ''),
 				raw: match[0],
+				confidence: 1.0,
+			});
+		}
+
+		// Pattern 2: Natural language comparisons
+		const nlPattern = /([a-z_][a-z0-9_]*)\s+(greater|less|more|fewer|above|below|equal)\s+(?:than|to)?\s*(-?\d+(?:\.\d+)?)/gi;
+		while ((match = nlPattern.exec(message)) !== null) {
+			const operator = match[2].toLowerCase();
+			const op = operator.includes('greater') || operator.includes('more') || operator.includes('above') ? '>' :
+						operator.includes('less') || operator.includes('fewer') || operator.includes('below') ? '<' : '=';
+			
+			conditions.push({
+				field: match[1],
+				operator: op,
+				value: parseFloat(match[3]),
+				raw: match[0],
+				confidence: 0.85,
+			});
+		}
+
+		// Pattern 3: IS NULL / IS NOT NULL
+		const nullPattern = /([a-z_][a-z0-9_]*)\s+is\s+(not\s+)?(?:null|empty|missing)/gi;
+		while ((match = nullPattern.exec(message)) !== null) {
+			conditions.push({
+				field: match[1],
+				operator: match[2] ? 'IS NOT NULL' : 'IS NULL',
+				value: null,
+				raw: match[0],
+				confidence: 0.9,
+			});
+		}
+
+		// Pattern 4: BETWEEN ranges
+		const betweenPattern = /([a-z_][a-z0-9_]*)\s+between\s+(-?\d+(?:\.\d+)?)\s+and\s+(-?\d+(?:\.\d+)?)/gi;
+		while ((match = betweenPattern.exec(message)) !== null) {
+			conditions.push({
+				field: match[1],
+				operator: 'BETWEEN',
+				value: `${match[2]} AND ${match[3]}`,
+				raw: match[0],
+				confidence: 0.95,
 			});
 		}
 
@@ -645,23 +1027,30 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 	extractDates = (message: string): DateInfo[] => {
 		const dates: DateInfo[] = [];
 
+		// Relative dates
+		const relativePattern = /(\d+)\s+(day|week|month|year)s?\s+ago/i;
+		const relMatch = message.match(relativePattern);
+		if (relMatch) {
+			dates.push({ 
+				type: 'relative', 
+				unit: relMatch[2].toLowerCase() as any, 
+				offset: -parseInt(relMatch[1]) 
+			});
+		}
+
+		// Year pattern
 		const yearMatch = message.match(/\b(19|20)\d{2}\b/);
 		if (yearMatch) {
 			dates.push({ type: 'year', value: parseInt(yearMatch[0], 10) });
 		}
 
+		// Month-year pattern
 		const monthNames: Record<string, string> = {
-			january: '01', jan: '01',
-			february: '02', feb: '02',
-			march: '03', mar: '03',
-			april: '04', apr: '04',
-			may: '05',
-			june: '06', jun: '06',
-			july: '07', jul: '07',
-			august: '08', aug: '08',
-			september: '09', sept: '09', sep: '09',
-			october: '10', oct: '10',
-			november: '11', nov: '11',
+			january: '01', jan: '01', february: '02', feb: '02',
+			march: '03', mar: '03', april: '04', apr: '04',
+			may: '05', june: '06', jun: '06', july: '07', jul: '07',
+			august: '08', aug: '08', september: '09', sept: '09', sep: '09',
+			october: '10', oct: '10', november: '11', nov: '11',
 			december: '12', dec: '12',
 		};
 
@@ -673,6 +1062,18 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			}
 		});
 
+		// Full date pattern (MM/DD/YYYY or DD-MM-YYYY)
+		const fullDatePattern = /\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/;
+		const fullMatch = message.match(fullDatePattern);
+		if (fullMatch) {
+			dates.push({
+				type: 'full-date',
+				year: parseInt(fullMatch[3], 10),
+				month: fullMatch[1].padStart(2, '0'),
+				day: fullMatch[2].padStart(2, '0'),
+			});
+		}
+
 		return dates;
 	};
 
@@ -683,31 +1084,29 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 
 	extractOperators = (message: string): OperatorInfo[] => {
 		const operators: OperatorInfo[] = [];
-		const lowerMsg = message.toLowerCase();
 
-		if (/(>=|greater than or equal)/i.test(lowerMsg)) {
-			operators.push({ type: '>=' });
-		} else if (/(greater than|more than|above|over|>)/i.test(lowerMsg)) {
-			operators.push({ type: '>' });
-		}
-		
-		if (/(<=|less than or equal)/i.test(lowerMsg)) {
-			operators.push({ type: '<=' });
-		} else if (/(less than|below|under|<)/i.test(lowerMsg)) {
-			operators.push({ type: '<' });
-		}
-		
-		if (/(!=|<>|not equal)/i.test(lowerMsg)) {
-			operators.push({ type: '!=' });
-		} else if (/(equal to|equals|=|is|exactly)/i.test(lowerMsg)) {
-			operators.push({ type: '=' });
-		}
-		
-		if (/(between)/i.test(lowerMsg)) {
-			operators.push({ type: 'BETWEEN' });
+		for (const pattern of OPERATOR_PATTERNS) {
+			if (pattern.pattern.test(message)) {
+				operators.push({ 
+					type: pattern.operator as any, 
+					confidence: pattern.confidence 
+				});
+			}
 		}
 
-		return operators;
+		// Remove duplicates, keep highest confidence
+		const uniqueOps = new Map<string, number>();
+		operators.forEach(op => {
+			const existing = uniqueOps.get(op.type);
+			if (!existing || op.confidence > existing) {
+				uniqueOps.set(op.type, op.confidence);
+			}
+		});
+
+		return Array.from(uniqueOps.entries()).map(([type, confidence]) => ({ 
+			type: type as any, 
+			confidence 
+		}));
 	};
 
 	extractFreeText = (message: string): string[] => {
@@ -717,6 +1116,9 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			'and', 'or', 'not', 'with', 'for', 'the', 'that', 'this', 'these', 'those',
 			'where', 'records', 'results', 'show', 'find', 'display', 'please', 'filter',
 			'list', 'from', 'in', 'on', 'of', 'greater', 'less', 'than', 'equal', 'to',
+			'is', 'are', 'was', 'were', 'been', 'being', 'have', 'has', 'had',
+			'do', 'does', 'did', 'will', 'would', 'should', 'could', 'may', 'might',
+			'can', 'must', 'a', 'an', 'as', 'at', 'by', 'it', 'its', 'me', 'my',
 		]);
 
 		return words.filter(
@@ -728,14 +1130,13 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		);
 	};
 
-	rankLayers = (parsed: ParsedMessage, layerCache: LayerMetadata[]): LayerMatch[] => {
-		if (layerCache.length === 0) {
-			return [];
-		}
+	rankLayersAdvanced = (parsed: ParsedMessage, layerCache: LayerMetadata[]): LayerMatch[] => {
+		if (layerCache.length === 0) return [];
 
 		return layerCache
 			.map((layer) => {
 				let score = 0;
+				let confidence = 0.5;
 				const matchedFields: MatchedField[] = [];
 				const titleTokens = layer.titleTokens ?? [];
 				const messageTokens = Array.from(
@@ -746,51 +1147,95 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					]),
 				);
 
+				// Title matching with fuzzy logic
 				messageTokens.forEach((token) => {
 					const loweredToken = token.toLowerCase();
-					if (titleTokens.includes(loweredToken)) {
-						score += 40;
-					} else if (titleTokens.some((titleToken) => titleToken.includes(loweredToken) || loweredToken.includes(titleToken))) {
-						score += 20;
-					}
-				});
-
-				parsed.potentialFields.forEach((token) => {
-					layer.fields.forEach((field) => {
-						const loweredName = field.name.toLowerCase();
-						const loweredAlias = field.alias.toLowerCase();
-
-						if (loweredName === token) {
-							score += 50;
-							matchedFields.push({ field, token, type: 'exact' });
-						} else if (loweredName.includes(token)) {
-							score += 25;
-							matchedFields.push({ field, token, type: 'partial' });
-						} else if (field.nameTokens.includes(token)) {
-							score += 30;
-							matchedFields.push({ field, token, type: 'token' });
-						} else if (loweredAlias.includes(token)) {
-							score += 20;
-							matchedFields.push({ field, token, type: 'alias' });
+					
+					titleTokens.forEach(titleToken => {
+						const similarity = this.computeSimilarity(loweredToken, titleToken);
+						if (similarity > 0.9) {
+							score += 40 * similarity;
+							confidence = Math.max(confidence, 0.9);
+						} else if (similarity > 0.7) {
+							score += 20 * similarity;
+							confidence = Math.max(confidence, 0.7);
 						}
 					});
 				});
 
-				if (parsed.dates.length > 0 && layer.fields.some((field) => isDateFieldType(field.type))) {
+				// Field matching with synonym support
+				parsed.potentialFields.forEach((token) => {
+					layer.fields.forEach((field) => {
+						const loweredName = field.name.toLowerCase();
+						const loweredAlias = field.alias.toLowerCase();
+						const similarity = this.computeSimilarity(token, loweredName);
+
+						if (similarity === 1.0) {
+							score += 50;
+							matchedFields.push({ field, token, type: 'exact', confidence: 1.0 });
+							confidence = Math.max(confidence, 0.95);
+						} else if (similarity > 0.85) {
+							score += 30 * similarity;
+							matchedFields.push({ field, token, type: 'partial', confidence: similarity });
+							confidence = Math.max(confidence, 0.8);
+						} else if (field.nameTokens.includes(token)) {
+							score += 30;
+							matchedFields.push({ field, token, type: 'token', confidence: 0.85 });
+							confidence = Math.max(confidence, 0.75);
+						} else if (loweredAlias.includes(token) || token.includes(loweredAlias)) {
+							score += 20;
+							matchedFields.push({ field, token, type: 'alias', confidence: 0.7 });
+							confidence = Math.max(confidence, 0.65);
+						}
+
+						// Synonym matching
+						if (field.synonyms) {
+							for (const synonym of field.synonyms) {
+								if (this.computeSimilarity(token, synonym) > 0.8) {
+									score += 25;
+									matchedFields.push({ field, token, type: 'synonym', confidence: 0.75 });
+									confidence = Math.max(confidence, 0.7);
+								}
+							}
+						}
+					});
+				});
+
+				// Context-based scoring
+				if (parsed.context.hasTimeReference && layer.fields.some((field) => isDateFieldType(field.type))) {
 					score += 15;
+					confidence = Math.max(confidence, 0.6);
 				}
 
-				if (parsed.numbers.length > 0 && layer.fields.some((field) => isNumericFieldType(field.type))) {
+				if (parsed.context.hasComparison && layer.fields.some((field) => isNumericFieldType(field.type))) {
 					score += 15;
+					confidence = Math.max(confidence, 0.6);
 				}
 
-				if (parsed.freeText.length > 0 && layer.fields.some((field) => isStringFieldType(field.type))) {
+				if (parsed.context.hasLocation && layer.fields.some((field) => isStringFieldType(field.type))) {
 					score += 10;
 				}
 
-				return { layer, score, matchedFields };
+				// Entity matching (e.g., location names in layer title)
+				if (parsed.entities.has('locations')) {
+					const locations = parsed.entities.get('locations') as string[];
+					locations.forEach(loc => {
+						if (layer.title.includes(loc)) {
+							score += 20;
+							confidence = Math.max(confidence, 0.75);
+						}
+					});
+				}
+
+				return { layer, score, matchedFields, confidence };
 			})
-			.sort((a, b) => b.score - a.score)
+			.sort((a, b) => {
+				// Sort by score first, then confidence
+				if (Math.abs(a.score - b.score) < 5) {
+					return b.confidence - a.confidence;
+				}
+				return b.score - a.score;
+			})
 			.filter((match) => match.score > 0);
 	};
 
@@ -801,9 +1246,21 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			parsed.freeText.length > 0 ? parsed.freeText : parsed.numbers.map((value) => `${value}`)
 		).filter((token) => token.trim().length > 0);
 
-		// If we have parsed conditions with exact field matches, use those
-		if (parsed.conditions.length > 0) {
+		// Handle BETWEEN ranges from entities
+		if (parsed.entities.has('range')) {
+			const range = parsed.entities.get('range');
+			const numericFields = matchedFields.filter(mf => isNumericFieldType(mf.field.type));
+			if (numericFields.length > 0) {
+				const field = numericFields[0].field;
+				conditions.push(`${field.name} BETWEEN ${range.min} AND ${range.max}`);
+			}
+		}
+
+		// Process parsed conditions with exact field matches
+		if (parsed.conditions.length > 0 && conditions.length === 0) {
 			for (const condition of parsed.conditions) {
+				if (condition.confidence < 0.7) continue;
+
 				const field = layerMetadata.fields.find(
 					f => f.name.toLowerCase() === condition.field?.toLowerCase()
 				);
@@ -811,35 +1268,43 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				if (field && condition.operator && condition.value !== undefined) {
 					const fieldType = normalizeFieldType(field.type);
 					
-					if (isNumericFieldType(fieldType)) {
+					if (condition.operator === 'IS NULL') {
+						conditions.push(`${field.name} IS NULL`);
+					} else if (condition.operator === 'IS NOT NULL') {
+						conditions.push(`${field.name} IS NOT NULL`);
+					} else if (condition.operator === 'BETWEEN') {
+						conditions.push(`${field.name} BETWEEN ${condition.value}`);
+					} else if (isNumericFieldType(fieldType)) {
 						const numValue = parseFloat(String(condition.value));
 						if (!isNaN(numValue)) {
 							conditions.push(`${field.name} ${condition.operator} ${numValue}`);
 						}
 					} else if (isStringFieldType(fieldType)) {
 						const sanitized = String(condition.value).replace(/'/g, "''");
-						conditions.push(`${field.name} ${condition.operator} '${sanitized}'`);
+						if (condition.operator === 'LIKE') {
+							conditions.push(`UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`);
+						} else {
+							conditions.push(`${field.name} ${condition.operator} '${sanitized}'`);
+						}
 					}
 				}
 			}
 		}
 
-		// Process matched fields if no direct conditions were found
+		// Process matched fields if no direct conditions
 		if (conditions.length === 0) {
 			for (const match of matchedFields) {
+				if (match.confidence < 0.6) continue;
+
 				const field = match.field;
 				const fieldType = normalizeFieldType(field.type);
 
 				if (isDateFieldType(fieldType) && parsed.dates.length > 0) {
 					const dateCond = this.buildDateCondition(field, parsed.dates[0]);
-					if (dateCond) {
-						conditions.push(dateCond);
-					}
+					if (dateCond) conditions.push(dateCond);
 				} else if (isNumericFieldType(fieldType) && parsed.numbers.length > 0) {
 					const numCond = this.buildNumericCondition(field, parsed);
-					if (numCond) {
-						conditions.push(numCond);
-					}
+					if (numCond) conditions.push(numCond);
 				} else if (isStringFieldType(fieldType) && textTokens.length > 0) {
 					const textMatch = await this.matchTextValue(textTokens, field, layerMetadata.queryLayer);
 
@@ -866,7 +1331,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			}
 		}
 
-		// Fallback: search all string fields if no conditions yet
+		// Fallback: search all string fields
 		const unmatchedStringFields = layerMetadata.fields.filter(
 			(field: FieldMetadata) =>
 				isStringFieldType(field.type) && !matchedFields.some((matched) => matched.field.name === field.name),
@@ -886,17 +1351,18 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			}
 		}
 
-		// Join conditions with logical operators if present
+		// Join conditions with logical operators
 		const logicalOp = parsed.logicalOperators.length > 0 ? parsed.logicalOperators[0] : 'AND';
 		const whereClause = conditions.length > 0 ? conditions.join(` ${logicalOp} `) : '1=1';
 		
 		const matchedFieldNames = Array.from(new Set(matchedFields.map((match) => match.field.name)));
 		const operatorStrings = parsed.operators.map((operator) => operator.type);
-		const dateStrings = parsed.dates.map((dateInfo) =>
-			dateInfo.type === 'year'
-				? `year:${dateInfo.value}`
-				: `month:${dateInfo.month}-${dateInfo.year}`,
-		);
+		const dateStrings = parsed.dates.map((dateInfo) => {
+			if (dateInfo.type === 'year') return `year:${dateInfo.value}`;
+			if (dateInfo.type === 'month-year') return `month:${dateInfo.month}-${dateInfo.year}`;
+			if (dateInfo.type === 'relative') return `${dateInfo.offset} ${dateInfo.unit}(s) ago`;
+			return `${dateInfo.month}/${dateInfo.day}/${dateInfo.year}`;
+		});
 
 		return {
 			type: 'success',
@@ -924,7 +1390,6 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 	): Promise<MatchResult> => {
 		try {
 			if (typeof queryLayer.queryFeatures !== 'function') {
-				console.warn('Layer does not support queryFeatures for text matching.', field.name);
 				return { type: 'fallback' };
 			}
 
@@ -936,52 +1401,35 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			query.returnGeometry = false;
 			query.num = 1000;
 
-			if (!Array.isArray(query.outFields)) {
-				query.outFields = [field.name];
-			}
-
 			const results = await queryFeatures(query);
 			if (!results || !Array.isArray(results.features)) {
 				return { type: 'fallback' };
 			}
+
 			const distinctValues = results.features
 				.map((feature: any) => feature.attributes[field.name])
 				.filter((value: unknown) => value !== null && value !== undefined);
 
 			if (distinctValues.length === 0) {
-				if (freeTextArray.length === 1) {
-					const sanitized = freeTextArray[0].replace(/'/g, "''");
-					return {
-						type: 'success',
-						condition: `${field.name} = '${sanitized}'`,
-					};
-				}
 				return { type: 'fallback' };
 			}
 
 			const allMatches: Array<{ value: unknown; score: number; userText: string }> = [];
 
 			freeTextArray.forEach((userText: string) => {
-				const variations = this.generateVariations(userText);
-
 				distinctValues.forEach((dbValue: unknown) => {
 					const normalizedDbValue = String(dbValue).toLowerCase();
-					const score = this.calculateSimilarity(variations, normalizedDbValue);
-					if (score > 0.3) {
-						allMatches.push({ value: dbValue, score, userText });
+					const normalizedUserText = userText.toLowerCase();
+					
+					// Use advanced similarity scoring
+					const similarity = this.computeSimilarity(normalizedUserText, normalizedDbValue);
+					if (similarity > 0.4) {
+						allMatches.push({ value: dbValue, score: similarity, userText });
 					}
 				});
 			});
 
 			if (allMatches.length === 0) {
-				if (freeTextArray.length === 1) {
-					const sanitized = freeTextArray[0].replace(/'/g, "''");
-					return {
-						type: 'success',
-						condition: `${field.name} = '${sanitized}'`,
-					};
-				}
-
 				const likeConditions = freeTextArray.map((text) => {
 					const sanitized = text.replace(/'/g, "''");
 					return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
@@ -1000,7 +1448,8 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			allMatches.sort((a, b) => b.score - a.score);
 			const topMatches = allMatches.slice(0, 5);
 
-			if (topMatches.length > 0 && topMatches[0].score > 0.8) {
+			// If top match has very high confidence, use it
+			if (topMatches.length > 0 && topMatches[0].score > 0.85) {
 				const sanitizedValue = String(topMatches[0].value).replace(/'/g, "''");
 				return {
 					type: 'success',
@@ -1008,11 +1457,12 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				};
 			}
 
-			if (topMatches.length > 1) {
+			// If multiple good matches, ask for clarification
+			if (topMatches.length > 1 && topMatches[1].score > 0.6) {
 				return {
 					type: 'clarification',
 					options: topMatches.map((match) => ({
-						label: `${match.value} (for "${match.userText}")`,
+						label: `${match.value} (for "${match.userText}") - ${Math.round(match.score * 100)}% match`,
 						value: String(match.value),
 						field: field.name,
 						context: 'value' as ClarificationContext,
@@ -1020,6 +1470,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				};
 			}
 
+			// Single decent match
 			if (topMatches.length > 0) {
 				const sanitizedValue = String(topMatches[0].value).replace(/'/g, "''");
 				return {
@@ -1033,34 +1484,6 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			console.error('Text matching error:', error);
 			return { type: 'fallback' };
 		}
-	};
-
-	generateVariations = (text: string): string[] => {
-		const lowered = text.toLowerCase();
-		const variations = [lowered, lowered.replace(/\s+/g, ''), lowered.replace(/\s+/g, '_')];
-
-		const words = text.split(/\s+/);
-		if (words.length > 1) {
-			variations.push(words.map((word) => word[0]).join('').toLowerCase());
-		}
-
-		return variations;
-	};
-
-	calculateSimilarity = (variations: string[], dbValue: string): number => {
-		let maxScore = 0;
-
-		variations.forEach((variation) => {
-			if (variation === dbValue) {
-				maxScore = Math.max(maxScore, 1);
-			} else if (dbValue.includes(variation) || variation.includes(dbValue)) {
-				maxScore = Math.max(maxScore, 0.8);
-			} else if (dbValue.startsWith(variation) || variation.startsWith(dbValue)) {
-				maxScore = Math.max(maxScore, 0.7);
-			}
-		});
-
-		return maxScore;
 	};
 
 	buildDateCondition = (field: FieldMetadata, dateInfo: DateInfo): string | null => {
@@ -1079,12 +1502,46 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			return `${field.name} >= TIMESTAMP '${dateInfo.year}-${dateInfo.month}-01 00:00:00' AND ${field.name} < TIMESTAMP '${nextYear}-${nextMonthString}-01 00:00:00'`;
 		}
 
+		if (dateInfo.type === 'full-date') {
+			return `${field.name} = TIMESTAMP '${dateInfo.year}-${dateInfo.month}-${dateInfo.day} 00:00:00'`;
+		}
+
+		if (dateInfo.type === 'relative') {
+			const now = new Date();
+			let targetDate = new Date(now);
+			
+			switch (dateInfo.unit) {
+				case 'day':
+					targetDate.setDate(now.getDate() + dateInfo.offset);
+					break;
+				case 'week':
+					targetDate.setDate(now.getDate() + (dateInfo.offset * 7));
+					break;
+				case 'month':
+					targetDate.setMonth(now.getMonth() + dateInfo.offset);
+					break;
+				case 'year':
+					targetDate.setFullYear(now.getFullYear() + dateInfo.offset);
+					break;
+			}
+
+			const year = targetDate.getFullYear();
+			const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+			const day = String(targetDate.getDate()).padStart(2, '0');
+			
+			return `${field.name} >= TIMESTAMP '${year}-${month}-${day} 00:00:00'`;
+		}
+
 		return null;
 	};
 
 	buildNumericCondition = (field: FieldMetadata, parsed: ParsedMessage): string | null => {
-		if (parsed.numbers.length === 0) {
-			return null;
+		if (parsed.numbers.length === 0) return null;
+
+		// Check if we have a BETWEEN range
+		if (parsed.entities.has('range')) {
+			const range = parsed.entities.get('range');
+			return `${field.name} BETWEEN ${range.min} AND ${range.max}`;
 		}
 
 		const op = parsed.operators.length > 0 ? parsed.operators[0].type : '=';
@@ -1142,7 +1599,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				if (refinedResult.type === 'success') {
 					const featureCount = await this.executeQuery(refinedResult);
 					if (featureCount !== null) {
-						this.addBotMessage(`✅ Filter applied to "${refinedResult.layerTitle}". ${featureCount} feature(s) found.`);
+						this.addBotMessage(`✅ Filter applied to "${refinedResult.layerTitle}"\n📍 Found ${featureCount} feature(s)`);
 					}
 					this.setState({ loading: false, pendingQuery: null });
 					return;
@@ -1182,14 +1639,14 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 						pendingQuery: refinedResult.pendingQuery,
 						loading: false,
 					});
-					this.addBotMessage('Multiple values look similar. Please choose one.');
+					this.addBotMessage('🤔 Multiple values match. Please choose:');
 					return;
 				}
 
 				if (refinedResult.type === 'success') {
 					const featureCount = await this.executeQuery(refinedResult);
 					if (featureCount !== null) {
-						this.addBotMessage(`✅ Filter applied to "${refinedResult.layerTitle}". ${featureCount} feature(s) found.`);
+						this.addBotMessage(`✅ Filter applied to "${refinedResult.layerTitle}"\n📍 Found ${featureCount} feature(s)`);
 					}
 					this.setState({ loading: false, pendingQuery: null });
 					return;
@@ -1230,11 +1687,12 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				textTokens: pendingQuery.parsed.tokens,
 				numbers: pendingQuery.parsed.numbers,
 				operators: pendingQuery.parsed.operators.map((operator: OperatorInfo) => operator.type),
-				dates: pendingQuery.parsed.dates.map((dateInfo: DateInfo) =>
-					dateInfo.type === 'year'
-						? `year:${dateInfo.value}`
-						: `month:${dateInfo.month}-${dateInfo.year}`,
-				),
+				dates: pendingQuery.parsed.dates.map((dateInfo: DateInfo) => {
+					if (dateInfo.type === 'year') return `year:${dateInfo.value}`;
+					if (dateInfo.type === 'month-year') return `month:${dateInfo.month}-${dateInfo.year}`;
+					if (dateInfo.type === 'relative') return `${dateInfo.offset} ${dateInfo.unit}s ago`;
+					return `${dateInfo.month}/${dateInfo.day}/${dateInfo.year}`;
+				}),
 				rawMessage: pendingQuery.parsed.original,
 				selectedField: selectedOption.field,
 				selectedValue: selectedValue,
@@ -1242,7 +1700,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		);
 
 		if (featureCount !== null) {
-			this.addBotMessage(`✅ Filter applied. ${featureCount} feature(s) highlighted on the map.`);
+			this.addBotMessage(`✅ Filter applied\n📍 Found ${featureCount} feature(s)`);
 		}
 
 		this.setState({ loading: false, pendingQuery: null, clarificationOptions: [] });
@@ -1277,9 +1735,6 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			query.where = whereClause;
 			query.returnGeometry = true;
 			query.outFields = ['*'];
-			if (!Array.isArray(query.outFields)) {
-				query.outFields = ['*'];
-			}
 
 			const results = await queryFeatures(query);
 			if (!results || !Array.isArray(results.features)) {
@@ -1290,33 +1745,17 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 
 			if (featureCount === 0) {
 				const detailLines: string[] = [
-					`Layer: ${layerTitle}`,
-					`Where clause: ${whereClause}`,
+					`📂 Layer: ${layerTitle}`,
+					`🔍 Query: ${whereClause}`,
 				];
 
 				if (debugInfo) {
 					if (debugInfo.matchedFields.length > 0) {
-						detailLines.push(`Matched fields: ${debugInfo.matchedFields.join(', ')}`);
-					}
-					if (debugInfo.textTokens.length > 0) {
-						detailLines.push(`Text tokens: ${debugInfo.textTokens.join(', ')}`);
-					}
-					if (debugInfo.numbers.length > 0) {
-						detailLines.push(`Numbers: ${debugInfo.numbers.join(', ')}`);
+						detailLines.push(`📋 Fields: ${debugInfo.matchedFields.join(', ')}`);
 					}
 					if (debugInfo.operators.length > 0) {
-						detailLines.push(`Operators: ${debugInfo.operators.join(', ')}`);
+						detailLines.push(`⚙️ Operators: ${debugInfo.operators.join(', ')}`);
 					}
-					if (debugInfo.dates.length > 0) {
-						detailLines.push(`Dates: ${debugInfo.dates.join(', ')}`);
-					}
-					if (debugInfo.selectedField) {
-						detailLines.push(`Selected field: ${debugInfo.selectedField}`);
-					}
-					if (debugInfo.selectedValue) {
-						detailLines.push(`Selected value: ${debugInfo.selectedValue}`);
-					}
-					detailLines.push(`Original message: ${debugInfo.rawMessage}`);
 				}
 
 				console.debug('SmartFilterWidget query returned zero features.', {
@@ -1326,7 +1765,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				});
 
 				this.addBotMessage(
-					`⚠️ No features matched the filter.\n- ${detailLines.join('\n- ')}`,
+					`⚠️ No features matched the filter.\n\n${detailLines.join('\n')}\n\n💡 Try:\n• Adjusting your criteria\n• Using different field names\n• Checking data availability`
 				);
 				return null;
 			}
@@ -1337,7 +1776,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			}
 			metadata.applyDefinitionExpression?.(whereClause);
 
-			// Zoom to filtered features
+			// Zoom to filtered features with smooth animation
 			if (jimuMapView?.view && results.features.length > 0) {
 				try {
 					await jimuMapView.view.goTo(results.features, {
@@ -1425,16 +1864,16 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 
 					{loading && (
 						<div style={{ textAlign: 'center', padding: '10px' }}>
-							<span>⏳ Processing...</span>
+							<span>⏳ Processing your query...</span>
 						</div>
 					)}
 				</div>
 
 				{clarificationNeeded && (
 					<div style={{ padding: '15px', backgroundColor: '#fff3cd', borderTop: '1px solid #ccc' }}>
-						<Label style={{ marginBottom: '10px', fontWeight: 'bold' }}>Select an option:</Label>
+						<Label style={{ marginBottom: '10px', fontWeight: 'bold' }}>Please select:</Label>
 						<Select
-							placeholder="Choose..."
+							placeholder="Choose an option..."
 							onChange={(event: React.ChangeEvent<HTMLSelectElement>) =>
 								this.handleClarificationSelect(event.target.value)
 							}
@@ -1451,7 +1890,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				<div style={{ padding: '15px', borderTop: '1px solid #ccc', backgroundColor: '#fff' }}>
 					<div style={{ display: 'flex', gap: '10px' }}>
 						<TextInput
-							placeholder="e.g., rsrp<-110 or filter RSRP in 2024 May"
+							placeholder="Try: rsrp<-110, show 2024 data, filter New York, clear filters"
 							value={message}
 							onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
 								this.setState({ message: event.target.value })
