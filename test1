@@ -1,23 +1,1251 @@
-// src/settings/setting.tsx
-export default class Setting extends React.PureComponent {
-  render() {
-    return (
-      <div>
-        <SettingSection title="Map Ayarları">
-          <MapWidgetSelector 
-            useMapWidgetIds={this.props.useMapWidgetIds}
-            onSelect={this.onMapWidgetSelected}
-          />
-        </SettingSection>
-      </div>
-    );
-  }
+/** @jsx jsx */
+import { React, jsx, AllWidgetProps } from 'jimu-core';
+import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
+import { Button, TextInput, Select, Option, Label, Alert } from 'jimu-ui';
+import './style.css';
+
+type MessageAuthor = 'user' | 'bot' | 'clarification';
+
+type FeatureLayerField = { name: string; alias?: string; type: string };
+
+type FeatureLayer = {
+	id: string;
+	title: string;
+	url: string;
+	type?: string;
+	fields?: FeatureLayerField[];
+	createQuery?: () => any;
+	queryFeatures?: (query: any) => Promise<{ features: any[] }>;
+	definitionExpression?: string;
+};
+
+interface ChatMessage {
+	type: MessageAuthor;
+	text: string;
+	timestamp: Date;
+	data?: unknown;
 }
 
-
-fff
-
-
-{
-  "useMapWidgetIds": []
+interface FieldMetadata {
+	name: string;
+	alias: string;
+	type: string;
+	nameTokens: string[];
 }
+
+interface LayerMetadata {
+	id: string;
+	title: string;
+	url: string;
+	queryLayer: FeatureLayer;
+	fields: FieldMetadata[];
+	titleTokens: string[];
+	path: string[];
+	applyDefinitionExpression?: (whereClause: string | null) => void;
+}
+
+type ClarificationContext = 'layer' | 'value';
+
+interface ClarificationOption {
+	label: string;
+	value: string;
+	field?: string;
+	context?: ClarificationContext;
+}
+
+interface MatchedField {
+	field: FieldMetadata;
+	token: string;
+	type: 'exact' | 'partial' | 'token' | 'alias';
+}
+
+type OperatorInfo = { type: '>' | '<' | '=' | 'BETWEEN' };
+type DateInfo =
+	| { type: 'year'; value: number }
+	| { type: 'month-year'; year: number; month: string };
+
+interface ParsedMessage {
+	original: string;
+	tokens: string[];
+	potentialFields: string[];
+	dates: DateInfo[];
+	numbers: number[];
+	operators: OperatorInfo[];
+	freeText: string[];
+}
+
+interface LayerMatch {
+	layer: LayerMetadata;
+	score: number;
+	matchedFields: MatchedField[];
+}
+
+interface PendingQuery {
+	parsed: ParsedMessage;
+	layerMatch: LayerMatch | null;
+	field?: FieldMetadata;
+	candidateLayers?: LayerMatch[];
+}
+
+interface QueryDebugInfo {
+	layerId: string;
+	layerTitle: string;
+	whereClause: string;
+	matchedFields: string[];
+	textTokens: string[];
+	numbers: number[];
+	operators: string[];
+	dates: string[];
+	rawMessage: string;
+	selectedField?: string;
+	selectedValue?: string;
+}
+
+type MatchSuccess = { type: 'success'; condition: string };
+type MatchClarification = { type: 'clarification'; options: ClarificationOption[] };
+type MatchFallback = { type: 'fallback' };
+type MatchResult = MatchSuccess | MatchClarification | MatchFallback;
+
+type ProcessResult =
+	| { type: 'success'; metadata: LayerMetadata; layerTitle: string; whereClause: string; debugInfo: QueryDebugInfo }
+	| { type: 'clarification'; options: ClarificationOption[]; pendingQuery: PendingQuery }
+	| { type: 'error'; message: string };
+
+const NUMERIC_FIELD_TYPES = new Set([
+	'double',
+	'single',
+	'integer',
+	'small-integer',
+	'smallinteger',
+	'short-integer',
+	'shortinteger',
+	'long',
+	'float',
+	'oid',
+]);
+
+const STRING_FIELD_TYPES = new Set(['string', 'guid', 'global-id', 'globalid']);
+
+const normalizeFieldType = (fieldType: string): string => fieldType?.toLowerCase?.() ?? '';
+const isNumericFieldType = (fieldType: string): boolean => NUMERIC_FIELD_TYPES.has(normalizeFieldType(fieldType));
+const isDateFieldType = (fieldType: string): boolean => normalizeFieldType(fieldType) === 'date';
+const isStringFieldType = (fieldType: string): boolean => STRING_FIELD_TYPES.has(normalizeFieldType(fieldType));
+
+interface State {
+	message: string;
+	chatHistory: ChatMessage[];
+	loading: boolean;
+	jimuMapView: JimuMapView | null;
+	layerCache: LayerMetadata[];
+	clarificationNeeded: boolean;
+	clarificationOptions: ClarificationOption[];
+	pendingQuery: PendingQuery | null;
+	connectionStatus: 'idle' | 'connecting' | 'ready' | 'error';
+	statusMessage: string;
+}
+
+export default class SmartFilterWidget extends React.PureComponent<AllWidgetProps<any>, State> {
+	constructor(props: AllWidgetProps<any>) {
+		super(props);
+		this.state = {
+			message: '',
+			chatHistory: [],
+			loading: false,
+			jimuMapView: null,
+			layerCache: [],
+			clarificationNeeded: false,
+			clarificationOptions: [],
+			pendingQuery: null,
+			connectionStatus: 'idle',
+			statusMessage: 'Select a map in the widget settings to connect.',
+		};
+	}
+
+	onActiveViewChange = async (jimuMapView: JimuMapView) => {
+		if (!jimuMapView) {
+			this.setState({
+				jimuMapView: null,
+				layerCache: [],
+				connectionStatus: 'idle',
+				statusMessage: 'No map selected. Choose a map from the widget settings.',
+			});
+			return;
+		}
+
+		this.setState({
+			jimuMapView,
+			loading: true,
+			connectionStatus: 'connecting',
+			statusMessage: 'Loading layer information...'
+		});
+
+		try {
+			const layerCache = await this.discoverLayers(jimuMapView);
+
+			if (layerCache.length === 0) {
+				this.setState({
+					loading: false,
+					connectionStatus: 'error',
+					statusMessage: 'No feature layers found in the selected map.',
+				});
+				this.addBotMessage('⚠️ No feature layers were found in the selected map.');
+				return;
+			}
+
+			this.setState({
+				loading: false,
+				connectionStatus: 'ready',
+				statusMessage: 'Ready. Enter a query to filter.',
+			});
+			this.addBotMessage('Hello! The map connection is ready and layers are indexed. What would you like to find?');
+		} catch (error) {
+			const messageText = error instanceof Error ? error.message : 'Unknown error';
+			this.setState({
+				loading: false,
+				connectionStatus: 'error',
+				statusMessage: `Failed to load layer metadata: ${messageText}`,
+			});
+			this.addBotMessage(`❌ Unable to load layer metadata: ${messageText}`);
+		}
+	};
+
+	discoverLayers = async (jimuMapView: JimuMapView): Promise<LayerMetadata[]> => {
+		const view = jimuMapView?.view;
+
+		if (!view?.map) {
+			this.setState({ layerCache: [] });
+			return [];
+		}
+
+		const layerCache: LayerMetadata[] = [];
+
+		const toArray = (collection: any): any[] => {
+			if (!collection) {
+				return [];
+			}
+			if (typeof collection.toArray === 'function') {
+				return collection.toArray();
+			}
+			return Array.isArray(collection) ? collection : [];
+		};
+
+		const tokenizeTitlePath = (path: string[]): string[] =>
+			path
+				.flatMap((segment) =>
+					String(segment)
+						.toLowerCase()
+						.split(/[\s_>›/-]+/)
+						.filter((token) => token.length > 0),
+				);
+
+		const collectFeatureLayer = async (
+			featureLayer: FeatureLayer,
+			titlePath: string[],
+			options: { sourceId?: string; applyDefinitionExpression?: (whereClause: string | null) => void } = {},
+		) => {
+			try {
+				if (typeof (featureLayer as any).load === 'function') {
+					await (featureLayer as any).load();
+				} else if (typeof (featureLayer as any).when === 'function') {
+					await (featureLayer as any).when();
+				}
+			} catch (error) {
+				console.warn('Failed to load layer metadata.', featureLayer?.title ?? options.sourceId ?? 'feature-layer', error);
+			}
+
+			const fieldsSource = Array.isArray(featureLayer.fields) ? featureLayer.fields : [];
+			const fields: FieldMetadata[] = fieldsSource
+				.filter((field: any) => field && field.name)
+				.map((field: any) => {
+					const name = String(field.name);
+					const alias = field.alias ? String(field.alias) : name;
+					const type = normalizeFieldType(field.type);
+					return {
+						name,
+						alias,
+						type,
+						nameTokens: name.toLowerCase().split(/[_\s]+/),
+					};
+				});
+
+			if (fields.length === 0) {
+				return;
+			}
+
+			const titlePathClean = titlePath.filter((segment) => segment && segment.trim().length > 0);
+			const title = titlePathClean.length > 0 ? titlePathClean.join(' › ') : featureLayer.title ?? options.sourceId ?? 'Layer';
+			const idCandidateOrder = [options.sourceId, featureLayer.id, featureLayer.url, title];
+			let id = idCandidateOrder.find((value) => typeof value === 'string' && value.trim().length > 0) ?? `layer-${layerCache.length}-${Date.now()}`;
+			if (layerCache.some((cachedLayer) => cachedLayer.id === id)) {
+				id = `${id}-${layerCache.length}`;
+			}
+
+			const applyDefinitionExpression = options.applyDefinitionExpression
+				? options.applyDefinitionExpression
+				: (whereClause: string | null) => {
+					featureLayer.definitionExpression = whereClause ?? '1=1';
+				};
+
+			layerCache.push({
+				id,
+				title,
+				url: featureLayer.url,
+				queryLayer: featureLayer,
+				fields,
+				titleTokens: tokenizeTitlePath(titlePathClean),
+				path: titlePathClean,
+				applyDefinitionExpression,
+			});
+		};
+
+		const traverseSublayer = async (sublayer: any, parentTitles: string[], parentLayer: any) => {
+			const sublayerTitle = String(
+				sublayer?.title && sublayer.title.trim().length > 0
+					? sublayer.title
+					: sublayer?.name ?? sublayer?.id ?? 'Sublayer',
+			);
+			const titlePath = [...parentTitles, sublayerTitle];
+			let featureLayer: FeatureLayer | null = null;
+
+			if (typeof sublayer.createFeatureLayer === 'function') {
+				try {
+					const result = sublayer.createFeatureLayer();
+					featureLayer = typeof (result as any)?.then === 'function' ? await result : result;
+				} catch (error) {
+					console.warn('Unable to create feature layer from sublayer.', titlePath.join(' › '), error);
+				}
+			} else if (sublayer?.layer?.type === 'feature') {
+				featureLayer = sublayer.layer as FeatureLayer;
+			}
+
+			if (featureLayer) {
+				await collectFeatureLayer(featureLayer, titlePath, {
+					sourceId: `${parentLayer?.id ?? parentLayer?.uid ?? 'layer'}-${sublayer.id ?? sublayer.uid ?? sublayerTitle}`,
+					applyDefinitionExpression: (whereClause: string | null) => {
+						if ('definitionExpression' in sublayer) {
+							sublayer.definitionExpression = whereClause ?? '1=1';
+						}
+					},
+				});
+			}
+
+			const childSublayers = toArray(sublayer?.sublayers ?? sublayer?.subLayers);
+			for (const childSublayer of childSublayers) {
+				await traverseSublayer(childSublayer, titlePath, parentLayer);
+			}
+		};
+
+		const traverseLayer = async (layer: any, parentTitles: string[] = []) => {
+			const layerTitle = String(layer?.title ?? layer?.name ?? layer?.id ?? 'Layer');
+			const titlePath = [...parentTitles, layerTitle];
+
+			if (layer?.type === 'feature') {
+				await collectFeatureLayer(layer as FeatureLayer, titlePath, {
+					sourceId: layer.id ?? layer.uid ?? layerTitle,
+					applyDefinitionExpression: (whereClause: string | null) => {
+						(layer as FeatureLayer).definitionExpression = whereClause ?? '1=1';
+					},
+				});
+			}
+
+			const sublayers = toArray(layer?.sublayers ?? layer?.subLayers);
+			for (const sublayer of sublayers) {
+				await traverseSublayer(sublayer, titlePath, layer);
+			}
+
+			const childLayers = toArray(layer?.layers);
+			for (const childLayer of childLayers) {
+				await traverseLayer(childLayer, titlePath);
+			}
+		};
+
+		const allLayers = toArray(view.map.allLayers);
+		for (const layer of allLayers) {
+			await traverseLayer(layer);
+		}
+
+		this.setState({ layerCache });
+		return layerCache;
+	};
+
+	handleSendMessage = async () => {
+			const { message, layerCache, connectionStatus } = this.state;
+
+		if (!message.trim()) {
+			return;
+		}
+
+		if (connectionStatus !== 'ready') {
+				this.addBotMessage('⚠️ The map connection is not ready yet. Select a map and wait for the layers to load.');
+			return;
+		}
+
+		if (layerCache.length === 0) {
+				this.addBotMessage('⚠️ No available layers were found.');
+			return;
+		}
+
+		this.addUserMessage(message);
+		this.setState({ message: '', loading: true });
+
+		try {
+			const result = await this.processMessage(message, layerCache);
+
+			if (result.type === 'clarification') {
+				this.setState({
+					clarificationNeeded: true,
+					clarificationOptions: result.options,
+					pendingQuery: result.pendingQuery,
+					loading: false,
+				});
+				if (result.pendingQuery?.candidateLayers?.length) {
+					this.addBotMessage('Multiple layers look relevant. Please choose the one you want to filter.');
+				} else {
+					this.addBotMessage('I found multiple value matches. Which one did you mean?');
+				}
+			} else if (result.type === 'success') {
+				const featureCount = await this.executeQuery(result);
+				if (featureCount !== null) {
+					this.addBotMessage(`✅ Filter applied. ${featureCount} feature(s) highlighted on the map.`);
+				}
+				this.setState({ loading: false });
+			} else {
+				this.addBotMessage(`❌ ${result.message}`);
+				this.setState({ loading: false });
+			}
+		} catch (error) {
+			const messageText = error instanceof Error ? error.message : 'Unknown error';
+			this.addBotMessage(`❌ Something went wrong: ${messageText}`);
+			this.setState({ loading: false });
+		}
+	};
+
+	processMessage = async (message: string, layerCache: LayerMetadata[]): Promise<ProcessResult> => {
+		const parsed = this.parseMessage(message);
+		const layerMatches = this.rankLayers(parsed, layerCache);
+		const minScore = layerCache.length > 1 ? 10 : 0;
+		const viableMatches = layerMatches.filter((match) => match.score >= minScore);
+
+		if (viableMatches.length === 0) {
+			return { type: 'error', message: 'No suitable layer was identified. Please be more specific.' };
+		}
+
+		const topScore = viableMatches[0].score;
+		const closeMatches = viableMatches.filter((match) => match.score >= Math.max(5, topScore - 10));
+
+		if (closeMatches.length > 1) {
+			return {
+				type: 'clarification',
+				options: closeMatches.map((match) => ({
+					label: `${match.layer.title}`,
+					value: match.layer.id,
+					context: 'layer' as ClarificationContext,
+				})),
+				pendingQuery: {
+					parsed,
+					layerMatch: null,
+					candidateLayers: closeMatches,
+				},
+			};
+		}
+
+		return this.buildSmartQuery(parsed, viableMatches[0]);
+	};
+
+	parseMessage = (message: string): ParsedMessage => {
+		const lowerMessage = message.toLowerCase();
+		const tokens = lowerMessage.split(/\s+/).filter((token) => token.length > 1);
+
+		return {
+			original: message,
+			tokens,
+			potentialFields: this.extractPotentialFields(message),
+			dates: this.extractDates(message),
+			numbers: this.extractNumbers(message),
+			operators: this.extractOperators(message),
+			freeText: this.extractFreeText(message),
+		};
+	};
+
+	extractPotentialFields = (message: string): string[] => {
+		const regex = /\b[a-z_][a-z0-9_]*\b/gi;
+		return (message.match(regex) ?? []).map((match) => match.toLowerCase());
+	};
+
+	extractDates = (message: string): DateInfo[] => {
+		const dates: DateInfo[] = [];
+
+		const yearMatch = message.match(/\b(19|20)\d{2}\b/);
+		if (yearMatch) {
+			dates.push({ type: 'year', value: parseInt(yearMatch[0], 10) });
+		}
+
+		const monthNames: Record<string, string> = {
+			january: '01',
+			jan: '01',
+			february: '02',
+			feb: '02',
+			march: '03',
+			mar: '03',
+			april: '04',
+			apr: '04',
+			may: '05',
+			june: '06',
+			jun: '06',
+			july: '07',
+			jul: '07',
+			august: '08',
+			aug: '08',
+			september: '09',
+			sept: '09',
+			sep: '09',
+			october: '10',
+			oct: '10',
+			november: '11',
+			nov: '11',
+			december: '12',
+			dec: '12',
+		};
+
+		Object.entries(monthNames).forEach(([month, num]) => {
+			const regex = new RegExp(`${month}\\s*(\\d{4})`, 'i');
+			const match = message.match(regex);
+			if (match) {
+				dates.push({ type: 'month-year', year: parseInt(match[1], 10), month: num });
+			}
+		});
+
+		return dates;
+	};
+
+	extractNumbers = (message: string): number[] => {
+		const numbers = message.match(/\d+(\.\d+)?/g);
+		return numbers ? numbers.map((value) => parseFloat(value)) : [];
+	};
+
+	extractOperators = (message: string): OperatorInfo[] => {
+		const operators: OperatorInfo[] = [];
+		const lowerMsg = message.toLowerCase();
+
+		if (/(greater than|more than|above|over|>=|>)/i.test(lowerMsg)) {
+			operators.push({ type: '>' });
+		}
+		if (/(less than|below|under|<=|<)/i.test(lowerMsg)) {
+			operators.push({ type: '<' });
+		}
+		if (/(equal to|equals|=|is|exactly)/i.test(lowerMsg)) {
+			operators.push({ type: '=' });
+		}
+		if (/(between)/i.test(lowerMsg)) {
+			operators.push({ type: 'BETWEEN' });
+		}
+
+		return operators;
+	};
+
+	extractFreeText = (message: string): string[] => {
+		const technical = this.extractPotentialFields(message);
+		const words = message.toLowerCase().split(/\s+/);
+		const stopWords = new Set([
+			'and',
+			'with',
+			'for',
+			'the',
+			'that',
+			'this',
+			'these',
+			'those',
+			'where',
+			'records',
+			'results',
+			'show',
+			'find',
+			'display',
+			'please',
+			'filter',
+			'list',
+			'from',
+			'in',
+			'on',
+			'of',
+		]);
+
+		return words.filter(
+			(word) =>
+				word.length > 2 &&
+				!technical.includes(word) &&
+				!/^[\d]+$/.test(word) &&
+				!stopWords.has(word),
+		);
+	};
+
+	rankLayers = (parsed: ParsedMessage, layerCache: LayerMetadata[]): LayerMatch[] => {
+		if (layerCache.length === 0) {
+			return [];
+		}
+
+		return layerCache
+			.map((layer) => {
+				let score = 0;
+				const matchedFields: MatchedField[] = [];
+				const titleTokens = layer.titleTokens ?? [];
+				const messageTokens = Array.from(
+					new Set([
+						...parsed.tokens,
+						...parsed.freeText,
+						...parsed.potentialFields,
+					]),
+				);
+
+				messageTokens.forEach((token) => {
+					const loweredToken = token.toLowerCase();
+					if (titleTokens.includes(loweredToken)) {
+						score += 40;
+					} else if (titleTokens.some((titleToken) => titleToken.includes(loweredToken) || loweredToken.includes(titleToken))) {
+						score += 20;
+					}
+				});
+
+				parsed.potentialFields.forEach((token) => {
+					layer.fields.forEach((field) => {
+						const loweredName = field.name.toLowerCase();
+						const loweredAlias = field.alias.toLowerCase();
+
+						if (loweredName === token) {
+							score += 50;
+							matchedFields.push({ field, token, type: 'exact' });
+						} else if (loweredName.includes(token)) {
+							score += 25;
+							matchedFields.push({ field, token, type: 'partial' });
+						} else if (field.nameTokens.includes(token)) {
+							score += 30;
+							matchedFields.push({ field, token, type: 'token' });
+						} else if (loweredAlias.includes(token)) {
+							score += 20;
+							matchedFields.push({ field, token, type: 'alias' });
+						}
+					});
+				});
+
+				if (parsed.dates.length > 0 && layer.fields.some((field) => isDateFieldType(field.type))) {
+					score += 15;
+				}
+
+				if (parsed.numbers.length > 0 && layer.fields.some((field) => isNumericFieldType(field.type))) {
+					score += 15;
+				}
+
+				if (parsed.freeText.length > 0 && layer.fields.some((field) => isStringFieldType(field.type))) {
+					score += 10;
+				}
+
+				return { layer, score, matchedFields };
+			})
+			.sort((a, b) => b.score - a.score)
+			.filter((match) => match.score > 0);
+	};
+
+	buildSmartQuery = async (parsed: ParsedMessage, layerMatch: LayerMatch): Promise<ProcessResult> => {
+		const { layer: layerMetadata, matchedFields } = layerMatch;
+		const conditions: string[] = [];
+		const textTokens = (
+			parsed.freeText.length > 0 ? parsed.freeText : parsed.numbers.map((value) => `${value}`)
+		).filter((token) => token.trim().length > 0);
+
+			for (const match of matchedFields) {
+				const field = match.field;
+				const fieldType = normalizeFieldType(field.type);
+
+				if (isDateFieldType(fieldType) && parsed.dates.length > 0) {
+					const dateCond = this.buildDateCondition(field, parsed.dates[0]);
+					if (dateCond) {
+						conditions.push(dateCond);
+					}
+				} else if (isNumericFieldType(fieldType) && parsed.numbers.length > 0) {
+					const numCond = this.buildNumericCondition(field, parsed);
+					if (numCond) {
+						conditions.push(numCond);
+					}
+				} else if (isStringFieldType(fieldType) && textTokens.length > 0) {
+					const textMatch = await this.matchTextValue(textTokens, field, layerMetadata.queryLayer);
+
+					if (textMatch.type === 'clarification') {
+						return {
+							type: 'clarification',
+							options: textMatch.options,
+							pendingQuery: { parsed, layerMatch, field },
+						};
+					}
+
+					if (textMatch.type === 'success') {
+						conditions.push(textMatch.condition);
+					} else {
+						const likeConditions = textTokens.map((text) => {
+							const sanitized = text.replace(/'/g, "''");
+							return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
+						});
+						if (likeConditions.length > 0) {
+							conditions.push(`(${likeConditions.join(' OR ')})`);
+						}
+					}
+				}
+			}
+
+			const unmatchedStringFields = layerMetadata.fields.filter(
+				(field: FieldMetadata) =>
+					isStringFieldType(field.type) && !matchedFields.some((matched) => matched.field.name === field.name),
+			);
+
+			if (textTokens.length > 0 && unmatchedStringFields.length > 0 && conditions.length === 0) {
+				const orConditions: string[] = [];
+				textTokens.forEach((text) => {
+					const sanitized = text.replace(/'/g, "''");
+						unmatchedStringFields.forEach((field: FieldMetadata) => {
+						orConditions.push(`UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`);
+					});
+				});
+
+				if (orConditions.length > 0) {
+					conditions.push(`(${orConditions.join(' OR ')})`);
+				}
+			}
+
+		const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
+		const matchedFieldNames = Array.from(new Set(matchedFields.map((match) => match.field.name)));
+		const operatorStrings = parsed.operators.map((operator) => operator.type);
+		const dateStrings = parsed.dates.map((dateInfo) =>
+			dateInfo.type === 'year'
+				? `year:${dateInfo.value}`
+				: `month:${dateInfo.month}-${dateInfo.year}`,
+		);
+
+		return {
+			type: 'success',
+			metadata: layerMetadata,
+			whereClause,
+			layerTitle: layerMetadata.title,
+			debugInfo: {
+				layerId: layerMetadata.id,
+				layerTitle: layerMetadata.title,
+				whereClause,
+				matchedFields: matchedFieldNames,
+				textTokens,
+				numbers: parsed.numbers,
+				operators: operatorStrings,
+				dates: dateStrings,
+				rawMessage: parsed.original,
+			},
+		};
+	};
+
+	matchTextValue = async (
+		freeTextArray: string[],
+		field: FieldMetadata,
+		queryLayer: FeatureLayer,
+	): Promise<MatchResult> => {
+		try {
+			if (typeof queryLayer.queryFeatures !== 'function') {
+				console.warn('Layer does not support queryFeatures for text matching.', field.name);
+				return { type: 'fallback' };
+			}
+
+			const queryFeatures = queryLayer.queryFeatures.bind(queryLayer);
+			const query = typeof queryLayer.createQuery === 'function' ? queryLayer.createQuery() : ({} as any);
+			query.where = '1=1';
+			query.returnDistinctValues = true;
+			query.outFields = [field.name];
+			query.returnGeometry = false;
+			query.num = 1000;
+
+			if (!Array.isArray(query.outFields)) {
+				query.outFields = [field.name];
+			}
+
+			const results = await queryFeatures(query);
+			if (!results || !Array.isArray(results.features)) {
+				return { type: 'fallback' };
+			}
+			const distinctValues = results.features
+				.map((feature: any) => feature.attributes[field.name])
+				.filter((value: unknown) => value !== null && value !== undefined);
+
+			if (distinctValues.length === 0) {
+				if (freeTextArray.length === 1) {
+					const sanitized = freeTextArray[0].replace(/'/g, "''");
+					return {
+						type: 'success',
+						condition: `${field.name} = '${sanitized}'`,
+					};
+				}
+				return { type: 'fallback' };
+			}
+
+			const allMatches: Array<{ value: unknown; score: number; userText: string }> = [];
+
+			freeTextArray.forEach((userText: string) => {
+				const variations = this.generateVariations(userText);
+
+				distinctValues.forEach((dbValue: unknown) => {
+					const normalizedDbValue = String(dbValue).toLowerCase();
+					const score = this.calculateSimilarity(variations, normalizedDbValue);
+					if (score > 0.3) {
+						allMatches.push({ value: dbValue, score, userText });
+					}
+				});
+			});
+
+			if (allMatches.length === 0) {
+				if (freeTextArray.length === 1) {
+					const sanitized = freeTextArray[0].replace(/'/g, "''");
+					return {
+						type: 'success',
+						condition: `${field.name} = '${sanitized}'`,
+					};
+				}
+
+				const likeConditions = freeTextArray.map((text) => {
+					const sanitized = text.replace(/'/g, "''");
+					return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
+				});
+
+				if (likeConditions.length > 0) {
+					return {
+						type: 'success',
+						condition: `(${likeConditions.join(' OR ')})`,
+					};
+				}
+
+				return { type: 'fallback' };
+			}
+
+			allMatches.sort((a, b) => b.score - a.score);
+			const topMatches = allMatches.slice(0, 5);
+
+			if (topMatches.length > 0 && topMatches[0].score > 0.8) {
+				const sanitizedValue = String(topMatches[0].value).replace(/'/g, "''");
+				return {
+					type: 'success',
+					condition: `${field.name} = '${sanitizedValue}'`,
+				};
+			}
+
+			if (topMatches.length > 1) {
+				return {
+					type: 'clarification',
+					options: topMatches.map((match) => ({
+						label: `${match.value} (for "${match.userText}")`,
+						value: String(match.value),
+						field: field.name,
+						context: 'value' as ClarificationContext,
+					})),
+				};
+			}
+
+			if (topMatches.length > 0) {
+				const sanitizedValue = String(topMatches[0].value).replace(/'/g, "''");
+				return {
+					type: 'success',
+					condition: `${field.name} = '${sanitizedValue}'`,
+				};
+			}
+
+			return { type: 'fallback' };
+		} catch (error) {
+			console.error('Text matching error:', error);
+			return { type: 'fallback' };
+		}
+	};
+
+	generateVariations = (text: string): string[] => {
+		const lowered = text.toLowerCase();
+		const variations = [lowered, lowered.replace(/\s+/g, ''), lowered.replace(/\s+/g, '_')];
+
+		const words = text.split(/\s+/);
+		if (words.length > 1) {
+			variations.push(words.map((word) => word[0]).join('').toLowerCase());
+		}
+
+		return variations;
+	};
+
+	calculateSimilarity = (variations: string[], dbValue: string): number => {
+		let maxScore = 0;
+
+		variations.forEach((variation) => {
+			if (variation === dbValue) {
+				maxScore = Math.max(maxScore, 1);
+			} else if (dbValue.includes(variation) || variation.includes(dbValue)) {
+				maxScore = Math.max(maxScore, 0.8);
+			} else if (dbValue.startsWith(variation) || variation.startsWith(dbValue)) {
+				maxScore = Math.max(maxScore, 0.7);
+			}
+		});
+
+		return maxScore;
+	};
+
+	buildDateCondition = (field: FieldMetadata, dateInfo: DateInfo): string | null => {
+		if (dateInfo.type === 'year') {
+			const startYear = dateInfo.value;
+			const endYear = dateInfo.value + 1;
+			return `${field.name} >= TIMESTAMP '${startYear}-01-01 00:00:00' AND ${field.name} < TIMESTAMP '${endYear}-01-01 00:00:00'`;
+		}
+
+		if (dateInfo.type === 'month-year') {
+			const currentMonth = parseInt(dateInfo.month, 10);
+			const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+			const nextYear = currentMonth === 12 ? dateInfo.year + 1 : dateInfo.year;
+			const nextMonthString = nextMonth.toString().padStart(2, '0');
+
+			return `${field.name} >= TIMESTAMP '${dateInfo.year}-${dateInfo.month}-01 00:00:00' AND ${field.name} < TIMESTAMP '${nextYear}-${nextMonthString}-01 00:00:00'`;
+		}
+
+		return null;
+	};
+
+	buildNumericCondition = (field: FieldMetadata, parsed: ParsedMessage): string | null => {
+		if (parsed.numbers.length === 0) {
+			return null;
+		}
+
+		const op = parsed.operators.length > 0 ? parsed.operators[0].type : '=';
+
+		switch (op) {
+			case '>':
+				return `${field.name} > ${parsed.numbers[0]}`;
+			case '<':
+				return `${field.name} < ${parsed.numbers[0]}`;
+			case '=':
+				return `${field.name} = ${parsed.numbers[0]}`;
+			case 'BETWEEN':
+				if (parsed.numbers.length >= 2) {
+					return `${field.name} BETWEEN ${parsed.numbers[0]} AND ${parsed.numbers[1]}`;
+				}
+				return `${field.name} = ${parsed.numbers[0]}`;
+			default:
+				return `${field.name} = ${parsed.numbers[0]}`;
+		}
+	};
+
+	handleClarificationSelect = async (selectedValue: string) => {
+		const { pendingQuery, clarificationOptions, connectionStatus } = this.state;
+
+		if (connectionStatus !== 'ready') {
+			this.addBotMessage('⚠️ The map connection is not ready.');
+			return;
+		}
+
+		if (!pendingQuery) {
+			this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
+			return;
+		}
+
+		const selectedOption = clarificationOptions.find((option: ClarificationOption) => option.value === selectedValue);
+		if (!selectedOption) {
+			this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
+			return;
+		}
+
+		if (selectedOption.context === 'layer') {
+			if (!pendingQuery.candidateLayers?.length) {
+				this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
+				return;
+			}
+
+			const chosenLayer = pendingQuery.candidateLayers.find((match: LayerMatch) => match.layer.id === selectedOption.value);
+			if (!chosenLayer) {
+				this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
+				return;
+			}
+
+			this.setState({ clarificationNeeded: false, clarificationOptions: [], loading: true, pendingQuery: null });
+
+			try {
+				const refinedResult = await this.buildSmartQuery(pendingQuery.parsed, chosenLayer);
+				if (refinedResult.type === 'clarification') {
+					this.setState({
+						clarificationNeeded: true,
+						clarificationOptions: refinedResult.options,
+						pendingQuery: refinedResult.pendingQuery,
+						loading: false,
+					});
+					this.addBotMessage('Multiple values look similar. Please choose one.');
+					return;
+				}
+
+				if (refinedResult.type === 'success') {
+					const featureCount = await this.executeQuery(refinedResult);
+					if (featureCount !== null) {
+						this.addBotMessage(`✅ Filter applied. ${featureCount} feature(s) highlighted on the map.`);
+					}
+					this.setState({ loading: false, pendingQuery: null });
+					return;
+				}
+
+				this.addBotMessage(`❌ ${refinedResult.message}`);
+				this.setState({ loading: false, pendingQuery: null });
+			} catch (error) {
+				const messageText = error instanceof Error ? error.message : 'Unknown error';
+				this.addBotMessage(`❌ Unable to apply the filter: ${messageText}`);
+				this.setState({ loading: false, pendingQuery: null });
+			}
+
+			return;
+		}
+
+		if (!selectedOption.field || !pendingQuery.layerMatch) {
+			this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
+			return;
+		}
+
+		this.setState({ clarificationNeeded: false, loading: true });
+
+		const sanitizedValue = selectedValue.replace(/'/g, "''");
+		const condition = `${selectedOption.field} = '${sanitizedValue}'`;
+
+		const targetMetadata = pendingQuery.layerMatch.layer;
+		const featureCount = await this.executeQueryDirect(
+			targetMetadata,
+			condition,
+			targetMetadata.title,
+			{
+				layerId: targetMetadata.id,
+				layerTitle: targetMetadata.title,
+				whereClause: condition,
+				matchedFields: [selectedOption.field],
+				textTokens: pendingQuery.parsed.tokens,
+				numbers: pendingQuery.parsed.numbers,
+				operators: pendingQuery.parsed.operators.map((operator: OperatorInfo) => operator.type),
+				dates: pendingQuery.parsed.dates.map((dateInfo: DateInfo) =>
+					dateInfo.type === 'year'
+						? `year:${dateInfo.value}`
+						: `month:${dateInfo.month}-${dateInfo.year}`,
+				),
+				rawMessage: pendingQuery.parsed.original,
+				selectedField: selectedOption.field,
+				selectedValue: selectedValue,
+			},
+		);
+
+		if (featureCount !== null) {
+			this.addBotMessage(`✅ Filter applied. ${featureCount} feature(s) highlighted on the map.`);
+		}
+
+		this.setState({ loading: false, pendingQuery: null, clarificationOptions: [] });
+	};
+
+	executeQuery = async (result: Extract<ProcessResult, { type: 'success' }>): Promise<number | null> => {
+		return this.executeQueryDirect(result.metadata, result.whereClause, result.layerTitle, result.debugInfo);
+	};
+
+	executeQueryDirect = async (
+		metadata: LayerMetadata,
+		whereClause: string,
+		layerTitle: string,
+		debugInfo?: QueryDebugInfo,
+	): Promise<number | null> => {
+		const { jimuMapView } = this.state;
+		const layer = metadata.queryLayer;
+
+		try {
+			if (typeof layer.queryFeatures !== 'function') {
+				this.addBotMessage('❌ The selected layer cannot be queried.');
+				return null;
+			}
+
+			const queryFeatures = layer.queryFeatures.bind(layer);
+			const query = typeof layer.createQuery === 'function' ? layer.createQuery() : ({} as any);
+			query.where = whereClause;
+			query.returnGeometry = true;
+			query.outFields = ['*'];
+			if (!Array.isArray(query.outFields)) {
+				query.outFields = ['*'];
+			}
+
+			const results = await queryFeatures(query);
+			if (!results || !Array.isArray(results.features)) {
+				this.addBotMessage('❌ The query did not return any results.');
+				return null;
+			}
+			const featureCount = results.features.length;
+
+			if (featureCount === 0) {
+				const detailLines: string[] = [
+					`Layer: ${layerTitle}`,
+					`Where clause: ${whereClause}`,
+				];
+
+				if (debugInfo) {
+					if (debugInfo.matchedFields.length > 0) {
+						detailLines.push(`Matched fields: ${debugInfo.matchedFields.join(', ')}`);
+					}
+					if (debugInfo.textTokens.length > 0) {
+						detailLines.push(`Text tokens: ${debugInfo.textTokens.join(', ')}`);
+					}
+					if (debugInfo.numbers.length > 0) {
+						detailLines.push(`Numbers: ${debugInfo.numbers.join(', ')}`);
+					}
+					if (debugInfo.operators.length > 0) {
+						detailLines.push(`Operators: ${debugInfo.operators.join(', ')}`);
+					}
+					if (debugInfo.dates.length > 0) {
+						detailLines.push(`Dates: ${debugInfo.dates.join(', ')}`);
+					}
+					if (debugInfo.selectedField) {
+						detailLines.push(`Selected field: ${debugInfo.selectedField}`);
+					}
+					if (debugInfo.selectedValue) {
+						detailLines.push(`Selected value: ${debugInfo.selectedValue}`);
+					}
+					detailLines.push(`Original message: ${debugInfo.rawMessage}`);
+				}
+
+				console.debug('SmartFilterWidget query returned zero features.', {
+					layerTitle,
+					whereClause,
+					debugInfo,
+				});
+
+				this.addBotMessage(
+					`⚠️ No features matched the filter.
+- ${detailLines.join('\n- ')}`,
+				);
+				return null;
+			}
+
+			if ('definitionExpression' in layer) {
+				(layer as any).definitionExpression = whereClause;
+			}
+			metadata.applyDefinitionExpression?.(whereClause);
+
+			if (jimuMapView?.view) {
+				try {
+					await jimuMapView.view.goTo(results.features);
+				} catch (goToError) {
+					console.warn('Map navigation failed:', goToError);
+				}
+			}
+
+			return featureCount;
+		} catch (error) {
+			const messageText = error instanceof Error ? error.message : 'Unknown error';
+			this.addBotMessage(`❌ Query failed: ${messageText}`);
+			return null;
+		}
+	};
+
+	addUserMessage = (text: string) => {
+		this.setState((prevState: State) => ({
+			chatHistory: [...prevState.chatHistory, { type: 'user', text, timestamp: new Date() }],
+		}));
+	};
+
+	addBotMessage = (text: string) => {
+		this.setState((prevState: State) => ({
+			chatHistory: [...prevState.chatHistory, { type: 'bot', text, timestamp: new Date() }],
+		}));
+	};
+
+	render() {
+		const {
+			message,
+			chatHistory,
+			loading,
+			clarificationNeeded,
+			clarificationOptions,
+			connectionStatus,
+			statusMessage,
+		} = this.state;
+
+		const inputDisabled = loading || connectionStatus !== 'ready';
+
+		return (
+			<div className="smart-filter-widget jimu-widget" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+				<JimuMapViewComponent
+					useMapWidgetId={this.props.useMapWidgetIds?.[0]}
+					onActiveViewChange={this.onActiveViewChange}
+				/>
+
+				<div style={{ padding: '10px 15px', borderBottom: '1px solid #ccc', backgroundColor: '#fff' }}>
+					<Alert
+						form="basic"
+						type={connectionStatus === 'ready' ? 'success' : connectionStatus === 'error' ? 'danger' : 'info'}
+						text={statusMessage}
+					/>
+				</div>
+
+				<div style={{ flex: 1, padding: '15px', overflowY: 'auto', backgroundColor: '#f5f5f5' }}>
+					{chatHistory.map((msg: ChatMessage, idx: number) => (
+						<div
+							key={idx}
+							style={{
+								marginBottom: '10px',
+								textAlign: msg.type === 'user' ? 'right' : 'left',
+							}}
+						>
+							<div
+								style={{
+									display: 'inline-block',
+									padding: '8px 12px',
+									borderRadius: '12px',
+									backgroundColor: msg.type === 'user' ? '#0079c1' : '#fff',
+									color: msg.type === 'user' ? '#fff' : '#333',
+									maxWidth: '80%',
+									boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+								}}
+							>
+								{msg.text}
+							</div>
+						</div>
+					))}
+
+					{loading && (
+						<div style={{ textAlign: 'center', padding: '10px' }}>
+							<span>⏳ Processing...</span>
+						</div>
+					)}
+				</div>
+
+				{clarificationNeeded && (
+					<div style={{ padding: '15px', backgroundColor: '#fff3cd', borderTop: '1px solid #ccc' }}>
+						<Label style={{ marginBottom: '10px', fontWeight: 'bold' }}>Select an option:</Label>
+						<Select
+							placeholder="Choose..."
+							onChange={(event: React.ChangeEvent<HTMLSelectElement>) =>
+								this.handleClarificationSelect(event.target.value)
+							}
+						>
+							{clarificationOptions.map((option: ClarificationOption, idx: number) => (
+								<Option key={idx} value={option.value}>
+									{option.label}
+								</Option>
+							))}
+						</Select>
+					</div>
+				)}
+
+				<div style={{ padding: '15px', borderTop: '1px solid #ccc', backgroundColor: '#fff' }}>
+					<div style={{ display: 'flex', gap: '10px' }}>
+						<TextInput
+							placeholder="Type your query... (e.g., 2024 May New York RSRP)"
+							value={message}
+							onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
+								this.setState({ message: event.target.value })
+							}
+							onKeyPress={(event: React.KeyboardEvent<HTMLInputElement>) => {
+								if (event.key === 'Enter') {
+									this.handleSendMessage();
+								}
+							}}
+							style={{ flex: 1 }}
+							disabled={inputDisabled}
+						/>
+						<Button type="primary" onClick={this.handleSendMessage} disabled={inputDisabled || !message.trim()}>
+							Send
+						</Button>
+					</div>
+				</div>
+			</div>
+		);
+	}
+	}
