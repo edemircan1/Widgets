@@ -17,6 +17,7 @@ type FeatureLayer = {
 	createQuery?: () => any;
 	queryFeatures?: (query: any) => Promise<{ features: any[] }>;
 	definitionExpression?: string;
+	visible?: boolean;
 };
 
 interface ChatMessage {
@@ -42,15 +43,17 @@ interface LayerMetadata {
 	titleTokens: string[];
 	path: string[];
 	applyDefinitionExpression?: (whereClause: string | null) => void;
+	setVisible?: (visible: boolean) => void;
 }
 
-type ClarificationContext = 'layer' | 'value';
+type ClarificationContext = 'layer' | 'value' | 'field';
 
 interface ClarificationOption {
 	label: string;
 	value: string;
 	field?: string;
 	context?: ClarificationContext;
+	metadata?: any;
 }
 
 interface MatchedField {
@@ -59,10 +62,18 @@ interface MatchedField {
 	type: 'exact' | 'partial' | 'token' | 'alias';
 }
 
-type OperatorInfo = { type: '>' | '<' | '=' | 'BETWEEN' };
+type OperatorInfo = { type: '>' | '<' | '=' | '>=' | '<=' | '!=' | 'BETWEEN' | 'IN' | 'LIKE' };
+type LogicalOperator = 'AND' | 'OR';
 type DateInfo =
 	| { type: 'year'; value: number }
 	| { type: 'month-year'; year: number; month: string };
+
+interface ParsedCondition {
+	field?: string;
+	operator?: string;
+	value?: string | number;
+	raw: string;
+}
 
 interface ParsedMessage {
 	original: string;
@@ -71,6 +82,8 @@ interface ParsedMessage {
 	dates: DateInfo[];
 	numbers: number[];
 	operators: OperatorInfo[];
+	logicalOperators: LogicalOperator[];
+	conditions: ParsedCondition[];
 	freeText: string[];
 }
 
@@ -85,6 +98,7 @@ interface PendingQuery {
 	layerMatch: LayerMatch | null;
 	field?: FieldMetadata;
 	candidateLayers?: LayerMatch[];
+	candidateFields?: Array<{ field: FieldMetadata; layer: LayerMetadata }>;
 }
 
 interface QueryDebugInfo {
@@ -241,7 +255,11 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		const collectFeatureLayer = async (
 			featureLayer: FeatureLayer,
 			titlePath: string[],
-			options: { sourceId?: string; applyDefinitionExpression?: (whereClause: string | null) => void } = {},
+			options: { 
+				sourceId?: string; 
+				applyDefinitionExpression?: (whereClause: string | null) => void;
+				setVisible?: (visible: boolean) => void;
+			} = {},
 		) => {
 			try {
 				if (typeof (featureLayer as any).load === 'function') {
@@ -286,6 +304,14 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					featureLayer.definitionExpression = whereClause ?? '1=1';
 				};
 
+			const setVisible = options.setVisible
+				? options.setVisible
+				: (visible: boolean) => {
+					if ('visible' in featureLayer) {
+						(featureLayer as any).visible = visible;
+					}
+				};
+
 			layerCache.push({
 				id,
 				title,
@@ -295,6 +321,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				titleTokens: tokenizeTitlePath(titlePathClean),
 				path: titlePathClean,
 				applyDefinitionExpression,
+				setVisible,
 			});
 		};
 
@@ -326,6 +353,14 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 							sublayer.definitionExpression = whereClause ?? '1=1';
 						}
 					},
+					setVisible: (visible: boolean) => {
+						if ('visible' in sublayer) {
+							sublayer.visible = visible;
+						}
+						if ('visible' in parentLayer) {
+							parentLayer.visible = visible;
+						}
+					},
 				});
 			}
 
@@ -344,6 +379,11 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					sourceId: layer.id ?? layer.uid ?? layerTitle,
 					applyDefinitionExpression: (whereClause: string | null) => {
 						(layer as FeatureLayer).definitionExpression = whereClause ?? '1=1';
+					},
+					setVisible: (visible: boolean) => {
+						if ('visible' in layer) {
+							layer.visible = visible;
+						}
 					},
 				});
 			}
@@ -369,19 +409,19 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 	};
 
 	handleSendMessage = async () => {
-			const { message, layerCache, connectionStatus } = this.state;
+		const { message, layerCache, connectionStatus } = this.state;
 
 		if (!message.trim()) {
 			return;
 		}
 
 		if (connectionStatus !== 'ready') {
-				this.addBotMessage('⚠️ The map connection is not ready yet. Select a map and wait for the layers to load.');
+			this.addBotMessage('⚠️ The map connection is not ready yet. Select a map and wait for the layers to load.');
 			return;
 		}
 
 		if (layerCache.length === 0) {
-				this.addBotMessage('⚠️ No available layers were found.');
+			this.addBotMessage('⚠️ No available layers were found.');
 			return;
 		}
 
@@ -399,14 +439,16 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					loading: false,
 				});
 				if (result.pendingQuery?.candidateLayers?.length) {
-					this.addBotMessage('Multiple layers look relevant. Please choose the one you want to filter.');
+					this.addBotMessage('Multiple layers contain matching fields. Please choose which layer to filter:');
+				} else if (result.pendingQuery?.candidateFields?.length) {
+					this.addBotMessage('Multiple fields match your query. Please choose which field to use:');
 				} else {
-					this.addBotMessage('I found multiple value matches. Which one did you mean?');
+					this.addBotMessage('I found multiple matches. Which one did you mean?');
 				}
 			} else if (result.type === 'success') {
 				const featureCount = await this.executeQuery(result);
 				if (featureCount !== null) {
-					this.addBotMessage(`✅ Filter applied. ${featureCount} feature(s) highlighted on the map.`);
+					this.addBotMessage(`✅ Filter applied to "${result.layerTitle}". ${featureCount} feature(s) found and highlighted.`);
 				}
 				this.setState({ loading: false });
 			} else {
@@ -422,12 +464,42 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 
 	processMessage = async (message: string, layerCache: LayerMetadata[]): Promise<ProcessResult> => {
 		const parsed = this.parseMessage(message);
+
+		// Check for exact field name matches across all layers
+		const exactFieldMatches = this.findExactFieldMatches(parsed, layerCache);
+		
+		if (exactFieldMatches.length > 1) {
+			// Multiple layers have the exact field - ask user to clarify
+			return {
+				type: 'clarification',
+				options: exactFieldMatches.map((match) => ({
+					label: `${match.field.name} in ${match.layer.path.join(' › ')}`,
+					value: match.layer.id,
+					field: match.field.name,
+					context: 'field' as ClarificationContext,
+					metadata: match,
+				})),
+				pendingQuery: {
+					parsed,
+					layerMatch: null,
+					candidateFields: exactFieldMatches,
+				},
+			};
+		}
+
+		if (exactFieldMatches.length === 1) {
+			// Perfect match - use it directly
+			const match = exactFieldMatches[0];
+			return this.buildDirectQuery(parsed, match.layer, match.field);
+		}
+
+		// Fall back to smart ranking
 		const layerMatches = this.rankLayers(parsed, layerCache);
 		const minScore = layerCache.length > 1 ? 10 : 0;
 		const viableMatches = layerMatches.filter((match) => match.score >= minScore);
 
 		if (viableMatches.length === 0) {
-			return { type: 'error', message: 'No suitable layer was identified. Please be more specific.' };
+			return { type: 'error', message: 'No suitable layer was identified. Try mentioning a specific field or layer name.' };
 		}
 
 		const topScore = viableMatches[0].score;
@@ -437,7 +509,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			return {
 				type: 'clarification',
 				options: closeMatches.map((match) => ({
-					label: `${match.layer.title}`,
+					label: `${match.layer.path.join(' › ')}`,
 					value: match.layer.id,
 					context: 'layer' as ClarificationContext,
 				})),
@@ -452,9 +524,85 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		return this.buildSmartQuery(parsed, viableMatches[0]);
 	};
 
+	findExactFieldMatches = (parsed: ParsedMessage, layerCache: LayerMetadata[]): Array<{ field: FieldMetadata; layer: LayerMetadata }> => {
+		const matches: Array<{ field: FieldMetadata; layer: LayerMetadata }> = [];
+		const searchTokens = [...parsed.potentialFields, ...parsed.tokens].map(t => t.toLowerCase());
+
+		layerCache.forEach((layer) => {
+			layer.fields.forEach((field) => {
+				const fieldNameLower = field.name.toLowerCase();
+				if (searchTokens.includes(fieldNameLower)) {
+					matches.push({ field, layer });
+				}
+			});
+		});
+
+		return matches;
+	};
+
+	buildDirectQuery = async (parsed: ParsedMessage, layer: LayerMetadata, field: FieldMetadata): Promise<ProcessResult> => {
+		const conditions: string[] = [];
+		const fieldType = normalizeFieldType(field.type);
+
+		// Build condition based on field type and parsed data
+		if (isNumericFieldType(fieldType) && parsed.numbers.length > 0) {
+			const numCond = this.buildNumericCondition(field, parsed);
+			if (numCond) {
+				conditions.push(numCond);
+			}
+		} else if (isDateFieldType(fieldType) && parsed.dates.length > 0) {
+			const dateCond = this.buildDateCondition(field, parsed.dates[0]);
+			if (dateCond) {
+				conditions.push(dateCond);
+			}
+		} else if (isStringFieldType(fieldType)) {
+			const textTokens = parsed.freeText.length > 0 ? parsed.freeText : parsed.tokens;
+			if (textTokens.length > 0) {
+				const textMatch = await this.matchTextValue(textTokens, field, layer.queryLayer);
+				if (textMatch.type === 'success') {
+					conditions.push(textMatch.condition);
+				} else {
+					const likeConditions = textTokens.map((text) => {
+						const sanitized = text.replace(/'/g, "''");
+						return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
+					});
+					conditions.push(`(${likeConditions.join(' OR ')})`);
+				}
+			}
+		}
+
+		const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
+
+		return {
+			type: 'success',
+			metadata: layer,
+			whereClause,
+			layerTitle: layer.title,
+			debugInfo: {
+				layerId: layer.id,
+				layerTitle: layer.title,
+				whereClause,
+				matchedFields: [field.name],
+				textTokens: parsed.freeText,
+				numbers: parsed.numbers,
+				operators: parsed.operators.map((op) => op.type),
+				dates: parsed.dates.map((d) => d.type === 'year' ? `${d.value}` : `${d.month}-${d.year}`),
+				rawMessage: parsed.original,
+			},
+		};
+	};
+
 	parseMessage = (message: string): ParsedMessage => {
 		const lowerMessage = message.toLowerCase();
 		const tokens = lowerMessage.split(/\s+/).filter((token) => token.length > 1);
+
+		// Parse logical operators
+		const logicalOperators: LogicalOperator[] = [];
+		if (/\band\b/i.test(message)) logicalOperators.push('AND');
+		if (/\bor\b/i.test(message)) logicalOperators.push('OR');
+
+		// Parse conditions (simple pattern matching)
+		const conditions = this.parseConditions(message);
 
 		return {
 			original: message,
@@ -463,8 +611,30 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			dates: this.extractDates(message),
 			numbers: this.extractNumbers(message),
 			operators: this.extractOperators(message),
+			logicalOperators,
+			conditions,
 			freeText: this.extractFreeText(message),
 		};
+	};
+
+	parseConditions = (message: string): ParsedCondition[] => {
+		const conditions: ParsedCondition[] = [];
+		
+		// Pattern: field operator value
+		// e.g., "rsrp<-110" or "status = 'active'" or "year > 2020"
+		const conditionPattern = /([a-z_][a-z0-9_]*)\s*(>=|<=|!=|<>|>|<|=)\s*(-?\d+(?:\.\d+)?|'[^']*')/gi;
+		let match;
+		
+		while ((match = conditionPattern.exec(message)) !== null) {
+			conditions.push({
+				field: match[1],
+				operator: match[2],
+				value: match[3].replace(/'/g, ''),
+				raw: match[0],
+			});
+		}
+
+		return conditions;
 	};
 
 	extractPotentialFields = (message: string): string[] => {
@@ -481,30 +651,18 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		}
 
 		const monthNames: Record<string, string> = {
-			january: '01',
-			jan: '01',
-			february: '02',
-			feb: '02',
-			march: '03',
-			mar: '03',
-			april: '04',
-			apr: '04',
+			january: '01', jan: '01',
+			february: '02', feb: '02',
+			march: '03', mar: '03',
+			april: '04', apr: '04',
 			may: '05',
-			june: '06',
-			jun: '06',
-			july: '07',
-			jul: '07',
-			august: '08',
-			aug: '08',
-			september: '09',
-			sept: '09',
-			sep: '09',
-			october: '10',
-			oct: '10',
-			november: '11',
-			nov: '11',
-			december: '12',
-			dec: '12',
+			june: '06', jun: '06',
+			july: '07', jul: '07',
+			august: '08', aug: '08',
+			september: '09', sept: '09', sep: '09',
+			october: '10', oct: '10',
+			november: '11', nov: '11',
+			december: '12', dec: '12',
 		};
 
 		Object.entries(monthNames).forEach(([month, num]) => {
@@ -519,7 +677,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 	};
 
 	extractNumbers = (message: string): number[] => {
-		const numbers = message.match(/\d+(\.\d+)?/g);
+		const numbers = message.match(/-?\d+(\.\d+)?/g);
 		return numbers ? numbers.map((value) => parseFloat(value)) : [];
 	};
 
@@ -527,15 +685,24 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		const operators: OperatorInfo[] = [];
 		const lowerMsg = message.toLowerCase();
 
-		if (/(greater than|more than|above|over|>=|>)/i.test(lowerMsg)) {
+		if (/(>=|greater than or equal)/i.test(lowerMsg)) {
+			operators.push({ type: '>=' });
+		} else if (/(greater than|more than|above|over|>)/i.test(lowerMsg)) {
 			operators.push({ type: '>' });
 		}
-		if (/(less than|below|under|<=|<)/i.test(lowerMsg)) {
+		
+		if (/(<=|less than or equal)/i.test(lowerMsg)) {
+			operators.push({ type: '<=' });
+		} else if (/(less than|below|under|<)/i.test(lowerMsg)) {
 			operators.push({ type: '<' });
 		}
-		if (/(equal to|equals|=|is|exactly)/i.test(lowerMsg)) {
+		
+		if (/(!=|<>|not equal)/i.test(lowerMsg)) {
+			operators.push({ type: '!=' });
+		} else if (/(equal to|equals|=|is|exactly)/i.test(lowerMsg)) {
 			operators.push({ type: '=' });
 		}
+		
 		if (/(between)/i.test(lowerMsg)) {
 			operators.push({ type: 'BETWEEN' });
 		}
@@ -547,34 +714,16 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		const technical = this.extractPotentialFields(message);
 		const words = message.toLowerCase().split(/\s+/);
 		const stopWords = new Set([
-			'and',
-			'with',
-			'for',
-			'the',
-			'that',
-			'this',
-			'these',
-			'those',
-			'where',
-			'records',
-			'results',
-			'show',
-			'find',
-			'display',
-			'please',
-			'filter',
-			'list',
-			'from',
-			'in',
-			'on',
-			'of',
+			'and', 'or', 'not', 'with', 'for', 'the', 'that', 'this', 'these', 'those',
+			'where', 'records', 'results', 'show', 'find', 'display', 'please', 'filter',
+			'list', 'from', 'in', 'on', 'of', 'greater', 'less', 'than', 'equal', 'to',
 		]);
 
 		return words.filter(
 			(word) =>
 				word.length > 2 &&
 				!technical.includes(word) &&
-				!/^[\d]+$/.test(word) &&
+				!/^-?[\d.]+$/.test(word) &&
 				!stopWords.has(word),
 		);
 	};
@@ -652,6 +801,31 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			parsed.freeText.length > 0 ? parsed.freeText : parsed.numbers.map((value) => `${value}`)
 		).filter((token) => token.trim().length > 0);
 
+		// If we have parsed conditions with exact field matches, use those
+		if (parsed.conditions.length > 0) {
+			for (const condition of parsed.conditions) {
+				const field = layerMetadata.fields.find(
+					f => f.name.toLowerCase() === condition.field?.toLowerCase()
+				);
+				
+				if (field && condition.operator && condition.value !== undefined) {
+					const fieldType = normalizeFieldType(field.type);
+					
+					if (isNumericFieldType(fieldType)) {
+						const numValue = parseFloat(String(condition.value));
+						if (!isNaN(numValue)) {
+							conditions.push(`${field.name} ${condition.operator} ${numValue}`);
+						}
+					} else if (isStringFieldType(fieldType)) {
+						const sanitized = String(condition.value).replace(/'/g, "''");
+						conditions.push(`${field.name} ${condition.operator} '${sanitized}'`);
+					}
+				}
+			}
+		}
+
+		// Process matched fields if no direct conditions were found
+		if (conditions.length === 0) {
 			for (const match of matchedFields) {
 				const field = match.field;
 				const fieldType = normalizeFieldType(field.type);
@@ -690,27 +864,32 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					}
 				}
 			}
+		}
 
-			const unmatchedStringFields = layerMetadata.fields.filter(
-				(field: FieldMetadata) =>
-					isStringFieldType(field.type) && !matchedFields.some((matched) => matched.field.name === field.name),
-			);
+		// Fallback: search all string fields if no conditions yet
+		const unmatchedStringFields = layerMetadata.fields.filter(
+			(field: FieldMetadata) =>
+				isStringFieldType(field.type) && !matchedFields.some((matched) => matched.field.name === field.name),
+		);
 
-			if (textTokens.length > 0 && unmatchedStringFields.length > 0 && conditions.length === 0) {
-				const orConditions: string[] = [];
-				textTokens.forEach((text) => {
-					const sanitized = text.replace(/'/g, "''");
-						unmatchedStringFields.forEach((field: FieldMetadata) => {
-						orConditions.push(`UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`);
-					});
+		if (textTokens.length > 0 && unmatchedStringFields.length > 0 && conditions.length === 0) {
+			const orConditions: string[] = [];
+			textTokens.forEach((text) => {
+				const sanitized = text.replace(/'/g, "''");
+				unmatchedStringFields.forEach((field: FieldMetadata) => {
+					orConditions.push(`UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`);
 				});
+			});
 
-				if (orConditions.length > 0) {
-					conditions.push(`(${orConditions.join(' OR ')})`);
-				}
+			if (orConditions.length > 0) {
+				conditions.push(`(${orConditions.join(' OR ')})`);
 			}
+		}
 
-		const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
+		// Join conditions with logical operators if present
+		const logicalOp = parsed.logicalOperators.length > 0 ? parsed.logicalOperators[0] : 'AND';
+		const whereClause = conditions.length > 0 ? conditions.join(` ${logicalOp} `) : '1=1';
+		
 		const matchedFieldNames = Array.from(new Set(matchedFields.map((match) => match.field.name)));
 		const operatorStrings = parsed.operators.map((operator) => operator.type);
 		const dateStrings = parsed.dates.map((dateInfo) =>
@@ -913,8 +1092,14 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		switch (op) {
 			case '>':
 				return `${field.name} > ${parsed.numbers[0]}`;
+			case '>=':
+				return `${field.name} >= ${parsed.numbers[0]}`;
 			case '<':
 				return `${field.name} < ${parsed.numbers[0]}`;
+			case '<=':
+				return `${field.name} <= ${parsed.numbers[0]}`;
+			case '!=':
+				return `${field.name} <> ${parsed.numbers[0]}`;
 			case '=':
 				return `${field.name} = ${parsed.numbers[0]}`;
 			case 'BETWEEN':
@@ -946,6 +1131,34 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			return;
 		}
 
+		// Handle field clarification
+		if (selectedOption.context === 'field' && selectedOption.metadata) {
+			const match = selectedOption.metadata as { field: FieldMetadata; layer: LayerMetadata };
+			this.setState({ clarificationNeeded: false, clarificationOptions: [], loading: true, pendingQuery: null });
+
+			try {
+				const refinedResult = await this.buildDirectQuery(pendingQuery.parsed, match.layer, match.field);
+				
+				if (refinedResult.type === 'success') {
+					const featureCount = await this.executeQuery(refinedResult);
+					if (featureCount !== null) {
+						this.addBotMessage(`✅ Filter applied to "${refinedResult.layerTitle}". ${featureCount} feature(s) found.`);
+					}
+					this.setState({ loading: false, pendingQuery: null });
+					return;
+				}
+
+				this.addBotMessage(`❌ ${refinedResult.message}`);
+				this.setState({ loading: false, pendingQuery: null });
+			} catch (error) {
+				const messageText = error instanceof Error ? error.message : 'Unknown error';
+				this.addBotMessage(`❌ Unable to apply the filter: ${messageText}`);
+				this.setState({ loading: false, pendingQuery: null });
+			}
+			return;
+		}
+
+		// Handle layer clarification
 		if (selectedOption.context === 'layer') {
 			if (!pendingQuery.candidateLayers?.length) {
 				this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
@@ -976,7 +1189,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				if (refinedResult.type === 'success') {
 					const featureCount = await this.executeQuery(refinedResult);
 					if (featureCount !== null) {
-						this.addBotMessage(`✅ Filter applied. ${featureCount} feature(s) highlighted on the map.`);
+						this.addBotMessage(`✅ Filter applied to "${refinedResult.layerTitle}". ${featureCount} feature(s) found.`);
 					}
 					this.setState({ loading: false, pendingQuery: null });
 					return;
@@ -993,6 +1206,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			return;
 		}
 
+		// Handle value clarification
 		if (!selectedOption.field || !pendingQuery.layerMatch) {
 			this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
 			return;
@@ -1048,6 +1262,11 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		const layer = metadata.queryLayer;
 
 		try {
+			// Make layer visible
+			if (metadata.setVisible) {
+				metadata.setVisible(true);
+			}
+
 			if (typeof layer.queryFeatures !== 'function') {
 				this.addBotMessage('❌ The selected layer cannot be queried.');
 				return null;
@@ -1107,20 +1326,24 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				});
 
 				this.addBotMessage(
-					`⚠️ No features matched the filter.
-- ${detailLines.join('\n- ')}`,
+					`⚠️ No features matched the filter.\n- ${detailLines.join('\n- ')}`,
 				);
 				return null;
 			}
 
+			// Apply definition expression to filter the layer
 			if ('definitionExpression' in layer) {
 				(layer as any).definitionExpression = whereClause;
 			}
 			metadata.applyDefinitionExpression?.(whereClause);
 
-			if (jimuMapView?.view) {
+			// Zoom to filtered features
+			if (jimuMapView?.view && results.features.length > 0) {
 				try {
-					await jimuMapView.view.goTo(results.features);
+					await jimuMapView.view.goTo(results.features, {
+						duration: 1000,
+						easing: 'ease-in-out'
+					});
 				} catch (goToError) {
 					console.warn('Map navigation failed:', goToError);
 				}
@@ -1192,6 +1415,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 									color: msg.type === 'user' ? '#fff' : '#333',
 									maxWidth: '80%',
 									boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
+									whiteSpace: 'pre-wrap',
 								}}
 							>
 								{msg.text}
@@ -1227,7 +1451,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				<div style={{ padding: '15px', borderTop: '1px solid #ccc', backgroundColor: '#fff' }}>
 					<div style={{ display: 'flex', gap: '10px' }}>
 						<TextInput
-							placeholder="Type your query... (e.g., 2024 May New York RSRP)"
+							placeholder="e.g., rsrp<-110 or filter RSRP in 2024 May"
 							value={message}
 							onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
 								this.setState({ message: event.target.value })
@@ -1248,4 +1472,4 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 			</div>
 		);
 	}
-	}
+}
