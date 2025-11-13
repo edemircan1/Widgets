@@ -89,6 +89,7 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 	private searchDebounceTimer: NodeJS.Timeout | null = null;
 	private filterWatchers: Map<string, NodeJS.Timeout> = new Map();
 	private globalFilterWatcher: NodeJS.Timeout | null = null;
+	private popupWatcher: NodeJS.Timeout | null = null;
 
 	constructor(props: AllWidgetProps<any>) {
 		super(props);
@@ -134,6 +135,11 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 		if (this.globalFilterWatcher) {
 			clearInterval(this.globalFilterWatcher);
 		}
+
+		// Clear popup watcher
+		if (this.popupWatcher) {
+			clearInterval(this.popupWatcher);
+		}
 	}
 
 	onActiveViewChange = async (jimuMapView: JimuMapView) => {
@@ -171,6 +177,9 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 				connectionStatus: 'ready',
 				statusMessage: `Ready. ${layerCache.length} layer(s) indexed.`,
 			});
+
+			// Set up click interception to prevent filter clearing
+			this.setupMapClickInterception(jimuMapView);
 		} catch (error) {
 			const messageText = error instanceof Error ? error.message : 'Unknown error';
 			this.setState({
@@ -179,6 +188,58 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 				statusMessage: `Failed to load layer metadata: ${messageText}`,
 			});
 		}
+	};
+
+	setupMapClickInterception = (jimuMapView: JimuMapView) => {
+		const view = jimuMapView?.view;
+		if (!view) return;
+
+		// Intercept click events before they trigger popups
+		view.on('click', (event: any) => {
+			// Immediately re-enforce all active filters
+			this.state.activeLayers.forEach((activeLayer) => {
+				if (activeLayer.currentWhereClause) {
+					const layer = activeLayer.layer.queryLayer;
+					if ('definitionExpression' in layer) {
+						(layer as any).definitionExpression = activeLayer.currentWhereClause;
+					}
+				}
+			});
+		});
+
+		// Also watch for popup open events
+		if (view.popup) {
+			view.popup.watch('visible', (isVisible: boolean) => {
+				if (isVisible) {
+					// Popup is opening - enforce filters immediately
+					this.enforceAllFiltersImmediately();
+					
+					// And keep enforcing while popup is open
+					const popupWatcher = setInterval(() => {
+						if (!view.popup.visible) {
+							clearInterval(popupWatcher);
+							return;
+						}
+						this.enforceAllFiltersImmediately();
+					}, 5); // Every 5ms while popup is open
+					
+					// Store the watcher so we can clean it up
+					this.popupWatcher = popupWatcher;
+				}
+			});
+		}
+	};
+
+	enforceAllFiltersImmediately = () => {
+		this.state.activeLayers.forEach((activeLayer) => {
+			if (activeLayer.currentWhereClause) {
+				const layer = activeLayer.layer.queryLayer;
+				if ('definitionExpression' in layer) {
+					(layer as any).definitionExpression = activeLayer.currentWhereClause;
+				}
+				activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
+			}
+		});
 	};
 
 	discoverLayers = async (jimuMapView: JimuMapView): Promise<LayerMetadata[]> => {
