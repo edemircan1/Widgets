@@ -88,6 +88,7 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 	private searchInputRef: React.RefObject<HTMLInputElement>;
 	private searchDebounceTimer: NodeJS.Timeout | null = null;
 	private filterWatchers: Map<string, NodeJS.Timeout> = new Map();
+	private globalFilterWatcher: NodeJS.Timeout | null = null;
 
 	constructor(props: AllWidgetProps<any>) {
 		super(props);
@@ -106,10 +107,33 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 		};
 	}
 
+	componentDidMount() {
+		// Set up a global watcher for all active layers
+		this.globalFilterWatcher = setInterval(() => {
+			this.state.activeLayers.forEach((activeLayer) => {
+				if (activeLayer.currentWhereClause) {
+					const layer = activeLayer.layer.queryLayer;
+					if (layer.definitionExpression !== activeLayer.currentWhereClause) {
+						// Re-apply immediately without logging (to avoid console spam)
+						if ('definitionExpression' in layer) {
+							(layer as any).definitionExpression = activeLayer.currentWhereClause;
+						}
+						activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
+					}
+				}
+			});
+		}, 10); // Check every 10ms for ultra-fast response
+	}
+
 	componentWillUnmount() {
 		// Clear all filter watchers
 		this.filterWatchers.forEach((watcher) => clearInterval(watcher));
 		this.filterWatchers.clear();
+		
+		// Clear global watcher
+		if (this.globalFilterWatcher) {
+			clearInterval(this.globalFilterWatcher);
+		}
 	}
 
 	onActiveViewChange = async (jimuMapView: JimuMapView) => {
@@ -539,8 +563,20 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 				layer.id === activeLayerId ? { ...layer, currentWhereClause: whereClause } : layer
 			),
 		}), () => {
-			// Apply the filter
-			activeLayer.layer.applyDefinitionExpression?.(whereClause);
+			// Apply the filter multiple times immediately to prevent glitches
+			const layer = activeLayer.layer.queryLayer;
+			const applyFilter = () => {
+				if ('definitionExpression' in layer) {
+					(layer as any).definitionExpression = whereClause;
+				}
+				activeLayer.layer.applyDefinitionExpression?.(whereClause);
+			};
+			
+			// Apply immediately and several more times in quick succession
+			applyFilter();
+			setTimeout(applyFilter, 10);
+			setTimeout(applyFilter, 50);
+			setTimeout(applyFilter, 100);
 			
 			// Start watching this layer to ensure filter persists
 			this.startFilterWatcher(activeLayerId);
@@ -554,7 +590,7 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 			clearInterval(existingWatcher);
 		}
 
-		// Create a new interval to continuously enforce the filter
+		// Create a new interval to continuously enforce the filter - check more frequently
 		const watcher = setInterval(() => {
 			const activeLayer = this.state.activeLayers.find((l) => l.id === activeLayerId);
 			if (!activeLayer || !activeLayer.currentWhereClause) {
@@ -567,12 +603,17 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 
 			const layer = activeLayer.layer.queryLayer;
 			
-			// If the layer's definition expression doesn't match, re-apply it
+			// If the layer's definition expression doesn't match, re-apply it immediately
 			if (layer.definitionExpression !== activeLayer.currentWhereClause) {
 				console.log('Filter was cleared by map interaction, re-applying:', activeLayer.currentWhereClause);
 				activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
+				
+				// Also force it on the raw layer object to be extra sure
+				if ('definitionExpression' in layer) {
+					(layer as any).definitionExpression = activeLayer.currentWhereClause;
+				}
 			}
-		}, 500); // Check every 500ms
+		}, 50); // Check every 50ms for faster response
 
 		this.filterWatchers.set(activeLayerId, watcher);
 	};
