@@ -1,7 +1,7 @@
 /** @jsx jsx */
 import { React, jsx, AllWidgetProps } from 'jimu-core';
 import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
-import { TextInput, Label, Alert, Icon, Button } from 'jimu-ui';
+import { TextInput, Label, Button } from 'jimu-ui';
 import './style.css';
 
 type FeatureLayerField = { name: string; alias?: string; type: string };
@@ -49,13 +49,12 @@ interface SearchResult {
 	matchedText: string;
 }
 
-interface ActiveFilter {
+interface ActiveLayer {
 	id: string;
-	label: string;
 	layerId: string;
-	layerTitle: string;
-	fieldName?: string;
-	whereClause?: string;
+	layer: LayerMetadata;
+	expanded: boolean;
+	fieldFilters: { [fieldName: string]: string };
 }
 
 interface State {
@@ -67,9 +66,8 @@ interface State {
 	layerCache: LayerMetadata[];
 	connectionStatus: 'idle' | 'connecting' | 'ready' | 'error';
 	statusMessage: string;
-	activeFilters: ActiveFilter[];
+	activeLayers: ActiveLayer[];
 	selectedResultIndex: number;
-	isSearchFocused: boolean;
 }
 
 const NUMERIC_FIELD_TYPES = new Set([
@@ -100,9 +98,8 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 			layerCache: [],
 			connectionStatus: 'idle',
 			statusMessage: 'Select a map in the widget settings to connect.',
-			activeFilters: [],
+			activeLayers: [],
 			selectedResultIndex: -1,
-			isSearchFocused: false,
 		};
 	}
 
@@ -355,7 +352,6 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 		const query = searchText.toLowerCase().trim();
 		const results: SearchResult[] = [];
 
-		// Search through layers
 		layerCache.forEach((layer) => {
 			const layerScore = this.calculateMatchScore(query, layer.title.toLowerCase(), layer.titleTokens);
 			
@@ -370,7 +366,6 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 				});
 			}
 
-			// Search through fields in this layer
 			layer.fields.forEach((field) => {
 				const fieldNameScore = this.calculateMatchScore(query, field.name.toLowerCase(), field.nameTokens);
 				const fieldAliasScore = this.calculateMatchScore(query, field.alias.toLowerCase(), []);
@@ -391,10 +386,7 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 			});
 		});
 
-		// Sort by score (highest first)
 		results.sort((a, b) => b.score - a.score);
-
-		// Limit to top 10 results
 		const topResults = results.slice(0, 10);
 
 		this.setState({ 
@@ -406,22 +398,10 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 	calculateMatchScore = (query: string, target: string, tokens: string[]): number => {
 		let score = 0;
 
-		// Exact match (highest score)
-		if (target === query) {
-			return 100;
-		}
+		if (target === query) return 100;
+		if (target.startsWith(query)) score += 80;
+		if (target.includes(query)) score += 60;
 
-		// Starts with query
-		if (target.startsWith(query)) {
-			score += 80;
-		}
-
-		// Contains query
-		if (target.includes(query)) {
-			score += 60;
-		}
-
-		// Token-based matching
 		const queryTokens = query.split(/[\s_-]+/);
 		queryTokens.forEach((queryToken) => {
 			if (tokens.some((token) => token === queryToken)) {
@@ -433,7 +413,6 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 			}
 		});
 
-		// Fuzzy matching (character-by-character)
 		const fuzzyScore = this.fuzzyMatch(query, target);
 		score += fuzzyScore * 10;
 
@@ -457,24 +436,15 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 	};
 
 	getFieldTypeLabel = (fieldType: string): string => {
-		if (isNumericFieldType(fieldType)) return 'Number Field';
-		if (isDateFieldType(fieldType)) return 'Date Field';
-		if (isStringFieldType(fieldType)) return 'Text Field';
+		if (isNumericFieldType(fieldType)) return 'Number';
+		if (isDateFieldType(fieldType)) return 'Date';
+		if (isStringFieldType(fieldType)) return 'Text';
 		return 'Field';
 	};
 
 	handleResultClick = (result: SearchResult) => {
-		const { layer, field, type } = result;
-
-		if (type === 'layer') {
-			// Activate the layer
-			this.activateLayer(layer);
-		} else if (type === 'field' && field) {
-			// Activate the layer with field focus
-			this.activateLayerWithField(layer, field);
-		}
-
-		// Clear search
+		const { layer } = result;
+		this.activateLayer(layer);
 		this.setState({ 
 			searchText: '', 
 			searchResults: [], 
@@ -483,128 +453,100 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 	};
 
 	activateLayer = (layer: LayerMetadata) => {
-		const { activeFilters } = this.state;
+		const { activeLayers } = this.state;
 
-		// Check if already active
-		const existingFilter = activeFilters.find((f) => f.layerId === layer.id && !f.fieldName);
-		if (existingFilter) {
-			return;
-		}
+		const existingLayer = activeLayers.find((l) => l.layerId === layer.id);
+		if (existingLayer) return;
 
-		// Make layer visible
 		layer.setVisible?.(true);
-
-		// Clear any definition expression
 		layer.applyDefinitionExpression?.('1=1');
 
-		// Add to active filters
-		const newFilter: ActiveFilter = {
+		const newActiveLayer: ActiveLayer = {
 			id: `layer-${layer.id}-${Date.now()}`,
-			label: layer.title,
 			layerId: layer.id,
-			layerTitle: layer.title,
+			layer,
+			expanded: false,
+			fieldFilters: {},
 		};
 
 		this.setState({
-			activeFilters: [...activeFilters, newFilter],
+			activeLayers: [...activeLayers, newActiveLayer],
+		});
+	};
+
+	toggleLayerExpanded = (activeLayerId: string) => {
+		this.setState((prevState) => ({
+			activeLayers: prevState.activeLayers.map((layer) =>
+				layer.id === activeLayerId ? { ...layer, expanded: !layer.expanded } : layer
+			),
+		}));
+	};
+
+	handleFieldFilterChange = (activeLayerId: string, fieldName: string, value: string) => {
+		this.setState((prevState) => ({
+			activeLayers: prevState.activeLayers.map((layer) =>
+				layer.id === activeLayerId
+					? { ...layer, fieldFilters: { ...layer.fieldFilters, [fieldName]: value } }
+					: layer
+			),
+		}), () => {
+			this.applyLayerFilters(activeLayerId);
+		});
+	};
+
+	applyLayerFilters = (activeLayerId: string) => {
+		const activeLayer = this.state.activeLayers.find((l) => l.id === activeLayerId);
+		if (!activeLayer) return;
+
+		const conditions: string[] = [];
+
+		Object.entries(activeLayer.fieldFilters).forEach(([fieldName, filterValue]) => {
+			if (!filterValue.trim()) return;
+
+			const field = activeLayer.layer.fields.find((f) => f.name === fieldName);
+			if (!field) return;
+
+			const fieldType = normalizeFieldType(field.type);
+
+			if (isNumericFieldType(fieldType)) {
+				const num = parseFloat(filterValue);
+				if (!isNaN(num)) {
+					conditions.push(`${fieldName} = ${num}`);
+				}
+			} else if (isStringFieldType(fieldType)) {
+				const sanitized = filterValue.replace(/'/g, "''");
+				conditions.push(`UPPER(${fieldName}) LIKE UPPER('%${sanitized}%')`);
+			} else if (isDateFieldType(fieldType)) {
+				const sanitized = filterValue.replace(/'/g, "''");
+				conditions.push(`${fieldName} >= TIMESTAMP '${sanitized}'`);
+			}
 		});
 
-		// Zoom to layer
-		this.zoomToLayer(layer);
+		const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
+		activeLayer.layer.applyDefinitionExpression?.(whereClause);
 	};
 
-	activateLayerWithField = (layer: LayerMetadata, field: FieldMetadata) => {
-		const { activeFilters } = this.state;
+	removeLayer = (activeLayerId: string) => {
+		const { activeLayers } = this.state;
+		const activeLayer = activeLayers.find((l) => l.id === activeLayerId);
 
-		// Check if already active
-		const existingFilter = activeFilters.find(
-			(f) => f.layerId === layer.id && f.fieldName === field.name
-		);
-		if (existingFilter) {
-			return;
-		}
-
-		// Make layer visible
-		layer.setVisible?.(true);
-
-		// Clear any definition expression for now (user can apply filters later)
-		layer.applyDefinitionExpression?.('1=1');
-
-		// Add to active filters
-		const newFilter: ActiveFilter = {
-			id: `field-${layer.id}-${field.name}-${Date.now()}`,
-			label: `${field.alias || field.name}`,
-			layerId: layer.id,
-			layerTitle: layer.title,
-			fieldName: field.name,
-		};
-
-		this.setState({
-			activeFilters: [...activeFilters, newFilter],
-		});
-
-		// Zoom to layer
-		this.zoomToLayer(layer);
-	};
-
-	zoomToLayer = async (layer: LayerMetadata) => {
-		const { jimuMapView } = this.state;
-
-		if (!jimuMapView?.view) return;
-
-		try {
-			const queryFeatures = layer.queryLayer.queryFeatures?.bind(layer.queryLayer);
-			if (!queryFeatures) return;
-
-			const query = typeof layer.queryLayer.createQuery === 'function' 
-				? layer.queryLayer.createQuery() 
-				: ({} as any);
-			
-			query.where = '1=1';
-			query.returnGeometry = true;
-			query.outFields = ['*'];
-
-			const results = await queryFeatures(query);
-			
-			if (results?.features && results.features.length > 0) {
-				await jimuMapView.view.goTo(results.features, {
-					duration: 1000,
-					easing: 'ease-in-out'
-				});
-			}
-		} catch (error) {
-			console.warn('Failed to zoom to layer:', error);
-		}
-	};
-
-	removeFilter = (filterId: string) => {
-		const { activeFilters, layerCache } = this.state;
-		const filter = activeFilters.find((f) => f.id === filterId);
-
-		if (filter) {
-			// Find the layer and reset it
-			const layer = layerCache.find((l) => l.id === filter.layerId);
-			if (layer) {
-				layer.applyDefinitionExpression?.('1=1');
-				// Optionally hide the layer
-				// layer.setVisible?.(false);
-			}
+		if (activeLayer) {
+			activeLayer.layer.applyDefinitionExpression?.('1=1');
 		}
 
 		this.setState({
-			activeFilters: activeFilters.filter((f) => f.id !== filterId),
+			activeLayers: activeLayers.filter((l) => l.id !== activeLayerId),
 		});
 	};
 
-	clearAllFilters = () => {
-		const { layerCache } = this.state;
+	clearAllLayers = () => {
+		const { activeLayers } = this.state;
 
-		// Reset all layers
-		layerCache.forEach((layer) => {
-			layer.applyDefinitionExpression?.('1=1');
+		activeLayers.forEach((activeLayer) => {
+			activeLayer.layer.applyDefinitionExpression?.('1=1');
 		});
 
-		this.setState({ activeFilters: [] });
+		this.setState({ activeLayers: [] });
 	};
 
 	handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -639,12 +581,10 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 			searchText,
 			searchResults,
 			showResults,
-			loading,
 			connectionStatus,
 			statusMessage,
-			activeFilters,
+			activeLayers,
 			selectedResultIndex,
-			isSearchFocused,
 		} = this.state;
 
 		return (
@@ -654,18 +594,8 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 					onActiveViewChange={this.onActiveViewChange}
 				/>
 
-				{/* Status Bar */}
-				<div style={{ padding: '10px 15px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#fff' }}>
-					<Alert
-						form="basic"
-						type={connectionStatus === 'ready' ? 'success' : connectionStatus === 'error' ? 'danger' : 'info'}
-						text={statusMessage}
-						withIcon
-					/>
-				</div>
-
 				{/* Search Box */}
-				<div style={{ padding: '15px', backgroundColor: '#fff', position: 'relative' }}>
+				<div style={{ padding: '12px', backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0', position: 'relative' }}>
 					<div style={{ position: 'relative' }}>
 						<TextInput
 							ref={this.searchInputRef}
@@ -673,17 +603,12 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 							value={searchText}
 							onChange={this.handleSearchChange}
 							onKeyDown={this.handleKeyDown}
-							onFocus={() => this.setState({ isSearchFocused: true })}
-							onBlur={() => {
-								// Delay to allow click on results
-								setTimeout(() => this.setState({ isSearchFocused: false }), 200);
-							}}
 							disabled={connectionStatus !== 'ready'}
 							style={{ 
 								width: '100%',
-								paddingRight: '40px',
+								paddingRight: '35px',
 								fontSize: '14px',
-								height: '40px'
+								height: '38px'
 							}}
 						/>
 						{searchText && (
@@ -691,17 +616,18 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 								onClick={() => this.setState({ searchText: '', searchResults: [], showResults: false })}
 								style={{
 									position: 'absolute',
-									right: '10px',
+									right: '8px',
 									top: '50%',
 									transform: 'translateY(-50%)',
 									background: 'none',
 									border: 'none',
 									cursor: 'pointer',
-									padding: '5px',
+									padding: '4px',
 									color: '#666',
+									fontSize: '18px',
 								}}
 							>
-								✕
+								×
 							</button>
 						)}
 					</div>
@@ -711,16 +637,16 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 						<div style={{
 							position: 'absolute',
 							top: '100%',
-							left: '15px',
-							right: '15px',
+							left: '12px',
+							right: '12px',
 							backgroundColor: '#fff',
 							border: '1px solid #ddd',
 							borderRadius: '4px',
 							boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-							maxHeight: '400px',
+							maxHeight: '300px',
 							overflowY: 'auto',
 							zIndex: 1000,
-							marginTop: '5px',
+							marginTop: '4px',
 						}}>
 							{searchResults.map((result, index) => (
 								<div
@@ -728,173 +654,135 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 									onClick={() => this.handleResultClick(result)}
 									onMouseEnter={() => this.setState({ selectedResultIndex: index })}
 									style={{
-										padding: '12px 15px',
+										padding: '10px 12px',
 										cursor: 'pointer',
 										borderBottom: index < searchResults.length - 1 ? '1px solid #f0f0f0' : 'none',
 										backgroundColor: selectedResultIndex === index ? '#f5f5f5' : '#fff',
-										transition: 'background-color 0.15s',
 									}}
 								>
-									<div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-										<div style={{
-											width: '32px',
-											height: '32px',
-											borderRadius: '4px',
-											backgroundColor: result.type === 'layer' ? '#0079c1' : '#6ca0dc',
-											display: 'flex',
-											alignItems: 'center',
-											justifyContent: 'center',
-											color: '#fff',
-											fontSize: '12px',
-											fontWeight: 'bold',
-											flexShrink: 0,
-										}}>
-											{result.type === 'layer' ? '📁' : '📋'}
-										</div>
-										<div style={{ flex: 1, minWidth: 0 }}>
-											<div style={{ 
-												fontWeight: 500, 
-												fontSize: '14px',
-												color: '#333',
-												overflow: 'hidden',
-												textOverflow: 'ellipsis',
-												whiteSpace: 'nowrap',
-											}}>
-												{result.label}
-											</div>
-											{result.sublabel && (
-												<div style={{ 
-													fontSize: '12px', 
-													color: '#666',
-													overflow: 'hidden',
-													textOverflow: 'ellipsis',
-													whiteSpace: 'nowrap',
-													marginTop: '2px',
-												}}>
-													{result.sublabel}
-												</div>
-											)}
-										</div>
+									<div style={{ fontWeight: 500, fontSize: '13px', color: '#333' }}>
+										{result.label}
 									</div>
+									{result.sublabel && (
+										<div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
+											{result.sublabel}
+										</div>
+									)}
 								</div>
 							))}
 						</div>
 					)}
 				</div>
 
-				{/* Active Filters */}
-				{activeFilters.length > 0 && (
-					<div style={{ 
-						padding: '15px', 
-						backgroundColor: '#f9f9f9', 
-						borderBottom: '1px solid #e0e0e0',
-						maxHeight: '200px',
-						overflowY: 'auto',
-					}}>
-						<div style={{ 
-							display: 'flex', 
-							justifyContent: 'space-between', 
-							alignItems: 'center',
-							marginBottom: '10px' 
-						}}>
-							<Label style={{ fontWeight: 'bold', margin: 0 }}>
-								Active Filters ({activeFilters.length})
-							</Label>
-							<Button
-								size="sm"
-								type="tertiary"
-								onClick={this.clearAllFilters}
-								style={{ fontSize: '12px' }}
-							>
-								Clear All
-							</Button>
-						</div>
-						<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-							{activeFilters.map((filter) => (
-								<div
-									key={filter.id}
-									style={{
-										display: 'inline-flex',
-										alignItems: 'center',
-										gap: '8px',
-										padding: '6px 12px',
-										backgroundColor: '#fff',
-										border: '1px solid #ddd',
-										borderRadius: '16px',
-										fontSize: '13px',
-									}}
-								>
-									<span style={{ color: '#333' }}>
-										{filter.fieldName ? `${filter.label} (${filter.layerTitle})` : filter.label}
-									</span>
-									<button
-										onClick={() => this.removeFilter(filter.id)}
-										style={{
-											background: 'none',
-											border: 'none',
-											cursor: 'pointer',
-											padding: '0',
-											color: '#666',
-											fontSize: '16px',
-											lineHeight: '1',
-										}}
-									>
-										×
-									</button>
-								</div>
-							))}
-						</div>
-					</div>
-				)}
-
-				{/* Main Content Area */}
-				<div style={{ 
-					flex: 1, 
-					padding: '20px', 
-					overflowY: 'auto', 
-					backgroundColor: '#fff',
-					display: 'flex',
-					alignItems: 'center',
-					justifyContent: 'center',
-				}}>
+				{/* Active Layers */}
+				<div style={{ flex: 1, overflowY: 'auto', backgroundColor: '#f9f9f9' }}>
 					{connectionStatus !== 'ready' ? (
-						<div style={{ textAlign: 'center', color: '#666' }}>
-							<div style={{ fontSize: '48px', marginBottom: '15px' }}>🔍</div>
-							<div style={{ fontSize: '16px', fontWeight: 500 }}>
-								{statusMessage}
-							</div>
+						<div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
+							<div style={{ fontSize: '14px' }}>{statusMessage}</div>
 						</div>
-					) : activeFilters.length === 0 ? (
-						<div style={{ textAlign: 'center', color: '#666' }}>
-							<div style={{ fontSize: '48px', marginBottom: '15px' }}>🗺️</div>
-							<div style={{ fontSize: '16px', fontWeight: 500, marginBottom: '8px' }}>
-								Search to get started
-							</div>
-							<div style={{ fontSize: '14px', color: '#999' }}>
-								Type to search layers or fields
-							</div>
+					) : activeLayers.length === 0 ? (
+						<div style={{ padding: '40px 20px', textAlign: 'center', color: '#999' }}>
+							<div style={{ fontSize: '40px', marginBottom: '10px' }}>🔍</div>
+							<div style={{ fontSize: '14px' }}>Search and select a layer to get started</div>
 						</div>
 					) : (
-						<div style={{ textAlign: 'center', color: '#666' }}>
-							<div style={{ fontSize: '48px', marginBottom: '15px' }}>✅</div>
-							<div style={{ fontSize: '16px', fontWeight: 500 }}>
-								{activeFilters.length} filter{activeFilters.length !== 1 ? 's' : ''} active
+						<div>
+							<div style={{ 
+								padding: '10px 12px', 
+								backgroundColor: '#fff', 
+								borderBottom: '1px solid #e0e0e0',
+								display: 'flex',
+								justifyContent: 'space-between',
+								alignItems: 'center'
+							}}>
+								<Label style={{ margin: 0, fontSize: '13px', fontWeight: 600 }}>
+									Active Layers ({activeLayers.length})
+								</Label>
+								<Button
+									size="sm"
+									type="tertiary"
+									onClick={this.clearAllLayers}
+									style={{ fontSize: '12px', padding: '4px 8px' }}
+								>
+									Clear All
+								</Button>
 							</div>
+
+							{activeLayers.map((activeLayer) => (
+								<div key={activeLayer.id} style={{ 
+									backgroundColor: '#fff', 
+									marginBottom: '8px',
+									border: '1px solid #e0e0e0',
+									borderRadius: '4px',
+									margin: '8px',
+								}}>
+									{/* Layer Header */}
+									<div 
+										style={{
+											padding: '10px 12px',
+											display: 'flex',
+											justifyContent: 'space-between',
+											alignItems: 'center',
+											cursor: 'pointer',
+											borderBottom: activeLayer.expanded ? '1px solid #f0f0f0' : 'none',
+										}}
+										onClick={() => this.toggleLayerExpanded(activeLayer.id)}
+									>
+										<div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
+											<span style={{ fontSize: '12px' }}>
+												{activeLayer.expanded ? '▼' : '▶'}
+											</span>
+											<span style={{ fontSize: '13px', fontWeight: 500, color: '#333' }}>
+												{activeLayer.layer.title}
+											</span>
+										</div>
+										<button
+											onClick={(e) => {
+												e.stopPropagation();
+												this.removeLayer(activeLayer.id);
+											}}
+											style={{
+												background: 'none',
+												border: 'none',
+												cursor: 'pointer',
+												padding: '2px 6px',
+												color: '#666',
+												fontSize: '18px',
+											}}
+										>
+											×
+										</button>
+									</div>
+
+									{/* Field Filters */}
+									{activeLayer.expanded && (
+										<div style={{ padding: '8px 12px' }}>
+											{activeLayer.layer.fields.map((field) => (
+												<div key={field.name} style={{ marginBottom: '8px' }}>
+													<Label style={{ 
+														fontSize: '11px', 
+														marginBottom: '4px',
+														color: '#666',
+														display: 'block'
+													}}>
+														{field.alias || field.name} ({this.getFieldTypeLabel(field.type)})
+													</Label>
+													<TextInput
+														placeholder={`Filter ${field.alias || field.name}...`}
+														value={activeLayer.fieldFilters[field.name] || ''}
+														onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+															this.handleFieldFilterChange(activeLayer.id, field.name, e.target.value)
+														}
+														style={{ width: '100%', fontSize: '12px', height: '32px' }}
+													/>
+												</div>
+											))}
+										</div>
+									)}
+								</div>
+							))}
 						</div>
 					)}
-				</div>
-
-				{/* Help Text */}
-				<div style={{ 
-					padding: '12px 15px', 
-					backgroundColor: '#f9f9f9', 
-					borderTop: '1px solid #e0e0e0',
-					fontSize: '12px',
-					color: '#666',
-				}}>
-					<div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
-						<div><strong>Tip:</strong> Use ↑↓ to navigate, Enter to select, Esc to close</div>
-					</div>
 				</div>
 			</div>
 		);
