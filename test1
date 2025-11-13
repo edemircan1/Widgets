@@ -55,6 +55,8 @@ interface ActiveLayer {
 	layer: LayerMetadata;
 	expanded: boolean;
 	fieldFilters: { [fieldName: string]: string };
+	currentWhereClause?: string;
+	filterWatcher?: NodeJS.Timeout;
 }
 
 interface State {
@@ -85,6 +87,7 @@ const isStringFieldType = (fieldType: string): boolean => STRING_FIELD_TYPES.has
 export default class SmartSearchWidget extends React.PureComponent<AllWidgetProps<any>, State> {
 	private searchInputRef: React.RefObject<HTMLInputElement>;
 	private searchDebounceTimer: NodeJS.Timeout | null = null;
+	private filterWatchers: Map<string, NodeJS.Timeout> = new Map();
 
 	constructor(props: AllWidgetProps<any>) {
 		super(props);
@@ -101,6 +104,12 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 			activeLayers: [],
 			selectedResultIndex: -1,
 		};
+	}
+
+	componentWillUnmount() {
+		// Clear all filter watchers
+		this.filterWatchers.forEach((watcher) => clearInterval(watcher));
+		this.filterWatchers.clear();
 	}
 
 	onActiveViewChange = async (jimuMapView: JimuMapView) => {
@@ -523,7 +532,57 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 		});
 
 		const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
-		activeLayer.layer.applyDefinitionExpression?.(whereClause);
+		
+		// Update the active layer with current where clause
+		this.setState((prevState) => ({
+			activeLayers: prevState.activeLayers.map((layer) =>
+				layer.id === activeLayerId ? { ...layer, currentWhereClause: whereClause } : layer
+			),
+		}), () => {
+			// Apply the filter
+			activeLayer.layer.applyDefinitionExpression?.(whereClause);
+			
+			// Start watching this layer to ensure filter persists
+			this.startFilterWatcher(activeLayerId);
+		});
+	};
+
+	startFilterWatcher = (activeLayerId: string) => {
+		// Clear existing watcher if any
+		const existingWatcher = this.filterWatchers.get(activeLayerId);
+		if (existingWatcher) {
+			clearInterval(existingWatcher);
+		}
+
+		// Create a new interval to continuously enforce the filter
+		const watcher = setInterval(() => {
+			const activeLayer = this.state.activeLayers.find((l) => l.id === activeLayerId);
+			if (!activeLayer || !activeLayer.currentWhereClause) {
+				// Layer removed or no filter, stop watching
+				const w = this.filterWatchers.get(activeLayerId);
+				if (w) clearInterval(w);
+				this.filterWatchers.delete(activeLayerId);
+				return;
+			}
+
+			const layer = activeLayer.layer.queryLayer;
+			
+			// If the layer's definition expression doesn't match, re-apply it
+			if (layer.definitionExpression !== activeLayer.currentWhereClause) {
+				console.log('Filter was cleared by map interaction, re-applying:', activeLayer.currentWhereClause);
+				activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
+			}
+		}, 500); // Check every 500ms
+
+		this.filterWatchers.set(activeLayerId, watcher);
+	};
+
+	stopFilterWatcher = (activeLayerId: string) => {
+		const watcher = this.filterWatchers.get(activeLayerId);
+		if (watcher) {
+			clearInterval(watcher);
+			this.filterWatchers.delete(activeLayerId);
+		}
 	};
 
 	removeLayer = (activeLayerId: string) => {
@@ -531,6 +590,10 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 		const activeLayer = activeLayers.find((l) => l.id === activeLayerId);
 
 		if (activeLayer) {
+			// Stop watching this layer
+			this.stopFilterWatcher(activeLayerId);
+			
+			// Reset the filter
 			activeLayer.layer.applyDefinitionExpression?.('1=1');
 		}
 
@@ -542,7 +605,9 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 	clearAllLayers = () => {
 		const { activeLayers } = this.state;
 
+		// Stop all watchers
 		activeLayers.forEach((activeLayer) => {
+			this.stopFilterWatcher(activeLayer.id);
 			activeLayer.layer.applyDefinitionExpression?.('1=1');
 		});
 
