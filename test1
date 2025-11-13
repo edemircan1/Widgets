@@ -1,10 +1,8 @@
 /** @jsx jsx */
 import { React, jsx, AllWidgetProps } from 'jimu-core';
 import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
-import { Button, TextInput, Select, Option, Label, Alert } from 'jimu-ui';
+import { TextInput, Label, Alert, Icon, Button } from 'jimu-ui';
 import './style.css';
-
-type MessageAuthor = 'user' | 'bot' | 'clarification';
 
 type FeatureLayerField = { name: string; alias?: string; type: string };
 
@@ -19,13 +17,6 @@ type FeatureLayer = {
 	definitionExpression?: string;
 	visible?: boolean;
 };
-
-interface ChatMessage {
-	type: MessageAuthor;
-	text: string;
-	timestamp: Date;
-	data?: unknown;
-}
 
 interface FieldMetadata {
 	name: string;
@@ -44,110 +35,46 @@ interface LayerMetadata {
 	path: string[];
 	applyDefinitionExpression?: (whereClause: string | null) => void;
 	setVisible?: (visible: boolean) => void;
-	parentLayer?: any;
 }
 
-type ClarificationContext = 'layer' | 'value' | 'field';
+type SearchResultType = 'layer' | 'field';
 
-interface ClarificationOption {
+interface SearchResult {
+	type: SearchResultType;
 	label: string;
-	value: string;
-	field?: string;
-	context?: ClarificationContext;
-	metadata?: any;
-}
-
-interface MatchedField {
-	field: FieldMetadata;
-	token: string;
-	type: 'exact' | 'partial' | 'token' | 'alias';
-}
-
-type OperatorInfo = { type: '>' | '<' | '=' | '>=' | '<=' | '!=' | 'BETWEEN' | 'IN' | 'LIKE' };
-type LogicalOperator = 'AND' | 'OR';
-type DateInfo =
-	| { type: 'year'; value: number }
-	| { type: 'month-year'; year: number; month: string };
-
-interface ParsedCondition {
-	field?: string;
-	operator?: string;
-	value?: string | number;
-	raw: string;
-}
-
-interface ParsedMessage {
-	original: string;
-	tokens: string[];
-	potentialFields: string[];
-	dates: DateInfo[];
-	numbers: number[];
-	operators: OperatorInfo[];
-	logicalOperators: LogicalOperator[];
-	conditions: ParsedCondition[];
-	freeText: string[];
-	phrases: string[];
-}
-
-interface LayerMatch {
-	layer: LayerMetadata;
+	sublabel?: string;
 	score: number;
-	matchedFields: MatchedField[];
-}
-
-interface PendingQuery {
-	parsed: ParsedMessage;
-	layerMatch: LayerMatch | null;
+	layer: LayerMetadata;
 	field?: FieldMetadata;
-	candidateLayers?: LayerMatch[];
-	candidateFields?: Array<{ field: FieldMetadata; layer: LayerMetadata }>;
-}
-
-interface QueryDebugInfo {
-	layerId: string;
-	layerTitle: string;
-	whereClause: string;
-	matchedFields: string[];
-	textTokens: string[];
-	numbers: number[];
-	operators: string[];
-	dates: string[];
-	rawMessage: string;
-	selectedField?: string;
-	selectedValue?: string;
+	matchedText: string;
 }
 
 interface ActiveFilter {
 	id: string;
+	label: string;
 	layerId: string;
 	layerTitle: string;
-	whereClause: string;
-	timestamp: Date;
-	previousExpression?: string;
-	previousVisibility?: boolean;
+	fieldName?: string;
+	whereClause?: string;
 }
 
-type MatchSuccess = { type: 'success'; condition: string };
-type MatchClarification = { type: 'clarification'; options: ClarificationOption[] };
-type MatchFallback = { type: 'fallback' };
-type MatchResult = MatchSuccess | MatchClarification | MatchFallback;
-
-type ProcessResult =
-	| { type: 'success'; metadata: LayerMetadata; layerTitle: string; whereClause: string; debugInfo: QueryDebugInfo }
-	| { type: 'clarification'; options: ClarificationOption[]; pendingQuery: PendingQuery }
-	| { type: 'error'; message: string };
+interface State {
+	searchText: string;
+	searchResults: SearchResult[];
+	showResults: boolean;
+	loading: boolean;
+	jimuMapView: JimuMapView | null;
+	layerCache: LayerMetadata[];
+	connectionStatus: 'idle' | 'connecting' | 'ready' | 'error';
+	statusMessage: string;
+	activeFilters: ActiveFilter[];
+	selectedResultIndex: number;
+	isSearchFocused: boolean;
+}
 
 const NUMERIC_FIELD_TYPES = new Set([
-	'double',
-	'single',
-	'integer',
-	'small-integer',
-	'smallinteger',
-	'short-integer',
-	'shortinteger',
-	'long',
-	'float',
-	'oid',
+	'double', 'single', 'integer', 'small-integer', 'smallinteger',
+	'short-integer', 'shortinteger', 'long', 'float', 'oid',
 ]);
 
 const STRING_FIELD_TYPES = new Set(['string', 'guid', 'global-id', 'globalid']);
@@ -157,39 +84,25 @@ const isNumericFieldType = (fieldType: string): boolean => NUMERIC_FIELD_TYPES.h
 const isDateFieldType = (fieldType: string): boolean => normalizeFieldType(fieldType) === 'date';
 const isStringFieldType = (fieldType: string): boolean => STRING_FIELD_TYPES.has(normalizeFieldType(fieldType));
 
-interface State {
-	message: string;
-	chatHistory: ChatMessage[];
-	loading: boolean;
-	jimuMapView: JimuMapView | null;
-	layerCache: LayerMetadata[];
-	clarificationNeeded: boolean;
-	clarificationOptions: ClarificationOption[];
-	pendingQuery: PendingQuery | null;
-	connectionStatus: 'idle' | 'connecting' | 'ready' | 'error';
-	statusMessage: string;
-	activeFilters: ActiveFilter[];
-	showFilterPanel: boolean;
-}
-
-export default class SmartFilterWidget extends React.PureComponent<AllWidgetProps<any>, State> {
-	private queryAbortController: AbortController | null = null;
+export default class SmartSearchWidget extends React.PureComponent<AllWidgetProps<any>, State> {
+	private searchInputRef: React.RefObject<HTMLInputElement>;
+	private searchDebounceTimer: NodeJS.Timeout | null = null;
 
 	constructor(props: AllWidgetProps<any>) {
 		super(props);
+		this.searchInputRef = React.createRef();
 		this.state = {
-			message: '',
-			chatHistory: [],
+			searchText: '',
+			searchResults: [],
+			showResults: false,
 			loading: false,
 			jimuMapView: null,
 			layerCache: [],
-			clarificationNeeded: false,
-			clarificationOptions: [],
-			pendingQuery: null,
 			connectionStatus: 'idle',
 			statusMessage: 'Select a map in the widget settings to connect.',
 			activeFilters: [],
-			showFilterPanel: false,
+			selectedResultIndex: -1,
+			isSearchFocused: false,
 		};
 	}
 
@@ -220,16 +133,14 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					connectionStatus: 'error',
 					statusMessage: 'No feature layers found in the selected map.',
 				});
-				this.addBotMessage('⚠️ No feature layers were found in the selected map.');
 				return;
 			}
 
 			this.setState({
 				loading: false,
 				connectionStatus: 'ready',
-				statusMessage: 'Ready. Enter a query to filter.',
+				statusMessage: `Ready. ${layerCache.length} layer(s) indexed.`,
 			});
-			this.addBotMessage('Hello! The map connection is ready and layers are indexed. What would you like to find?');
 		} catch (error) {
 			const messageText = error instanceof Error ? error.message : 'Unknown error';
 			this.setState({
@@ -237,7 +148,6 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				connectionStatus: 'error',
 				statusMessage: `Failed to load layer metadata: ${messageText}`,
 			});
-			this.addBotMessage(`❌ Unable to load layer metadata: ${messageText}`);
 		}
 	};
 
@@ -252,23 +162,15 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		const layerCache: LayerMetadata[] = [];
 
 		const toArray = (collection: any): any[] => {
-			if (!collection) {
-				return [];
-			}
-			if (typeof collection.toArray === 'function') {
-				return collection.toArray();
-			}
+			if (!collection) return [];
+			if (typeof collection.toArray === 'function') return collection.toArray();
 			return Array.isArray(collection) ? collection : [];
 		};
 
 		const tokenizeTitlePath = (path: string[]): string[] =>
-			path
-				.flatMap((segment) =>
-					String(segment)
-						.toLowerCase()
-						.split(/[\s_>›/-]+/)
-						.filter((token) => token.length > 0),
-				);
+			path.flatMap((segment) =>
+				String(segment).toLowerCase().split(/[\s_>›/-]+/).filter((token) => token.length > 0)
+			);
 
 		const collectFeatureLayer = async (
 			featureLayer: FeatureLayer,
@@ -277,7 +179,6 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				sourceId?: string; 
 				applyDefinitionExpression?: (whereClause: string | null) => void;
 				setVisible?: (visible: boolean) => void;
-				parentLayer?: any;
 			} = {},
 		) => {
 			try {
@@ -305,9 +206,7 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 					};
 				});
 
-			if (fields.length === 0) {
-				return;
-			}
+			if (fields.length === 0) return;
 
 			const titlePathClean = titlePath.filter((segment) => segment && segment.trim().length > 0);
 			const title = titlePathClean.length > 0 ? titlePathClean.join(' › ') : featureLayer.title ?? options.sourceId ?? 'Layer';
@@ -341,7 +240,6 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 				path: titlePathClean,
 				applyDefinitionExpression,
 				setVisible,
-				parentLayer: options.parentLayer,
 			});
 		};
 
@@ -381,7 +279,6 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 							parentLayer.visible = visible;
 						}
 					},
-					parentLayer: parentLayer,
 				});
 			}
 
@@ -429,1270 +326,574 @@ export default class SmartFilterWidget extends React.PureComponent<AllWidgetProp
 		return layerCache;
 	};
 
-	handleSendMessage = async () => {
-		const { message, layerCache, connectionStatus } = this.state;
+	handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+		const searchText = event.target.value;
+		this.setState({ searchText, selectedResultIndex: -1 });
 
-		if (!message.trim()) {
+		if (this.searchDebounceTimer) {
+			clearTimeout(this.searchDebounceTimer);
+		}
+
+		if (!searchText.trim()) {
+			this.setState({ searchResults: [], showResults: false });
 			return;
 		}
 
-		if (connectionStatus !== 'ready') {
-			this.addBotMessage('⚠️ The map connection is not ready yet. Select a map and wait for the layers to load.');
-			return;
-		}
-
-		if (layerCache.length === 0) {
-			this.addBotMessage('⚠️ No available layers were found.');
-			return;
-		}
-
-		this.addUserMessage(message);
-		this.setState({ message: '', loading: true });
-
-		// Create abort controller for this query
-		this.queryAbortController = new AbortController();
-
-		try {
-			const result = await this.processMessage(message, layerCache);
-
-			// Check if query was aborted
-			if (this.queryAbortController?.signal.aborted) {
-				this.setState({ loading: false });
-				return;
-			}
-
-			if (result.type === 'clarification') {
-				this.setState({
-					clarificationNeeded: true,
-					clarificationOptions: result.options,
-					pendingQuery: result.pendingQuery,
-					loading: false,
-				});
-				if (result.pendingQuery?.candidateLayers?.length) {
-					this.addBotMessage('Multiple layers contain matching fields. Please choose which layer to filter:');
-				} else if (result.pendingQuery?.candidateFields?.length) {
-					this.addBotMessage('Multiple fields match your query. Please choose which field to use:');
-				} else {
-					this.addBotMessage('I found multiple matches. Which one did you mean?');
-				}
-			} else if (result.type === 'success') {
-				const featureCount = await this.executeQuery(result);
-				if (featureCount !== null) {
-					this.addBotMessage(`✅ Filter applied to "${result.layerTitle}". ${featureCount} feature(s) found and highlighted.`);
-				}
-				this.setState({ loading: false });
-			} else {
-				this.addBotMessage(`❌ ${result.message}`);
-				this.setState({ loading: false });
-			}
-		} catch (error) {
-			if (error instanceof Error && error.name === 'AbortError') {
-				// Query was aborted, don't show error
-				this.setState({ loading: false });
-				return;
-			}
-			const messageText = error instanceof Error ? error.message : 'Unknown error';
-			this.addBotMessage(`❌ Something went wrong: ${messageText}`);
-			this.setState({ loading: false });
-		} finally {
-			this.queryAbortController = null;
-		}
+		this.searchDebounceTimer = setTimeout(() => {
+			this.performSearch(searchText);
+		}, 150);
 	};
 
-	processMessage = async (message: string, layerCache: LayerMetadata[]): Promise<ProcessResult> => {
-		const parsed = this.parseMessage(message);
+	performSearch = (searchText: string) => {
+		const { layerCache, connectionStatus } = this.state;
 
-		// Check for exact field name matches across all layers
-		const exactFieldMatches = this.findExactFieldMatches(parsed, layerCache);
-		
-		if (exactFieldMatches.length > 1) {
-			return {
-				type: 'clarification',
-				options: exactFieldMatches.map((match) => ({
-					label: `${match.field.name} in ${match.layer.path.join(' › ')}`,
-					value: match.layer.id,
-					field: match.field.name,
-					context: 'field' as ClarificationContext,
-					metadata: match,
-				})),
-				pendingQuery: {
-					parsed,
-					layerMatch: null,
-					candidateFields: exactFieldMatches,
-				},
-			};
+		if (connectionStatus !== 'ready' || !searchText.trim()) {
+			this.setState({ searchResults: [], showResults: false });
+			return;
 		}
 
-		if (exactFieldMatches.length === 1) {
-			const match = exactFieldMatches[0];
-			return this.buildDirectQuery(parsed, match.layer, match.field);
-		}
+		const query = searchText.toLowerCase().trim();
+		const results: SearchResult[] = [];
 
-		// Fall back to smart ranking with phrase matching
-		const layerMatches = this.rankLayers(parsed, layerCache);
-		const minScore = layerCache.length > 1 ? 10 : 0;
-		const viableMatches = layerMatches.filter((match) => match.score >= minScore);
-
-		if (viableMatches.length === 0) {
-			return { type: 'error', message: 'No suitable layer was identified. Try mentioning a specific field or layer name.' };
-		}
-
-		const topScore = viableMatches[0].score;
-		const closeMatches = viableMatches.filter((match) => match.score >= Math.max(5, topScore - 10));
-
-		if (closeMatches.length > 1) {
-			return {
-				type: 'clarification',
-				options: closeMatches.map((match) => ({
-					label: `${match.layer.path.join(' › ')}`,
-					value: match.layer.id,
-					context: 'layer' as ClarificationContext,
-				})),
-				pendingQuery: {
-					parsed,
-					layerMatch: null,
-					candidateLayers: closeMatches,
-				},
-			};
-		}
-
-		return this.buildSmartQuery(parsed, viableMatches[0]);
-	};
-
-	findExactFieldMatches = (parsed: ParsedMessage, layerCache: LayerMetadata[]): Array<{ field: FieldMetadata; layer: LayerMetadata }> => {
-		const matches: Array<{ field: FieldMetadata; layer: LayerMetadata }> = [];
-		const searchTokens = [...parsed.potentialFields, ...parsed.tokens].map(t => t.toLowerCase());
-
+		// Search through layers
 		layerCache.forEach((layer) => {
+			const layerScore = this.calculateMatchScore(query, layer.title.toLowerCase(), layer.titleTokens);
+			
+			if (layerScore > 0) {
+				results.push({
+					type: 'layer',
+					label: layer.title,
+					sublabel: 'Layer',
+					score: layerScore,
+					layer,
+					matchedText: layer.title,
+				});
+			}
+
+			// Search through fields in this layer
 			layer.fields.forEach((field) => {
-				const fieldNameLower = field.name.toLowerCase();
-				if (searchTokens.includes(fieldNameLower)) {
-					matches.push({ field, layer });
+				const fieldNameScore = this.calculateMatchScore(query, field.name.toLowerCase(), field.nameTokens);
+				const fieldAliasScore = this.calculateMatchScore(query, field.alias.toLowerCase(), []);
+				const fieldScore = Math.max(fieldNameScore, fieldAliasScore);
+
+				if (fieldScore > 0) {
+					const fieldTypeLabel = this.getFieldTypeLabel(field.type);
+					results.push({
+						type: 'field',
+						label: field.alias || field.name,
+						sublabel: `${fieldTypeLabel} in ${layer.path.join(' › ')}`,
+						score: fieldScore,
+						layer,
+						field,
+						matchedText: field.name,
+					});
 				}
 			});
 		});
 
-		return matches;
+		// Sort by score (highest first)
+		results.sort((a, b) => b.score - a.score);
+
+		// Limit to top 10 results
+		const topResults = results.slice(0, 10);
+
+		this.setState({ 
+			searchResults: topResults, 
+			showResults: topResults.length > 0 
+		});
 	};
 
-	buildDirectQuery = async (parsed: ParsedMessage, layer: LayerMetadata, field: FieldMetadata): Promise<ProcessResult> => {
-		const conditions: string[] = [];
-		const fieldType = normalizeFieldType(field.type);
+	calculateMatchScore = (query: string, target: string, tokens: string[]): number => {
+		let score = 0;
 
-		if (isNumericFieldType(fieldType) && parsed.numbers.length > 0) {
-			const numCond = this.buildNumericCondition(field, parsed);
-			if (numCond) {
-				conditions.push(numCond);
-			}
-		} else if (isDateFieldType(fieldType) && parsed.dates.length > 0) {
-			const dateCond = this.buildDateCondition(field, parsed.dates[0]);
-			if (dateCond) {
-				conditions.push(dateCond);
-			}
-		} else if (isStringFieldType(fieldType)) {
-			const textTokens = parsed.freeText.length > 0 ? parsed.freeText : parsed.tokens;
-			if (textTokens.length > 0) {
-				const textMatch = await this.matchTextValue(textTokens, field, layer.queryLayer);
-				if (textMatch.type === 'success') {
-					conditions.push(textMatch.condition);
-				} else {
-					const likeConditions = textTokens.map((text) => {
-						const sanitized = text.replace(/'/g, "''");
-						return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
-					});
-					conditions.push(`(${likeConditions.join(' OR ')})`);
-				}
-			}
+		// Exact match (highest score)
+		if (target === query) {
+			return 100;
 		}
 
-		const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
+		// Starts with query
+		if (target.startsWith(query)) {
+			score += 80;
+		}
 
-		return {
-			type: 'success',
-			metadata: layer,
-			whereClause,
+		// Contains query
+		if (target.includes(query)) {
+			score += 60;
+		}
+
+		// Token-based matching
+		const queryTokens = query.split(/[\s_-]+/);
+		queryTokens.forEach((queryToken) => {
+			if (tokens.some((token) => token === queryToken)) {
+				score += 40;
+			} else if (tokens.some((token) => token.startsWith(queryToken))) {
+				score += 30;
+			} else if (tokens.some((token) => token.includes(queryToken))) {
+				score += 20;
+			}
+		});
+
+		// Fuzzy matching (character-by-character)
+		const fuzzyScore = this.fuzzyMatch(query, target);
+		score += fuzzyScore * 10;
+
+		return score;
+	};
+
+	fuzzyMatch = (query: string, target: string): number => {
+		let queryIndex = 0;
+		let targetIndex = 0;
+		let matches = 0;
+
+		while (queryIndex < query.length && targetIndex < target.length) {
+			if (query[queryIndex] === target[targetIndex]) {
+				matches++;
+				queryIndex++;
+			}
+			targetIndex++;
+		}
+
+		return matches / query.length;
+	};
+
+	getFieldTypeLabel = (fieldType: string): string => {
+		if (isNumericFieldType(fieldType)) return 'Number Field';
+		if (isDateFieldType(fieldType)) return 'Date Field';
+		if (isStringFieldType(fieldType)) return 'Text Field';
+		return 'Field';
+	};
+
+	handleResultClick = (result: SearchResult) => {
+		const { layer, field, type } = result;
+
+		if (type === 'layer') {
+			// Activate the layer
+			this.activateLayer(layer);
+		} else if (type === 'field' && field) {
+			// Activate the layer with field focus
+			this.activateLayerWithField(layer, field);
+		}
+
+		// Clear search
+		this.setState({ 
+			searchText: '', 
+			searchResults: [], 
+			showResults: false 
+		});
+	};
+
+	activateLayer = (layer: LayerMetadata) => {
+		const { activeFilters } = this.state;
+
+		// Check if already active
+		const existingFilter = activeFilters.find((f) => f.layerId === layer.id && !f.fieldName);
+		if (existingFilter) {
+			return;
+		}
+
+		// Make layer visible
+		layer.setVisible?.(true);
+
+		// Clear any definition expression
+		layer.applyDefinitionExpression?.('1=1');
+
+		// Add to active filters
+		const newFilter: ActiveFilter = {
+			id: `layer-${layer.id}-${Date.now()}`,
+			label: layer.title,
+			layerId: layer.id,
 			layerTitle: layer.title,
-			debugInfo: {
-				layerId: layer.id,
-				layerTitle: layer.title,
-				whereClause,
-				matchedFields: [field.name],
-				textTokens: parsed.freeText,
-				numbers: parsed.numbers,
-				operators: parsed.operators.map((op) => op.type),
-				dates: parsed.dates.map((d) => d.type === 'year' ? `${d.value}` : `${d.month}-${d.year}`),
-				rawMessage: parsed.original,
-			},
-		};
-	};
-
-	parseMessage = (message: string): ParsedMessage => {
-		const lowerMessage = message.toLowerCase();
-		const tokens = lowerMessage.split(/\s+/).filter((token) => token.length > 1);
-
-		// Extract multi-word phrases (2-4 words)
-		const phrases = this.extractPhrases(message);
-
-		const logicalOperators: LogicalOperator[] = [];
-		if (/\band\b/i.test(message)) logicalOperators.push('AND');
-		if (/\bor\b/i.test(message)) logicalOperators.push('OR');
-
-		const conditions = this.parseConditions(message);
-
-		return {
-			original: message,
-			tokens,
-			potentialFields: this.extractPotentialFields(message),
-			dates: this.extractDates(message),
-			numbers: this.extractNumbers(message),
-			operators: this.extractOperators(message),
-			logicalOperators,
-			conditions,
-			freeText: this.extractFreeText(message),
-			phrases,
-		};
-	};
-
-	extractPhrases = (message: string): string[] => {
-		const phrases: string[] = [];
-		const words = message.toLowerCase().split(/\s+/).filter(w => w.length > 0);
-		
-		// Extract 2-4 word phrases
-		for (let len = 4; len >= 2; len--) {
-			for (let i = 0; i <= words.length - len; i++) {
-				const phrase = words.slice(i, i + len).join(' ');
-				phrases.push(phrase);
-			}
-		}
-		
-		return phrases;
-	};
-
-	parseConditions = (message: string): ParsedCondition[] => {
-		const conditions: ParsedCondition[] = [];
-		
-		const conditionPattern = /([a-z_][a-z0-9_]*)\s*(>=|<=|!=|<>|>|<|=)\s*(-?\d+(?:\.\d+)?|'[^']*')/gi;
-		let match;
-		
-		while ((match = conditionPattern.exec(message)) !== null) {
-			conditions.push({
-				field: match[1],
-				operator: match[2],
-				value: match[3].replace(/'/g, ''),
-				raw: match[0],
-			});
-		}
-
-		return conditions;
-	};
-
-	extractPotentialFields = (message: string): string[] => {
-		const regex = /\b[a-z_][a-z0-9_]*\b/gi;
-		return (message.match(regex) ?? []).map((match) => match.toLowerCase());
-	};
-
-	extractDates = (message: string): DateInfo[] => {
-		const dates: DateInfo[] = [];
-
-		const yearMatch = message.match(/\b(19|20)\d{2}\b/);
-		if (yearMatch) {
-			dates.push({ type: 'year', value: parseInt(yearMatch[0], 10) });
-		}
-
-		const monthNames: Record<string, string> = {
-			january: '01', jan: '01',
-			february: '02', feb: '02',
-			march: '03', mar: '03',
-			april: '04', apr: '04',
-			may: '05',
-			june: '06', jun: '06',
-			july: '07', jul: '07',
-			august: '08', aug: '08',
-			september: '09', sept: '09', sep: '09',
-			october: '10', oct: '10',
-			november: '11', nov: '11',
-			december: '12', dec: '12',
 		};
 
-		Object.entries(monthNames).forEach(([month, num]) => {
-			const regex = new RegExp(`${month}\\s*(\\d{4})`, 'i');
-			const match = message.match(regex);
-			if (match) {
-				dates.push({ type: 'month-year', year: parseInt(match[1], 10), month: num });
-			}
+		this.setState({
+			activeFilters: [...activeFilters, newFilter],
 		});
 
-		return dates;
+		// Zoom to layer
+		this.zoomToLayer(layer);
 	};
 
-	extractNumbers = (message: string): number[] => {
-		const numbers = message.match(/-?\d+(\.\d+)?/g);
-		return numbers ? numbers.map((value) => parseFloat(value)) : [];
-	};
+	activateLayerWithField = (layer: LayerMetadata, field: FieldMetadata) => {
+		const { activeFilters } = this.state;
 
-	extractOperators = (message: string): OperatorInfo[] => {
-		const operators: OperatorInfo[] = [];
-		const lowerMsg = message.toLowerCase();
-
-		if (/(>=|greater than or equal)/i.test(lowerMsg)) {
-			operators.push({ type: '>=' });
-		} else if (/(greater than|more than|above|over|>)/i.test(lowerMsg)) {
-			operators.push({ type: '>' });
-		}
-		
-		if (/(<=|less than or equal)/i.test(lowerMsg)) {
-			operators.push({ type: '<=' });
-		} else if (/(less than|below|under|<)/i.test(lowerMsg)) {
-			operators.push({ type: '<' });
-		}
-		
-		if (/(!=|<>|not equal)/i.test(lowerMsg)) {
-			operators.push({ type: '!=' });
-		} else if (/(equal to|equals|=|is|exactly)/i.test(lowerMsg)) {
-			operators.push({ type: '=' });
-		}
-		
-		if (/(between)/i.test(lowerMsg)) {
-			operators.push({ type: 'BETWEEN' });
-		}
-
-		return operators;
-	};
-
-	extractFreeText = (message: string): string[] => {
-		const technical = this.extractPotentialFields(message);
-		const words = message.toLowerCase().split(/\s+/);
-		const stopWords = new Set([
-			'and', 'or', 'not', 'with', 'for', 'the', 'that', 'this', 'these', 'those',
-			'where', 'records', 'results', 'show', 'find', 'display', 'please', 'filter',
-			'list', 'from', 'in', 'on', 'of', 'greater', 'less', 'than', 'equal', 'to',
-		]);
-
-		return words.filter(
-			(word) =>
-				word.length > 2 &&
-				!technical.includes(word) &&
-				!/^-?[\d.]+$/.test(word) &&
-				!stopWords.has(word),
+		// Check if already active
+		const existingFilter = activeFilters.find(
+			(f) => f.layerId === layer.id && f.fieldName === field.name
 		);
-	};
-
-	rankLayers = (parsed: ParsedMessage, layerCache: LayerMetadata[]): LayerMatch[] => {
-		if (layerCache.length === 0) {
-			return [];
+		if (existingFilter) {
+			return;
 		}
 
-		return layerCache
-			.map((layer) => {
-				let score = 0;
-				const matchedFields: MatchedField[] = [];
-				const titleTokens = layer.titleTokens ?? [];
-				const layerFullTitle = layer.path.join(' ').toLowerCase();
-				const messageTokens = Array.from(
-					new Set([
-						...parsed.tokens,
-						...parsed.freeText,
-						...parsed.potentialFields,
-					]),
-				);
+		// Make layer visible
+		layer.setVisible?.(true);
 
-				// Check for phrase matches in layer title
-				parsed.phrases.forEach((phrase) => {
-					if (layerFullTitle.includes(phrase)) {
-						const phraseLength = phrase.split(/\s+/).length;
-						score += 60 * phraseLength; // Higher score for longer phrase matches
-					}
-				});
+		// Clear any definition expression for now (user can apply filters later)
+		layer.applyDefinitionExpression?.('1=1');
 
-				// Token matching
-				messageTokens.forEach((token) => {
-					const loweredToken = token.toLowerCase();
-					if (titleTokens.includes(loweredToken)) {
-						score += 40;
-					} else if (titleTokens.some((titleToken) => titleToken.includes(loweredToken) || loweredToken.includes(titleToken))) {
-						score += 20;
-					}
-				});
-
-				// Field matching
-				parsed.potentialFields.forEach((token) => {
-					layer.fields.forEach((field) => {
-						const loweredName = field.name.toLowerCase();
-						const loweredAlias = field.alias.toLowerCase();
-
-						if (loweredName === token) {
-							score += 50;
-							matchedFields.push({ field, token, type: 'exact' });
-						} else if (loweredName.includes(token)) {
-							score += 25;
-							matchedFields.push({ field, token, type: 'partial' });
-						} else if (field.nameTokens.includes(token)) {
-							score += 30;
-							matchedFields.push({ field, token, type: 'token' });
-						} else if (loweredAlias.includes(token)) {
-							score += 20;
-							matchedFields.push({ field, token, type: 'alias' });
-						}
-					});
-				});
-
-				if (parsed.dates.length > 0 && layer.fields.some((field) => isDateFieldType(field.type))) {
-					score += 15;
-				}
-
-				if (parsed.numbers.length > 0 && layer.fields.some((field) => isNumericFieldType(field.type))) {
-					score += 15;
-				}
-
-				if (parsed.freeText.length > 0 && layer.fields.some((field) => isStringFieldType(field.type))) {
-					score += 10;
-				}
-
-				return { layer, score, matchedFields };
-			})
-			.sort((a, b) => b.score - a.score)
-			.filter((match) => match.score > 0);
-	};
-
-	buildSmartQuery = async (parsed: ParsedMessage, layerMatch: LayerMatch): Promise<ProcessResult> => {
-		const { layer: layerMetadata, matchedFields } = layerMatch;
-		const conditions: string[] = [];
-		const textTokens = (
-			parsed.freeText.length > 0 ? parsed.freeText : parsed.numbers.map((value) => `${value}`)
-		).filter((token) => token.trim().length > 0);
-
-		// If we have parsed conditions with exact field matches, use those
-		if (parsed.conditions.length > 0) {
-			for (const condition of parsed.conditions) {
-				const field = layerMetadata.fields.find(
-					f => f.name.toLowerCase() === condition.field?.toLowerCase()
-				);
-				
-				if (field && condition.operator && condition.value !== undefined) {
-					const fieldType = normalizeFieldType(field.type);
-					
-					if (isNumericFieldType(fieldType)) {
-						const numValue = parseFloat(String(condition.value));
-						if (!isNaN(numValue)) {
-							conditions.push(`${field.name} ${condition.operator} ${numValue}`);
-						}
-					} else if (isStringFieldType(fieldType)) {
-						const sanitized = String(condition.value).replace(/'/g, "''");
-						conditions.push(`${field.name} ${condition.operator} '${sanitized}'`);
-					}
-				}
-			}
-		}
-
-		// Process matched fields if no direct conditions were found
-		if (conditions.length === 0) {
-			for (const match of matchedFields) {
-				const field = match.field;
-				const fieldType = normalizeFieldType(field.type);
-
-				if (isDateFieldType(fieldType) && parsed.dates.length > 0) {
-					const dateCond = this.buildDateCondition(field, parsed.dates[0]);
-					if (dateCond) {
-						conditions.push(dateCond);
-					}
-				} else if (isNumericFieldType(fieldType) && parsed.numbers.length > 0) {
-					const numCond = this.buildNumericCondition(field, parsed);
-					if (numCond) {
-						conditions.push(numCond);
-					}
-				} else if (isStringFieldType(fieldType) && textTokens.length > 0) {
-					const textMatch = await this.matchTextValue(textTokens, field, layerMetadata.queryLayer);
-
-					if (textMatch.type === 'clarification') {
-						return {
-							type: 'clarification',
-							options: textMatch.options,
-							pendingQuery: { parsed, layerMatch, field },
-						};
-					}
-
-					if (textMatch.type === 'success') {
-						conditions.push(textMatch.condition);
-					} else {
-						const likeConditions = textTokens.map((text) => {
-							const sanitized = text.replace(/'/g, "''");
-							return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
-						});
-						if (likeConditions.length > 0) {
-							conditions.push(`(${likeConditions.join(' OR ')})`);
-						}
-					}
-				}
-			}
-		}
-
-		// Fallback: search all string fields if no conditions yet
-		const unmatchedStringFields = layerMetadata.fields.filter(
-			(field: FieldMetadata) =>
-				isStringFieldType(field.type) && !matchedFields.some((matched) => matched.field.name === field.name),
-		);
-
-		if (textTokens.length > 0 && unmatchedStringFields.length > 0 && conditions.length === 0) {
-			const orConditions: string[] = [];
-			textTokens.forEach((text) => {
-				const sanitized = text.replace(/'/g, "''");
-				unmatchedStringFields.forEach((field: FieldMetadata) => {
-					orConditions.push(`UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`);
-				});
-			});
-
-			if (orConditions.length > 0) {
-				conditions.push(`(${orConditions.join(' OR ')})`);
-			}
-		}
-
-		// Join conditions with logical operators if present
-		const logicalOp = parsed.logicalOperators.length > 0 ? parsed.logicalOperators[0] : 'AND';
-		const whereClause = conditions.length > 0 ? conditions.join(` ${logicalOp} `) : '1=1';
-		
-		const matchedFieldNames = Array.from(new Set(matchedFields.map((match) => match.field.name)));
-		const operatorStrings = parsed.operators.map((operator) => operator.type);
-		const dateStrings = parsed.dates.map((dateInfo) =>
-			dateInfo.type === 'year'
-				? `year:${dateInfo.value}`
-				: `month:${dateInfo.month}-${dateInfo.year}`,
-		);
-
-		return {
-			type: 'success',
-			metadata: layerMetadata,
-			whereClause,
-			layerTitle: layerMetadata.title,
-			debugInfo: {
-				layerId: layerMetadata.id,
-				layerTitle: layerMetadata.title,
-				whereClause,
-				matchedFields: matchedFieldNames,
-				textTokens,
-				numbers: parsed.numbers,
-				operators: operatorStrings,
-				dates: dateStrings,
-				rawMessage: parsed.original,
-			},
+		// Add to active filters
+		const newFilter: ActiveFilter = {
+			id: `field-${layer.id}-${field.name}-${Date.now()}`,
+			label: `${field.alias || field.name}`,
+			layerId: layer.id,
+			layerTitle: layer.title,
+			fieldName: field.name,
 		};
-	};
 
-	matchTextValue = async (
-		freeTextArray: string[],
-		field: FieldMetadata,
-		queryLayer: FeatureLayer,
-	): Promise<MatchResult> => {
-		try {
-			if (typeof queryLayer.queryFeatures !== 'function') {
-				console.warn('Layer does not support queryFeatures for text matching.', field.name);
-				return { type: 'fallback' };
-			}
-
-			// Add timeout to prevent hanging
-			const timeoutPromise = new Promise<never>((_, reject) => {
-				setTimeout(() => reject(new Error('Query timeout')), 10000);
-			});
-
-			const queryFeatures = queryLayer.queryFeatures.bind(queryLayer);
-			const query = typeof queryLayer.createQuery === 'function' ? queryLayer.createQuery() : ({} as any);
-			query.where = '1=1';
-			query.returnDistinctValues = true;
-			query.outFields = [field.name];
-			query.returnGeometry = false;
-			query.num = 1000;
-
-			if (!Array.isArray(query.outFields)) {
-				query.outFields = [field.name];
-			}
-
-			const results = await Promise.race([queryFeatures(query), timeoutPromise]);
-			
-			if (!results || !Array.isArray(results.features)) {
-				return { type: 'fallback' };
-			}
-			
-			const distinctValues = results.features
-				.map((feature: any) => feature.attributes[field.name])
-				.filter((value: unknown) => value !== null && value !== undefined);
-
-			if (distinctValues.length === 0) {
-				if (freeTextArray.length === 1) {
-					const sanitized = freeTextArray[0].replace(/'/g, "''");
-					return {
-						type: 'success',
-						condition: `${field.name} = '${sanitized}'`,
-					};
-				}
-				return { type: 'fallback' };
-			}
-
-			const allMatches: Array<{ value: unknown; score: number; userText: string }> = [];
-
-			freeTextArray.forEach((userText: string) => {
-				const variations = this.generateVariations(userText);
-
-				distinctValues.forEach((dbValue: unknown) => {
-					const normalizedDbValue = String(dbValue).toLowerCase();
-					const score = this.calculateSimilarity(variations, normalizedDbValue);
-					if (score > 0.3) {
-						allMatches.push({ value: dbValue, score, userText });
-					}
-				});
-			});
-
-			if (allMatches.length === 0) {
-				if (freeTextArray.length === 1) {
-					const sanitized = freeTextArray[0].replace(/'/g, "''");
-					return {
-						type: 'success',
-						condition: `${field.name} = '${sanitized}'`,
-					};
-				}
-
-				const likeConditions = freeTextArray.map((text) => {
-					const sanitized = text.replace(/'/g, "''");
-					return `UPPER(${field.name}) LIKE UPPER('%${sanitized}%')`;
-				});
-
-				if (likeConditions.length > 0) {
-					return {
-						type: 'success',
-						condition: `(${likeConditions.join(' OR ')})`,
-					};
-				}
-
-				return { type: 'fallback' };
-			}
-
-			allMatches.sort((a, b) => b.score - a.score);
-			const topMatches = allMatches.slice(0, 5);
-
-			if (topMatches.length > 0 && topMatches[0].score > 0.8) {
-				const sanitizedValue = String(topMatches[0].value).replace(/'/g, "''");
-				return {
-					type: 'success',
-					condition: `${field.name} = '${sanitizedValue}'`,
-				};
-			}
-
-			if (topMatches.length > 1) {
-				return {
-					type: 'clarification',
-					options: topMatches.map((match) => ({
-						label: `${match.value} (for "${match.userText}")`,
-						value: String(match.value),
-						field: field.name,
-						context: 'value' as ClarificationContext,
-					})),
-				};
-			}
-
-			if (topMatches.length > 0) {
-				const sanitizedValue = String(topMatches[0].value).replace(/'/g, "''");
-				return {
-					type: 'success',
-					condition: `${field.name} = '${sanitizedValue}'`,
-				};
-			}
-
-			return { type: 'fallback' };
-		} catch (error) {
-			if (error instanceof Error && error.message === 'Query timeout') {
-				console.warn('Text matching query timed out for field:', field.name);
-			} else {
-				console.error('Text matching error:', error);
-			}
-			return { type: 'fallback' };
-		}
-	};
-
-	generateVariations = (text: string): string[] => {
-		const lowered = text.toLowerCase();
-		const variations = [lowered, lowered.replace(/\s+/g, ''), lowered.replace(/\s+/g, '_')];
-
-		const words = text.split(/\s+/);
-		if (words.length > 1) {
-			variations.push(words.map((word) => word[0]).join('').toLowerCase());
-		}
-
-		return variations;
-	};
-
-	calculateSimilarity = (variations: string[], dbValue: string): number => {
-		let maxScore = 0;
-
-		variations.forEach((variation) => {
-			if (variation === dbValue) {
-				maxScore = Math.max(maxScore, 1);
-			} else if (dbValue.includes(variation) || variation.includes(dbValue)) {
-				maxScore = Math.max(maxScore, 0.8);
-			} else if (dbValue.startsWith(variation) || variation.startsWith(dbValue)) {
-				maxScore = Math.max(maxScore, 0.7);
-			}
+		this.setState({
+			activeFilters: [...activeFilters, newFilter],
 		});
 
-		return maxScore;
+		// Zoom to layer
+		this.zoomToLayer(layer);
 	};
 
-	buildDateCondition = (field: FieldMetadata, dateInfo: DateInfo): string | null => {
-		if (dateInfo.type === 'year') {
-			const startYear = dateInfo.value;
-			const endYear = dateInfo.value + 1;
-			return `${field.name} >= TIMESTAMP '${startYear}-01-01 00:00:00' AND ${field.name} < TIMESTAMP '${endYear}-01-01 00:00:00'`;
-		}
-
-		if (dateInfo.type === 'month-year') {
-			const currentMonth = parseInt(dateInfo.month, 10);
-			const nextMonth = currentMonth === 12 ? 1 : currentMonth + 1;
-			const nextYear = currentMonth === 12 ? dateInfo.year + 1 : dateInfo.year;
-			const nextMonthString = nextMonth.toString().padStart(2, '0');
-
-			return `${field.name} >= TIMESTAMP '${dateInfo.year}-${dateInfo.month}-01 00:00:00' AND ${field.name} < TIMESTAMP '${nextYear}-${nextMonthString}-01 00:00:00'`;
-		}
-
-		return null;
-	};
-
-	buildNumericCondition = (field: FieldMetadata, parsed: ParsedMessage): string | null => {
-		if (parsed.numbers.length === 0) {
-			return null;
-		}
-
-		const op = parsed.operators.length > 0 ? parsed.operators[0].type : '=';
-
-		switch (op) {
-			case '>':
-				return `${field.name} > ${parsed.numbers[0]}`;
-			case '>=':
-				return `${field.name} >= ${parsed.numbers[0]}`;
-			case '<':
-				return `${field.name} < ${parsed.numbers[0]}`;
-			case '<=':
-				return `${field.name} <= ${parsed.numbers[0]}`;
-			case '!=':
-				return `${field.name} <> ${parsed.numbers[0]}`;
-			case '=':
-				return `${field.name} = ${parsed.numbers[0]}`;
-			case 'BETWEEN':
-				if (parsed.numbers.length >= 2) {
-					return `${field.name} BETWEEN ${parsed.numbers[0]} AND ${parsed.numbers[1]}`;
-				}
-				return `${field.name} = ${parsed.numbers[0]}`;
-			default:
-				return `${field.name} = ${parsed.numbers[0]}`;
-		}
-	};
-
-	handleClarificationSelect = async (selectedValue: string) => {
-		const { pendingQuery, clarificationOptions, connectionStatus } = this.state;
-
-		if (connectionStatus !== 'ready') {
-			this.addBotMessage('⚠️ The map connection is not ready.');
-			return;
-		}
-
-		if (!pendingQuery) {
-			this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
-			return;
-		}
-
-		const selectedOption = clarificationOptions.find((option: ClarificationOption) => option.value === selectedValue);
-		if (!selectedOption) {
-			this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
-			return;
-		}
-
-		// Handle field clarification
-		if (selectedOption.context === 'field' && selectedOption.metadata) {
-			const match = selectedOption.metadata as { field: FieldMetadata; layer: LayerMetadata };
-			this.setState({ clarificationNeeded: false, clarificationOptions: [], loading: true, pendingQuery: null });
-
-			try {
-				const refinedResult = await this.buildDirectQuery(pendingQuery.parsed, match.layer, match.field);
-				
-				if (refinedResult.type === 'success') {
-					const featureCount = await this.executeQuery(refinedResult);
-					if (featureCount !== null) {
-						this.addBotMessage(`✅ Filter applied to "${refinedResult.layerTitle}". ${featureCount} feature(s) found.`);
-					}
-					this.setState({ loading: false, pendingQuery: null });
-					return;
-				}
-
-				this.addBotMessage(`❌ ${refinedResult.message}`);
-				this.setState({ loading: false, pendingQuery: null });
-			} catch (error) {
-				const messageText = error instanceof Error ? error.message : 'Unknown error';
-				this.addBotMessage(`❌ Unable to apply the filter: ${messageText}`);
-				this.setState({ loading: false, pendingQuery: null });
-			}
-			return;
-		}
-
-		// Handle layer clarification
-		if (selectedOption.context === 'layer') {
-			if (!pendingQuery.candidateLayers?.length) {
-				this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
-				return;
-			}
-
-			const chosenLayer = pendingQuery.candidateLayers.find((match: LayerMatch) => match.layer.id === selectedOption.value);
-			if (!chosenLayer) {
-				this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
-				return;
-			}
-
-			this.setState({ clarificationNeeded: false, clarificationOptions: [], loading: true, pendingQuery: null });
-
-			try {
-				const refinedResult = await this.buildSmartQuery(pendingQuery.parsed, chosenLayer);
-				if (refinedResult.type === 'clarification') {
-					this.setState({
-						clarificationNeeded: true,
-						clarificationOptions: refinedResult.options,
-						pendingQuery: refinedResult.pendingQuery,
-						loading: false,
-					});
-					this.addBotMessage('Multiple values look similar. Please choose one.');
-					return;
-				}
-
-				if (refinedResult.type === 'success') {
-					const featureCount = await this.executeQuery(refinedResult);
-					if (featureCount !== null) {
-						this.addBotMessage(`✅ Filter applied to "${refinedResult.layerTitle}". ${featureCount} feature(s) found.`);
-					}
-					this.setState({ loading: false, pendingQuery: null });
-					return;
-				}
-
-				this.addBotMessage(`❌ ${refinedResult.message}`);
-				this.setState({ loading: false, pendingQuery: null });
-			} catch (error) {
-				const messageText = error instanceof Error ? error.message : 'Unknown error';
-				this.addBotMessage(`❌ Unable to apply the filter: ${messageText}`);
-				this.setState({ loading: false, pendingQuery: null });
-			}
-
-			return;
-		}
-
-		// Handle value clarification
-		if (!selectedOption.field || !pendingQuery.layerMatch) {
-			this.setState({ clarificationNeeded: false, clarificationOptions: [], pendingQuery: null });
-			return;
-		}
-
-		this.setState({ clarificationNeeded: false, loading: true });
-
-		const sanitizedValue = selectedValue.replace(/'/g, "''");
-		const condition = `${selectedOption.field} = '${sanitizedValue}'`;
-
-		const targetMetadata = pendingQuery.layerMatch.layer;
-		const featureCount = await this.executeQueryDirect(
-			targetMetadata,
-			condition,
-			targetMetadata.title,
-			{
-				layerId: targetMetadata.id,
-				layerTitle: targetMetadata.title,
-				whereClause: condition,
-				matchedFields: [selectedOption.field],
-				textTokens: pendingQuery.parsed.tokens,
-				numbers: pendingQuery.parsed.numbers,
-				operators: pendingQuery.parsed.operators.map((operator: OperatorInfo) => operator.type),
-				dates: pendingQuery.parsed.dates.map((dateInfo: DateInfo) =>
-					dateInfo.type === 'year'
-						? `year:${dateInfo.value}`
-						: `month:${dateInfo.month}-${dateInfo.year}`,
-				),
-				rawMessage: pendingQuery.parsed.original,
-				selectedField: selectedOption.field,
-				selectedValue: selectedValue,
-			},
-		);
-
-		if (featureCount !== null) {
-			this.addBotMessage(`✅ Filter applied. ${featureCount} feature(s) highlighted on the map.`);
-		}
-
-		this.setState({ loading: false, pendingQuery: null, clarificationOptions: [] });
-	};
-
-	executeQuery = async (result: Extract<ProcessResult, { type: 'success' }>): Promise<number | null> => {
-		return this.executeQueryDirect(result.metadata, result.whereClause, result.layerTitle, result.debugInfo);
-	};
-
-	executeQueryDirect = async (
-		metadata: LayerMetadata,
-		whereClause: string,
-		layerTitle: string,
-		debugInfo?: QueryDebugInfo,
-	): Promise<number | null> => {
+	zoomToLayer = async (layer: LayerMetadata) => {
 		const { jimuMapView } = this.state;
-		const layer = metadata.queryLayer;
+
+		if (!jimuMapView?.view) return;
 
 		try {
-			// Store previous state for undo
-			const previousExpression = layer.definitionExpression || null;
-			const previousVisibility = 'visible' in layer ? (layer as any).visible : true;
+			const queryFeatures = layer.queryLayer.queryFeatures?.bind(layer.queryLayer);
+			if (!queryFeatures) return;
 
-			// Make parent layer visible if exists
-			if (metadata.parentLayer && 'visible' in metadata.parentLayer) {
-				metadata.parentLayer.visible = true;
-			}
-
-			// Make layer visible
-			if (metadata.setVisible) {
-				metadata.setVisible(true);
-			}
-
-			if (typeof layer.queryFeatures !== 'function') {
-				this.addBotMessage('❌ The selected layer cannot be queried.');
-				return null;
-			}
-
-			// Add timeout to query
-			const timeoutPromise = new Promise<never>((_, reject) => {
-				setTimeout(() => reject(new Error('Query execution timeout')), 30000);
-			});
-
-			const queryFeatures = layer.queryFeatures.bind(layer);
-			const query = typeof layer.createQuery === 'function' ? layer.createQuery() : ({} as any);
-			query.where = whereClause;
+			const query = typeof layer.queryLayer.createQuery === 'function' 
+				? layer.queryLayer.createQuery() 
+				: ({} as any);
+			
+			query.where = '1=1';
 			query.returnGeometry = true;
 			query.outFields = ['*'];
-			if (!Array.isArray(query.outFields)) {
-				query.outFields = ['*'];
-			}
 
-			const results = await Promise.race([queryFeatures(query), timeoutPromise]);
+			const results = await queryFeatures(query);
 			
-			if (!results || !Array.isArray(results.features)) {
-				this.addBotMessage('❌ The query did not return any results.');
-				return null;
-			}
-			
-			const featureCount = results.features.length;
-
-			if (featureCount === 0) {
-				const detailLines: string[] = [
-					`Layer: ${layerTitle}`,
-					`Where clause: ${whereClause}`,
-				];
-
-				if (debugInfo) {
-					if (debugInfo.matchedFields.length > 0) {
-						detailLines.push(`Matched fields: ${debugInfo.matchedFields.join(', ')}`);
-					}
-					if (debugInfo.textTokens.length > 0) {
-						detailLines.push(`Text tokens: ${debugInfo.textTokens.join(', ')}`);
-					}
-					if (debugInfo.numbers.length > 0) {
-						detailLines.push(`Numbers: ${debugInfo.numbers.join(', ')}`);
-					}
-					if (debugInfo.operators.length > 0) {
-						detailLines.push(`Operators: ${debugInfo.operators.join(', ')}`);
-					}
-					if (debugInfo.dates.length > 0) {
-						detailLines.push(`Dates: ${debugInfo.dates.join(', ')}`);
-					}
-					if (debugInfo.selectedField) {
-						detailLines.push(`Selected field: ${debugInfo.selectedField}`);
-					}
-					if (debugInfo.selectedValue) {
-						detailLines.push(`Selected value: ${debugInfo.selectedValue}`);
-					}
-					detailLines.push(`Original message: ${debugInfo.rawMessage}`);
-				}
-
-				console.debug('SmartFilterWidget query returned zero features.', {
-					layerTitle,
-					whereClause,
-					debugInfo,
+			if (results?.features && results.features.length > 0) {
+				await jimuMapView.view.goTo(results.features, {
+					duration: 1000,
+					easing: 'ease-in-out'
 				});
-
-				this.addBotMessage(
-					`⚠️ No features matched the filter.\n- ${detailLines.join('\n- ')}`,
-				);
-				return null;
 			}
-
-			// Apply definition expression to filter the layer
-			if ('definitionExpression' in layer) {
-				(layer as any).definitionExpression = whereClause;
-			}
-			metadata.applyDefinitionExpression?.(whereClause);
-
-			// Add to active filters for undo capability
-			const filterId = `filter-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-			const activeFilter: ActiveFilter = {
-				id: filterId,
-				layerId: metadata.id,
-				layerTitle: layerTitle,
-				whereClause: whereClause,
-				timestamp: new Date(),
-				previousExpression,
-				previousVisibility,
-			};
-
-			this.setState((prevState) => ({
-				activeFilters: [...prevState.activeFilters, activeFilter],
-			}));
-
-			// Zoom to filtered features
-			if (jimuMapView?.view && results.features.length > 0) {
-				try {
-					await jimuMapView.view.goTo(results.features, {
-						duration: 1000,
-						easing: 'ease-in-out'
-					});
-				} catch (goToError) {
-					console.warn('Map navigation failed:', goToError);
-				}
-			}
-
-			return featureCount;
 		} catch (error) {
-			if (error instanceof Error && error.message === 'Query execution timeout') {
-				this.addBotMessage(`⚠️ The query took too long to execute. The layer might have too many features. Try adding more specific filters.`);
-			} else {
-				const messageText = error instanceof Error ? error.message : 'Unknown error';
-				this.addBotMessage(`❌ Query failed: ${messageText}`);
-			}
-			return null;
+			console.warn('Failed to zoom to layer:', error);
 		}
 	};
 
-	handleRemoveFilter = async (filterId: string) => {
+	removeFilter = (filterId: string) => {
 		const { activeFilters, layerCache } = this.state;
-		const filter = activeFilters.find(f => f.id === filterId);
-		
-		if (!filter) {
-			return;
-		}
+		const filter = activeFilters.find((f) => f.id === filterId);
 
-		const layerMetadata = layerCache.find(l => l.id === filter.layerId);
-		if (!layerMetadata) {
-			this.setState({
-				activeFilters: activeFilters.filter(f => f.id !== filterId),
-			});
-			return;
-		}
-
-		try {
-			// Restore previous state
-			const layer = layerMetadata.queryLayer;
-			
-			if ('definitionExpression' in layer) {
-				(layer as any).definitionExpression = filter.previousExpression || '1=1';
+		if (filter) {
+			// Find the layer and reset it
+			const layer = layerCache.find((l) => l.id === filter.layerId);
+			if (layer) {
+				layer.applyDefinitionExpression?.('1=1');
+				// Optionally hide the layer
+				// layer.setVisible?.(false);
 			}
-			layerMetadata.applyDefinitionExpression?.(filter.previousExpression);
+		}
 
-			if (filter.previousVisibility !== undefined && layerMetadata.setVisible) {
-				layerMetadata.setVisible(filter.previousVisibility);
+		this.setState({
+			activeFilters: activeFilters.filter((f) => f.id !== filterId),
+		});
+	};
+
+	clearAllFilters = () => {
+		const { layerCache } = this.state;
+
+		// Reset all layers
+		layerCache.forEach((layer) => {
+			layer.applyDefinitionExpression?.('1=1');
+		});
+
+		this.setState({ activeFilters: [] });
+	};
+
+	handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+		const { searchResults, selectedResultIndex, showResults } = this.state;
+
+		if (!showResults || searchResults.length === 0) return;
+
+		if (event.key === 'ArrowDown') {
+			event.preventDefault();
+			const newIndex = selectedResultIndex < searchResults.length - 1 
+				? selectedResultIndex + 1 
+				: 0;
+			this.setState({ selectedResultIndex: newIndex });
+		} else if (event.key === 'ArrowUp') {
+			event.preventDefault();
+			const newIndex = selectedResultIndex > 0 
+				? selectedResultIndex - 1 
+				: searchResults.length - 1;
+			this.setState({ selectedResultIndex: newIndex });
+		} else if (event.key === 'Enter') {
+			event.preventDefault();
+			if (selectedResultIndex >= 0 && selectedResultIndex < searchResults.length) {
+				this.handleResultClick(searchResults[selectedResultIndex]);
 			}
-
-			// Remove from active filters
-			this.setState({
-				activeFilters: activeFilters.filter(f => f.id !== filterId),
-			});
-
-			this.addBotMessage(`🔄 Filter removed from "${filter.layerTitle}".`);
-		} catch (error) {
-			const messageText = error instanceof Error ? error.message : 'Unknown error';
-			this.addBotMessage(`❌ Failed to remove filter: ${messageText}`);
+		} else if (event.key === 'Escape') {
+			this.setState({ showResults: false, searchResults: [] });
 		}
-	};
-
-	handleClearAllFilters = async () => {
-		const { activeFilters } = this.state;
-		
-		for (const filter of activeFilters) {
-			await this.handleRemoveFilter(filter.id);
-		}
-	};
-
-	toggleFilterPanel = () => {
-		this.setState((prevState) => ({
-			showFilterPanel: !prevState.showFilterPanel,
-		}));
-	};
-
-	addUserMessage = (text: string) => {
-		this.setState((prevState: State) => ({
-			chatHistory: [...prevState.chatHistory, { type: 'user', text, timestamp: new Date() }],
-		}));
-	};
-
-	addBotMessage = (text: string) => {
-		this.setState((prevState: State) => ({
-			chatHistory: [...prevState.chatHistory, { type: 'bot', text, timestamp: new Date() }],
-		}));
 	};
 
 	render() {
 		const {
-			message,
-			chatHistory,
+			searchText,
+			searchResults,
+			showResults,
 			loading,
-			clarificationNeeded,
-			clarificationOptions,
 			connectionStatus,
 			statusMessage,
 			activeFilters,
-			showFilterPanel,
+			selectedResultIndex,
+			isSearchFocused,
 		} = this.state;
 
-		const inputDisabled = loading || connectionStatus !== 'ready';
-
 		return (
-			<div className="smart-filter-widget jimu-widget" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+			<div className="smart-search-widget jimu-widget" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
 				<JimuMapViewComponent
 					useMapWidgetId={this.props.useMapWidgetIds?.[0]}
 					onActiveViewChange={this.onActiveViewChange}
 				/>
 
-				<div style={{ padding: '10px 15px', borderBottom: '1px solid #ccc', backgroundColor: '#fff', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-					<div style={{ flex: 1 }}>
-						<Alert
-							form="basic"
-							type={connectionStatus === 'ready' ? 'success' : connectionStatus === 'error' ? 'danger' : 'info'}
-							text={statusMessage}
+				{/* Status Bar */}
+				<div style={{ padding: '10px 15px', borderBottom: '1px solid #e0e0e0', backgroundColor: '#fff' }}>
+					<Alert
+						form="basic"
+						type={connectionStatus === 'ready' ? 'success' : connectionStatus === 'error' ? 'danger' : 'info'}
+						text={statusMessage}
+						withIcon
+					/>
+				</div>
+
+				{/* Search Box */}
+				<div style={{ padding: '15px', backgroundColor: '#fff', position: 'relative' }}>
+					<div style={{ position: 'relative' }}>
+						<TextInput
+							ref={this.searchInputRef}
+							placeholder="Search layers or fields..."
+							value={searchText}
+							onChange={this.handleSearchChange}
+							onKeyDown={this.handleKeyDown}
+							onFocus={() => this.setState({ isSearchFocused: true })}
+							onBlur={() => {
+								// Delay to allow click on results
+								setTimeout(() => this.setState({ isSearchFocused: false }), 200);
+							}}
+							disabled={connectionStatus !== 'ready'}
+							style={{ 
+								width: '100%',
+								paddingRight: '40px',
+								fontSize: '14px',
+								height: '40px'
+							}}
 						/>
+						{searchText && (
+							<button
+								onClick={() => this.setState({ searchText: '', searchResults: [], showResults: false })}
+								style={{
+									position: 'absolute',
+									right: '10px',
+									top: '50%',
+									transform: 'translateY(-50%)',
+									background: 'none',
+									border: 'none',
+									cursor: 'pointer',
+									padding: '5px',
+									color: '#666',
+								}}
+							>
+								✕
+							</button>
+						)}
 					</div>
-					{activeFilters.length > 0 && (
-						<Button
-							type="default"
-							size="sm"
-							onClick={this.toggleFilterPanel}
-							style={{ marginLeft: '10px' }}
-						>
-							Active Filters ({activeFilters.length})
-						</Button>
+
+					{/* Search Results Dropdown */}
+					{showResults && searchResults.length > 0 && (
+						<div style={{
+							position: 'absolute',
+							top: '100%',
+							left: '15px',
+							right: '15px',
+							backgroundColor: '#fff',
+							border: '1px solid #ddd',
+							borderRadius: '4px',
+							boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+							maxHeight: '400px',
+							overflowY: 'auto',
+							zIndex: 1000,
+							marginTop: '5px',
+						}}>
+							{searchResults.map((result, index) => (
+								<div
+									key={index}
+									onClick={() => this.handleResultClick(result)}
+									onMouseEnter={() => this.setState({ selectedResultIndex: index })}
+									style={{
+										padding: '12px 15px',
+										cursor: 'pointer',
+										borderBottom: index < searchResults.length - 1 ? '1px solid #f0f0f0' : 'none',
+										backgroundColor: selectedResultIndex === index ? '#f5f5f5' : '#fff',
+										transition: 'background-color 0.15s',
+									}}
+								>
+									<div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+										<div style={{
+											width: '32px',
+											height: '32px',
+											borderRadius: '4px',
+											backgroundColor: result.type === 'layer' ? '#0079c1' : '#6ca0dc',
+											display: 'flex',
+											alignItems: 'center',
+											justifyContent: 'center',
+											color: '#fff',
+											fontSize: '12px',
+											fontWeight: 'bold',
+											flexShrink: 0,
+										}}>
+											{result.type === 'layer' ? '📁' : '📋'}
+										</div>
+										<div style={{ flex: 1, minWidth: 0 }}>
+											<div style={{ 
+												fontWeight: 500, 
+												fontSize: '14px',
+												color: '#333',
+												overflow: 'hidden',
+												textOverflow: 'ellipsis',
+												whiteSpace: 'nowrap',
+											}}>
+												{result.label}
+											</div>
+											{result.sublabel && (
+												<div style={{ 
+													fontSize: '12px', 
+													color: '#666',
+													overflow: 'hidden',
+													textOverflow: 'ellipsis',
+													whiteSpace: 'nowrap',
+													marginTop: '2px',
+												}}>
+													{result.sublabel}
+												</div>
+											)}
+										</div>
+									</div>
+								</div>
+							))}
+						</div>
 					)}
 				</div>
 
-				{showFilterPanel && activeFilters.length > 0 && (
-					<div style={{ padding: '15px', backgroundColor: '#f8f9fa', borderBottom: '1px solid #ccc', maxHeight: '200px', overflowY: 'auto' }}>
-						<div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-							<Label style={{ fontWeight: 'bold', margin: 0 }}>Active Filters</Label>
+				{/* Active Filters */}
+				{activeFilters.length > 0 && (
+					<div style={{ 
+						padding: '15px', 
+						backgroundColor: '#f9f9f9', 
+						borderBottom: '1px solid #e0e0e0',
+						maxHeight: '200px',
+						overflowY: 'auto',
+					}}>
+						<div style={{ 
+							display: 'flex', 
+							justifyContent: 'space-between', 
+							alignItems: 'center',
+							marginBottom: '10px' 
+						}}>
+							<Label style={{ fontWeight: 'bold', margin: 0 }}>
+								Active Filters ({activeFilters.length})
+							</Label>
 							<Button
-								type="danger"
 								size="sm"
-								onClick={this.handleClearAllFilters}
+								type="tertiary"
+								onClick={this.clearAllFilters}
+								style={{ fontSize: '12px' }}
 							>
 								Clear All
 							</Button>
 						</div>
-						{activeFilters.map((filter) => (
-							<div
-								key={filter.id}
-								style={{
-									padding: '10px',
-									marginBottom: '8px',
-									backgroundColor: '#fff',
-									borderRadius: '4px',
-									border: '1px solid #ddd',
-									display: 'flex',
-									justifyContent: 'space-between',
-									alignItems: 'center',
-								}}
-							>
-								<div style={{ flex: 1 }}>
-									<div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '4px' }}>
-										{filter.layerTitle}
-									</div>
-									<div style={{ fontSize: '12px', color: '#666', fontFamily: 'monospace' }}>
-										{filter.whereClause}
-									</div>
-									<div style={{ fontSize: '11px', color: '#999', marginTop: '4px' }}>
-										{filter.timestamp.toLocaleTimeString()}
-									</div>
-								</div>
-								<Button
-									type="danger"
-									size="sm"
-									onClick={() => this.handleRemoveFilter(filter.id)}
-									style={{ marginLeft: '10px' }}
+						<div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+							{activeFilters.map((filter) => (
+								<div
+									key={filter.id}
+									style={{
+										display: 'inline-flex',
+										alignItems: 'center',
+										gap: '8px',
+										padding: '6px 12px',
+										backgroundColor: '#fff',
+										border: '1px solid #ddd',
+										borderRadius: '16px',
+										fontSize: '13px',
+									}}
 								>
-									Remove
-								</Button>
-							</div>
-						))}
+									<span style={{ color: '#333' }}>
+										{filter.fieldName ? `${filter.label} (${filter.layerTitle})` : filter.label}
+									</span>
+									<button
+										onClick={() => this.removeFilter(filter.id)}
+										style={{
+											background: 'none',
+											border: 'none',
+											cursor: 'pointer',
+											padding: '0',
+											color: '#666',
+											fontSize: '16px',
+											lineHeight: '1',
+										}}
+									>
+										×
+									</button>
+								</div>
+							))}
+						</div>
 					</div>
 				)}
 
-				<div style={{ flex: 1, padding: '15px', overflowY: 'auto', backgroundColor: '#f5f5f5' }}>
-					{chatHistory.map((msg: ChatMessage, idx: number) => (
-						<div
-							key={idx}
-							style={{
-								marginBottom: '10px',
-								textAlign: msg.type === 'user' ? 'right' : 'left',
-							}}
-						>
-							<div
-								style={{
-									display: 'inline-block',
-									padding: '8px 12px',
-									borderRadius: '12px',
-									backgroundColor: msg.type === 'user' ? '#0079c1' : '#fff',
-									color: msg.type === 'user' ? '#fff' : '#333',
-									maxWidth: '80%',
-									boxShadow: '0 1px 2px rgba(0,0,0,0.1)',
-									whiteSpace: 'pre-wrap',
-								}}
-							>
-								{msg.text}
+				{/* Main Content Area */}
+				<div style={{ 
+					flex: 1, 
+					padding: '20px', 
+					overflowY: 'auto', 
+					backgroundColor: '#fff',
+					display: 'flex',
+					alignItems: 'center',
+					justifyContent: 'center',
+				}}>
+					{connectionStatus !== 'ready' ? (
+						<div style={{ textAlign: 'center', color: '#666' }}>
+							<div style={{ fontSize: '48px', marginBottom: '15px' }}>🔍</div>
+							<div style={{ fontSize: '16px', fontWeight: 500 }}>
+								{statusMessage}
 							</div>
 						</div>
-					))}
-
-					{loading && (
-						<div style={{ textAlign: 'center', padding: '10px' }}>
-							<span>⏳ Processing...</span>
+					) : activeFilters.length === 0 ? (
+						<div style={{ textAlign: 'center', color: '#666' }}>
+							<div style={{ fontSize: '48px', marginBottom: '15px' }}>🗺️</div>
+							<div style={{ fontSize: '16px', fontWeight: 500, marginBottom: '8px' }}>
+								Search to get started
+							</div>
+							<div style={{ fontSize: '14px', color: '#999' }}>
+								Type to search layers or fields
+							</div>
+						</div>
+					) : (
+						<div style={{ textAlign: 'center', color: '#666' }}>
+							<div style={{ fontSize: '48px', marginBottom: '15px' }}>✅</div>
+							<div style={{ fontSize: '16px', fontWeight: 500 }}>
+								{activeFilters.length} filter{activeFilters.length !== 1 ? 's' : ''} active
+							</div>
 						</div>
 					)}
 				</div>
 
-				{clarificationNeeded && (
-					<div style={{ padding: '15px', backgroundColor: '#fff3cd', borderTop: '1px solid #ccc' }}>
-						<Label style={{ marginBottom: '10px', fontWeight: 'bold' }}>Select an option:</Label>
-						<Select
-							placeholder="Choose..."
-							onChange={(event: React.ChangeEvent<HTMLSelectElement>) =>
-								this.handleClarificationSelect(event.target.value)
-							}
-						>
-							{clarificationOptions.map((option: ClarificationOption, idx: number) => (
-								<Option key={idx} value={option.value}>
-									{option.label}
-								</Option>
-							))}
-						</Select>
-					</div>
-				)}
-
-				<div style={{ padding: '15px', borderTop: '1px solid #ccc', backgroundColor: '#fff' }}>
-					<div style={{ display: 'flex', gap: '10px' }}>
-						<TextInput
-							placeholder="e.g., rsrp<-110 or TMOBILE SITES or filter RSRP in 2024 May"
-							value={message}
-							onChange={(event: React.ChangeEvent<HTMLInputElement>) =>
-								this.setState({ message: event.target.value })
-							}
-							onKeyPress={(event: React.KeyboardEvent<HTMLInputElement>) => {
-								if (event.key === 'Enter') {
-									this.handleSendMessage();
-								}
-							}}
-							style={{ flex: 1 }}
-							disabled={inputDisabled}
-						/>
-						<Button type="primary" onClick={this.handleSendMessage} disabled={inputDisabled || !message.trim()}>
-							Send
-						</Button>
+				{/* Help Text */}
+				<div style={{ 
+					padding: '12px 15px', 
+					backgroundColor: '#f9f9f9', 
+					borderTop: '1px solid #e0e0e0',
+					fontSize: '12px',
+					color: '#666',
+				}}>
+					<div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+						<div><strong>Tip:</strong> Use ↑↓ to navigate, Enter to select, Esc to close</div>
 					</div>
 				</div>
 			</div>
