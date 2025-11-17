@@ -1,896 +1,844 @@
 /** @jsx jsx */
-import { React, jsx, AllWidgetProps } from 'jimu-core';
-import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
-import { TextInput, Label, Button } from 'jimu-ui';
-import './style.css';
+import { React, jsx, AllWidgetProps } from ‘jimu-core’;
+import { JimuMapViewComponent, JimuMapView } from ‘jimu-arcgis’;
+import { TextInput, Label, Button, Tab, Tabs } from ‘jimu-ui’;
+import ‘./style.css’;
 
 type FeatureLayerField = { name: string; alias?: string; type: string };
 
 type FeatureLayer = {
-	id: string;
-	title: string;
-	url: string;
-	type?: string;
-	fields?: FeatureLayerField[];
-	createQuery?: () => any;
-	queryFeatures?: (query: any) => Promise<{ features: any[] }>;
-	definitionExpression?: string;
-	visible?: boolean;
+id: string;
+title: string;
+url: string;
+type?: string;
+fields?: FeatureLayerField[];
+createQuery?: () => any;
+queryFeatures?: (query: any) => Promise<{ features: any[] }>;
+definitionExpression?: string;
+visible?: boolean;
+parent?: any;
 };
 
 interface FieldMetadata {
-	name: string;
-	alias: string;
-	type: string;
-	nameTokens: string[];
+name: string;
+alias: string;
+type: string;
+nameTokens: string[];
 }
 
 interface LayerMetadata {
-	id: string;
-	title: string;
-	url: string;
-	queryLayer: FeatureLayer;
-	fields: FieldMetadata[];
-	titleTokens: string[];
-	path: string[];
-	applyDefinitionExpression?: (whereClause: string | null) => void;
-	setVisible?: (visible: boolean) => void;
+id: string;
+title: string;
+url: string;
+queryLayer: FeatureLayer;
+fields: FieldMetadata[];
+titleTokens: string[];
+path: string[];
+applyDefinitionExpression?: (whereClause: string | null) => void;
+setVisible?: (visible: boolean) => void;
+parentLayers?: any[];
 }
 
-type SearchResultType = 'layer' | 'field';
+type SearchResultType = ‘layer’ | ‘field’ | ‘value’;
 
 interface SearchResult {
-	type: SearchResultType;
-	label: string;
-	sublabel?: string;
-	score: number;
-	layer: LayerMetadata;
-	field?: FieldMetadata;
-	matchedText: string;
+type: SearchResultType;
+label: string;
+sublabel?: string;
+score: number;
+layer: LayerMetadata;
+field?: FieldMetadata;
+matchedText: string;
+value?: any;
+featureData?: any;
 }
 
 interface ActiveLayer {
-	id: string;
-	layerId: string;
-	layer: LayerMetadata;
-	expanded: boolean;
-	fieldFilters: { [fieldName: string]: string };
-	currentWhereClause?: string;
-	filterWatcher?: NodeJS.Timeout;
+id: string;
+layerId: string;
+layer: LayerMetadata;
+expanded: boolean;
+fieldFilters: { [fieldName: string]: string };
+currentWhereClause?: string;
+filterWatcher?: NodeJS.Timeout;
 }
 
 interface State {
-	searchText: string;
-	searchResults: SearchResult[];
-	showResults: boolean;
-	loading: boolean;
-	jimuMapView: JimuMapView | null;
-	layerCache: LayerMetadata[];
-	connectionStatus: 'idle' | 'connecting' | 'ready' | 'error';
-	statusMessage: string;
-	activeLayers: ActiveLayer[];
-	selectedResultIndex: number;
+searchText: string;
+valueResults: SearchResult[];
+structureResults: SearchResult[];
+showResults: boolean;
+loading: boolean;
+jimuMapView: JimuMapView | null;
+layerCache: LayerMetadata[];
+connectionStatus: ‘idle’ | ‘connecting’ | ‘ready’ | ‘error’;
+statusMessage: string;
+activeLayers: ActiveLayer[];
+selectedResultIndex: number;
+activeTab: ‘values’ | ‘structure’;
 }
 
 const NUMERIC_FIELD_TYPES = new Set([
-	'double', 'single', 'integer', 'small-integer', 'smallinteger',
-	'short-integer', 'shortinteger', 'long', 'float', 'oid',
+‘double’, ‘single’, ‘integer’, ‘small-integer’, ‘smallinteger’,
+‘short-integer’, ‘shortinteger’, ‘long’, ‘float’, ‘oid’,
 ]);
 
-const STRING_FIELD_TYPES = new Set(['string', 'guid', 'global-id', 'globalid']);
+const STRING_FIELD_TYPES = new Set([‘string’, ‘guid’, ‘global-id’, ‘globalid’]);
 
-const normalizeFieldType = (fieldType: string): string => fieldType?.toLowerCase?.() ?? '';
+const normalizeFieldType = (fieldType: string): string => fieldType?.toLowerCase?.() ?? ‘’;
 const isNumericFieldType = (fieldType: string): boolean => NUMERIC_FIELD_TYPES.has(normalizeFieldType(fieldType));
-const isDateFieldType = (fieldType: string): boolean => normalizeFieldType(fieldType) === 'date';
+const isDateFieldType = (fieldType: string): boolean => normalizeFieldType(fieldType) === ‘date’;
 const isStringFieldType = (fieldType: string): boolean => STRING_FIELD_TYPES.has(normalizeFieldType(fieldType));
 
 export default class SmartSearchWidget extends React.PureComponent<AllWidgetProps<any>, State> {
-	private searchInputRef: React.RefObject<HTMLInputElement>;
-	private searchDebounceTimer: NodeJS.Timeout | null = null;
-	private filterWatchers: Map<string, NodeJS.Timeout> = new Map();
-	private globalFilterWatcher: NodeJS.Timeout | null = null;
+private searchInputRef: React.RefObject<HTMLInputElement>;
+private searchDebounceTimer: NodeJS.Timeout | null = null;
+private filterWatchers: Map<string, NodeJS.Timeout> = new Map();
+private globalFilterWatcher: NodeJS.Timeout | null = null;
+private popupWatcher: NodeJS.Timeout | null = null;
 
-	constructor(props: AllWidgetProps<any>) {
-		super(props);
-		this.searchInputRef = React.createRef();
-		this.state = {
-			searchText: '',
-			searchResults: [],
-			showResults: false,
-			loading: false,
+```
+constructor(props: AllWidgetProps<any>) {
+	super(props);
+	this.searchInputRef = React.createRef();
+	this.state = {
+		searchText: '',
+		valueResults: [],
+		structureResults: [],
+		showResults: false,
+		loading: false,
+		jimuMapView: null,
+		layerCache: [],
+		connectionStatus: 'idle',
+		statusMessage: 'Select a map in the widget settings to connect.',
+		activeLayers: [],
+		selectedResultIndex: -1,
+		activeTab: 'values',
+	};
+}
+
+componentDidMount() {
+	// Set up a global watcher for all active layers
+	this.globalFilterWatcher = setInterval(() => {
+		this.state.activeLayers.forEach((activeLayer) => {
+			if (activeLayer.currentWhereClause) {
+				const layer = activeLayer.layer.queryLayer;
+				if (layer.definitionExpression !== activeLayer.currentWhereClause) {
+					// Re-apply immediately without logging (to avoid console spam)
+					if ('definitionExpression' in layer) {
+						(layer as any).definitionExpression = activeLayer.currentWhereClause;
+					}
+					activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
+				}
+			}
+		});
+	}, 10); // Check every 10ms for ultra-fast response
+}
+
+componentWillUnmount() {
+	// Clear all filter watchers
+	this.filterWatchers.forEach((watcher) => clearInterval(watcher));
+	this.filterWatchers.clear();
+	
+	// Clear global watcher
+	if (this.globalFilterWatcher) {
+		clearInterval(this.globalFilterWatcher);
+	}
+
+	// Clear popup watcher
+	if (this.popupWatcher) {
+		clearInterval(this.popupWatcher);
+	}
+}
+
+onActiveViewChange = async (jimuMapView: JimuMapView) => {
+	if (!jimuMapView) {
+		this.setState({
 			jimuMapView: null,
 			layerCache: [],
 			connectionStatus: 'idle',
-			statusMessage: 'Select a map in the widget settings to connect.',
-			activeLayers: [],
-			selectedResultIndex: -1,
-		};
-	}
-
-	componentDidMount() {
-		// Set up a global watcher for all active layers
-		this.globalFilterWatcher = setInterval(() => {
-			this.state.activeLayers.forEach((activeLayer) => {
-				if (activeLayer.currentWhereClause) {
-					const layer = activeLayer.layer.queryLayer;
-					if (layer.definitionExpression !== activeLayer.currentWhereClause) {
-						// Re-apply immediately without logging (to avoid console spam)
-						if ('definitionExpression' in layer) {
-							(layer as any).definitionExpression = activeLayer.currentWhereClause;
-						}
-						activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
-					}
-				}
-			});
-		}, 10); // Check every 10ms for ultra-fast response
-	}
-
-	componentWillUnmount() {
-		// Clear all filter watchers
-		this.filterWatchers.forEach((watcher) => clearInterval(watcher));
-		this.filterWatchers.clear();
-		
-		// Clear global watcher
-		if (this.globalFilterWatcher) {
-			clearInterval(this.globalFilterWatcher);
-		}
-	}
-
-	onActiveViewChange = async (jimuMapView: JimuMapView) => {
-		if (!jimuMapView) {
-			this.setState({
-				jimuMapView: null,
-				layerCache: [],
-				connectionStatus: 'idle',
-				statusMessage: 'No map selected. Choose a map from the widget settings.',
-			});
-			return;
-		}
-
-		this.setState({
-			jimuMapView,
-			loading: true,
-			connectionStatus: 'connecting',
-			statusMessage: 'Loading layer information...'
+			statusMessage: 'No map selected. Choose a map from the widget settings.',
 		});
+		return;
+	}
 
-		try {
-			const layerCache = await this.discoverLayers(jimuMapView);
+	this.setState({
+		jimuMapView,
+		loading: true,
+		connectionStatus: 'connecting',
+		statusMessage: 'Loading layer information...'
+	});
 
-			if (layerCache.length === 0) {
-				this.setState({
-					loading: false,
-					connectionStatus: 'error',
-					statusMessage: 'No feature layers found in the selected map.',
-				});
-				return;
-			}
+	try {
+		const layerCache = await this.discoverLayers(jimuMapView);
 
-			this.setState({
-				loading: false,
-				connectionStatus: 'ready',
-				statusMessage: `Ready. ${layerCache.length} layer(s) indexed.`,
-			});
-		} catch (error) {
-			const messageText = error instanceof Error ? error.message : 'Unknown error';
+		if (layerCache.length === 0) {
 			this.setState({
 				loading: false,
 				connectionStatus: 'error',
-				statusMessage: `Failed to load layer metadata: ${messageText}`,
+				statusMessage: 'No feature layers found in the selected map.',
 			});
-		}
-	};
-
-	discoverLayers = async (jimuMapView: JimuMapView): Promise<LayerMetadata[]> => {
-		const view = jimuMapView?.view;
-
-		if (!view?.map) {
-			this.setState({ layerCache: [] });
-			return [];
-		}
-
-		const layerCache: LayerMetadata[] = [];
-
-		const toArray = (collection: any): any[] => {
-			if (!collection) return [];
-			if (typeof collection.toArray === 'function') return collection.toArray();
-			return Array.isArray(collection) ? collection : [];
-		};
-
-		const tokenizeTitlePath = (path: string[]): string[] =>
-			path.flatMap((segment) =>
-				String(segment).toLowerCase().split(/[\s_>›/-]+/).filter((token) => token.length > 0)
-			);
-
-		const collectFeatureLayer = async (
-			featureLayer: FeatureLayer,
-			titlePath: string[],
-			options: { 
-				sourceId?: string; 
-				applyDefinitionExpression?: (whereClause: string | null) => void;
-				setVisible?: (visible: boolean) => void;
-			} = {},
-		) => {
-			try {
-				if (typeof (featureLayer as any).load === 'function') {
-					await (featureLayer as any).load();
-				} else if (typeof (featureLayer as any).when === 'function') {
-					await (featureLayer as any).when();
-				}
-			} catch (error) {
-				console.warn('Failed to load layer metadata.', featureLayer?.title ?? options.sourceId ?? 'feature-layer', error);
-			}
-
-			const fieldsSource = Array.isArray(featureLayer.fields) ? featureLayer.fields : [];
-			const fields: FieldMetadata[] = fieldsSource
-				.filter((field: any) => field && field.name)
-				.map((field: any) => {
-					const name = String(field.name);
-					const alias = field.alias ? String(field.alias) : name;
-					const type = normalizeFieldType(field.type);
-					return {
-						name,
-						alias,
-						type,
-						nameTokens: name.toLowerCase().split(/[_\s]+/),
-					};
-				});
-
-			if (fields.length === 0) return;
-
-			const titlePathClean = titlePath.filter((segment) => segment && segment.trim().length > 0);
-			const title = titlePathClean.length > 0 ? titlePathClean.join(' › ') : featureLayer.title ?? options.sourceId ?? 'Layer';
-			const idCandidateOrder = [options.sourceId, featureLayer.id, featureLayer.url, title];
-			let id = idCandidateOrder.find((value) => typeof value === 'string' && value.trim().length > 0) ?? `layer-${layerCache.length}-${Date.now()}`;
-			if (layerCache.some((cachedLayer) => cachedLayer.id === id)) {
-				id = `${id}-${layerCache.length}`;
-			}
-
-			const applyDefinitionExpression = options.applyDefinitionExpression
-				? options.applyDefinitionExpression
-				: (whereClause: string | null) => {
-					featureLayer.definitionExpression = whereClause ?? '1=1';
-				};
-
-			const setVisible = options.setVisible
-				? options.setVisible
-				: (visible: boolean) => {
-					if ('visible' in featureLayer) {
-						(featureLayer as any).visible = visible;
-					}
-				};
-
-			layerCache.push({
-				id,
-				title,
-				url: featureLayer.url,
-				queryLayer: featureLayer,
-				fields,
-				titleTokens: tokenizeTitlePath(titlePathClean),
-				path: titlePathClean,
-				applyDefinitionExpression,
-				setVisible,
-			});
-		};
-
-		const traverseSublayer = async (sublayer: any, parentTitles: string[], parentLayer: any) => {
-			const sublayerTitle = String(
-				sublayer?.title && sublayer.title.trim().length > 0
-					? sublayer.title
-					: sublayer?.name ?? sublayer?.id ?? 'Sublayer',
-			);
-			const titlePath = [...parentTitles, sublayerTitle];
-			let featureLayer: FeatureLayer | null = null;
-
-			if (typeof sublayer.createFeatureLayer === 'function') {
-				try {
-					const result = sublayer.createFeatureLayer();
-					featureLayer = typeof (result as any)?.then === 'function' ? await result : result;
-				} catch (error) {
-					console.warn('Unable to create feature layer from sublayer.', titlePath.join(' › '), error);
-				}
-			} else if (sublayer?.layer?.type === 'feature') {
-				featureLayer = sublayer.layer as FeatureLayer;
-			}
-
-			if (featureLayer) {
-				await collectFeatureLayer(featureLayer, titlePath, {
-					sourceId: `${parentLayer?.id ?? parentLayer?.uid ?? 'layer'}-${sublayer.id ?? sublayer.uid ?? sublayerTitle}`,
-					applyDefinitionExpression: (whereClause: string | null) => {
-						if ('definitionExpression' in sublayer) {
-							sublayer.definitionExpression = whereClause ?? '1=1';
-						}
-					},
-					setVisible: (visible: boolean) => {
-						if ('visible' in sublayer) {
-							sublayer.visible = visible;
-						}
-						if ('visible' in parentLayer) {
-							parentLayer.visible = visible;
-						}
-					},
-				});
-			}
-
-			const childSublayers = toArray(sublayer?.sublayers ?? sublayer?.subLayers);
-			for (const childSublayer of childSublayers) {
-				await traverseSublayer(childSublayer, titlePath, parentLayer);
-			}
-		};
-
-		const traverseLayer = async (layer: any, parentTitles: string[] = []) => {
-			const layerTitle = String(layer?.title ?? layer?.name ?? layer?.id ?? 'Layer');
-			const titlePath = [...parentTitles, layerTitle];
-
-			if (layer?.type === 'feature') {
-				await collectFeatureLayer(layer as FeatureLayer, titlePath, {
-					sourceId: layer.id ?? layer.uid ?? layerTitle,
-					applyDefinitionExpression: (whereClause: string | null) => {
-						(layer as FeatureLayer).definitionExpression = whereClause ?? '1=1';
-					},
-					setVisible: (visible: boolean) => {
-						if ('visible' in layer) {
-							layer.visible = visible;
-						}
-					},
-				});
-			}
-
-			const sublayers = toArray(layer?.sublayers ?? layer?.subLayers);
-			for (const sublayer of sublayers) {
-				await traverseSublayer(sublayer, titlePath, layer);
-			}
-
-			const childLayers = toArray(layer?.layers);
-			for (const childLayer of childLayers) {
-				await traverseLayer(childLayer, titlePath);
-			}
-		};
-
-		const allLayers = toArray(view.map.allLayers);
-		for (const layer of allLayers) {
-			await traverseLayer(layer);
-		}
-
-		this.setState({ layerCache });
-		return layerCache;
-	};
-
-	handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-		const searchText = event.target.value;
-		this.setState({ searchText, selectedResultIndex: -1 });
-
-		if (this.searchDebounceTimer) {
-			clearTimeout(this.searchDebounceTimer);
-		}
-
-		if (!searchText.trim()) {
-			this.setState({ searchResults: [], showResults: false });
 			return;
 		}
-
-		this.searchDebounceTimer = setTimeout(() => {
-			this.performSearch(searchText);
-		}, 150);
-	};
-
-	performSearch = (searchText: string) => {
-		const { layerCache, connectionStatus } = this.state;
-
-		if (connectionStatus !== 'ready' || !searchText.trim()) {
-			this.setState({ searchResults: [], showResults: false });
-			return;
-		}
-
-		const query = searchText.toLowerCase().trim();
-		const results: SearchResult[] = [];
-
-		layerCache.forEach((layer) => {
-			const layerScore = this.calculateMatchScore(query, layer.title.toLowerCase(), layer.titleTokens);
-			
-			if (layerScore > 0) {
-				results.push({
-					type: 'layer',
-					label: layer.title,
-					sublabel: 'Layer',
-					score: layerScore,
-					layer,
-					matchedText: layer.title,
-				});
-			}
-
-			layer.fields.forEach((field) => {
-				const fieldNameScore = this.calculateMatchScore(query, field.name.toLowerCase(), field.nameTokens);
-				const fieldAliasScore = this.calculateMatchScore(query, field.alias.toLowerCase(), []);
-				const fieldScore = Math.max(fieldNameScore, fieldAliasScore);
-
-				if (fieldScore > 0) {
-					const fieldTypeLabel = this.getFieldTypeLabel(field.type);
-					results.push({
-						type: 'field',
-						label: field.alias || field.name,
-						sublabel: `${fieldTypeLabel} in ${layer.path.join(' › ')}`,
-						score: fieldScore,
-						layer,
-						field,
-						matchedText: field.name,
-					});
-				}
-			});
-		});
-
-		results.sort((a, b) => b.score - a.score);
-		const topResults = results.slice(0, 10);
-
-		this.setState({ 
-			searchResults: topResults, 
-			showResults: topResults.length > 0 
-		});
-	};
-
-	calculateMatchScore = (query: string, target: string, tokens: string[]): number => {
-		let score = 0;
-
-		if (target === query) return 100;
-		if (target.startsWith(query)) score += 80;
-		if (target.includes(query)) score += 60;
-
-		const queryTokens = query.split(/[\s_-]+/);
-		queryTokens.forEach((queryToken) => {
-			if (tokens.some((token) => token === queryToken)) {
-				score += 40;
-			} else if (tokens.some((token) => token.startsWith(queryToken))) {
-				score += 30;
-			} else if (tokens.some((token) => token.includes(queryToken))) {
-				score += 20;
-			}
-		});
-
-		const fuzzyScore = this.fuzzyMatch(query, target);
-		score += fuzzyScore * 10;
-
-		return score;
-	};
-
-	fuzzyMatch = (query: string, target: string): number => {
-		let queryIndex = 0;
-		let targetIndex = 0;
-		let matches = 0;
-
-		while (queryIndex < query.length && targetIndex < target.length) {
-			if (query[queryIndex] === target[targetIndex]) {
-				matches++;
-				queryIndex++;
-			}
-			targetIndex++;
-		}
-
-		return matches / query.length;
-	};
-
-	getFieldTypeLabel = (fieldType: string): string => {
-		if (isNumericFieldType(fieldType)) return 'Number';
-		if (isDateFieldType(fieldType)) return 'Date';
-		if (isStringFieldType(fieldType)) return 'Text';
-		return 'Field';
-	};
-
-	handleResultClick = (result: SearchResult) => {
-		const { layer } = result;
-		this.activateLayer(layer);
-		this.setState({ 
-			searchText: '', 
-			searchResults: [], 
-			showResults: false 
-		});
-	};
-
-	activateLayer = (layer: LayerMetadata) => {
-		const { activeLayers } = this.state;
-
-		const existingLayer = activeLayers.find((l) => l.layerId === layer.id);
-		if (existingLayer) return;
-
-		layer.setVisible?.(true);
-		layer.applyDefinitionExpression?.('1=1');
-
-		const newActiveLayer: ActiveLayer = {
-			id: `layer-${layer.id}-${Date.now()}`,
-			layerId: layer.id,
-			layer,
-			expanded: false,
-			fieldFilters: {},
-		};
 
 		this.setState({
-			activeLayers: [...activeLayers, newActiveLayer],
-		});
-	};
-
-	toggleLayerExpanded = (activeLayerId: string) => {
-		this.setState((prevState) => ({
-			activeLayers: prevState.activeLayers.map((layer) =>
-				layer.id === activeLayerId ? { ...layer, expanded: !layer.expanded } : layer
-			),
-		}));
-	};
-
-	handleFieldFilterChange = (activeLayerId: string, fieldName: string, value: string) => {
-		this.setState((prevState) => ({
-			activeLayers: prevState.activeLayers.map((layer) =>
-				layer.id === activeLayerId
-					? { ...layer, fieldFilters: { ...layer.fieldFilters, [fieldName]: value } }
-					: layer
-			),
-		}), () => {
-			this.applyLayerFilters(activeLayerId);
-		});
-	};
-
-	applyLayerFilters = (activeLayerId: string) => {
-		const activeLayer = this.state.activeLayers.find((l) => l.id === activeLayerId);
-		if (!activeLayer) return;
-
-		const conditions: string[] = [];
-
-		Object.entries(activeLayer.fieldFilters).forEach(([fieldName, filterValue]) => {
-			if (!filterValue.trim()) return;
-
-			const field = activeLayer.layer.fields.find((f) => f.name === fieldName);
-			if (!field) return;
-
-			const fieldType = normalizeFieldType(field.type);
-
-			if (isNumericFieldType(fieldType)) {
-				const num = parseFloat(filterValue);
-				if (!isNaN(num)) {
-					conditions.push(`${fieldName} = ${num}`);
-				}
-			} else if (isStringFieldType(fieldType)) {
-				const sanitized = filterValue.replace(/'/g, "''");
-				conditions.push(`UPPER(${fieldName}) LIKE UPPER('%${sanitized}%')`);
-			} else if (isDateFieldType(fieldType)) {
-				const sanitized = filterValue.replace(/'/g, "''");
-				conditions.push(`${fieldName} >= TIMESTAMP '${sanitized}'`);
-			}
+			loading: false,
+			connectionStatus: 'ready',
+			statusMessage: `Ready. ${layerCache.length} layer(s) indexed.`,
 		});
 
-		const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
-		
-		// Update the active layer with current where clause
-		this.setState((prevState) => ({
-			activeLayers: prevState.activeLayers.map((layer) =>
-				layer.id === activeLayerId ? { ...layer, currentWhereClause: whereClause } : layer
-			),
-		}), () => {
-			// Apply the filter multiple times immediately to prevent glitches
-			const layer = activeLayer.layer.queryLayer;
-			const applyFilter = () => {
-				if ('definitionExpression' in layer) {
-					(layer as any).definitionExpression = whereClause;
-				}
-				activeLayer.layer.applyDefinitionExpression?.(whereClause);
-			};
-			
-			// Apply immediately and several more times in quick succession
-			applyFilter();
-			setTimeout(applyFilter, 10);
-			setTimeout(applyFilter, 50);
-			setTimeout(applyFilter, 100);
-			
-			// Start watching this layer to ensure filter persists
-			this.startFilterWatcher(activeLayerId);
+		// Set up click interception to prevent filter clearing
+		this.setupMapClickInterception(jimuMapView);
+	} catch (error) {
+		const messageText = error instanceof Error ? error.message : 'Unknown error';
+		this.setState({
+			loading: false,
+			connectionStatus: 'error',
+			statusMessage: `Failed to load layer metadata: ${messageText}`,
 		});
-	};
+	}
+};
 
-	startFilterWatcher = (activeLayerId: string) => {
-		// Clear existing watcher if any
-		const existingWatcher = this.filterWatchers.get(activeLayerId);
-		if (existingWatcher) {
-			clearInterval(existingWatcher);
-		}
+setupMapClickInterception = (jimuMapView: JimuMapView) => {
+	const view = jimuMapView?.view;
+	if (!view) return;
 
-		// Create a new interval to continuously enforce the filter - check more frequently
-		const watcher = setInterval(() => {
-			const activeLayer = this.state.activeLayers.find((l) => l.id === activeLayerId);
-			if (!activeLayer || !activeLayer.currentWhereClause) {
-				// Layer removed or no filter, stop watching
-				const w = this.filterWatchers.get(activeLayerId);
-				if (w) clearInterval(w);
-				this.filterWatchers.delete(activeLayerId);
-				return;
-			}
-
-			const layer = activeLayer.layer.queryLayer;
-			
-			// If the layer's definition expression doesn't match, re-apply it immediately
-			if (layer.definitionExpression !== activeLayer.currentWhereClause) {
-				console.log('Filter was cleared by map interaction, re-applying:', activeLayer.currentWhereClause);
-				activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
-				
-				// Also force it on the raw layer object to be extra sure
+	// Intercept click events before they trigger popups
+	view.on('click', (event: any) => {
+		// Immediately re-enforce all active filters
+		this.state.activeLayers.forEach((activeLayer) => {
+			if (activeLayer.currentWhereClause) {
+				const layer = activeLayer.layer.queryLayer;
 				if ('definitionExpression' in layer) {
 					(layer as any).definitionExpression = activeLayer.currentWhereClause;
 				}
 			}
-		}, 50); // Check every 50ms for faster response
-
-		this.filterWatchers.set(activeLayerId, watcher);
-	};
-
-	stopFilterWatcher = (activeLayerId: string) => {
-		const watcher = this.filterWatchers.get(activeLayerId);
-		if (watcher) {
-			clearInterval(watcher);
-			this.filterWatchers.delete(activeLayerId);
-		}
-	};
-
-	removeLayer = (activeLayerId: string) => {
-		const { activeLayers } = this.state;
-		const activeLayer = activeLayers.find((l) => l.id === activeLayerId);
-
-		if (activeLayer) {
-			// Stop watching this layer
-			this.stopFilterWatcher(activeLayerId);
-			
-			// Reset the filter
-			activeLayer.layer.applyDefinitionExpression?.('1=1');
-		}
-
-		this.setState({
-			activeLayers: activeLayers.filter((l) => l.id !== activeLayerId),
 		});
-	};
+	});
 
-	clearAllLayers = () => {
-		const { activeLayers } = this.state;
-
-		// Stop all watchers
-		activeLayers.forEach((activeLayer) => {
-			this.stopFilterWatcher(activeLayer.id);
-			activeLayer.layer.applyDefinitionExpression?.('1=1');
-		});
-
-		this.setState({ activeLayers: [] });
-	};
-
-	handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-		const { searchResults, selectedResultIndex, showResults } = this.state;
-
-		if (!showResults || searchResults.length === 0) return;
-
-		if (event.key === 'ArrowDown') {
-			event.preventDefault();
-			const newIndex = selectedResultIndex < searchResults.length - 1 
-				? selectedResultIndex + 1 
-				: 0;
-			this.setState({ selectedResultIndex: newIndex });
-		} else if (event.key === 'ArrowUp') {
-			event.preventDefault();
-			const newIndex = selectedResultIndex > 0 
-				? selectedResultIndex - 1 
-				: searchResults.length - 1;
-			this.setState({ selectedResultIndex: newIndex });
-		} else if (event.key === 'Enter') {
-			event.preventDefault();
-			if (selectedResultIndex >= 0 && selectedResultIndex < searchResults.length) {
-				this.handleResultClick(searchResults[selectedResultIndex]);
+	// Also watch for popup open events
+	if (view.popup) {
+		view.popup.watch('visible', (isVisible: boolean) => {
+			if (isVisible) {
+				// Popup is opening - enforce filters immediately
+				this.enforceAllFiltersImmediately();
+				
+				// And keep enforcing while popup is open
+				const popupWatcher = setInterval(() => {
+					if (!view.popup.visible) {
+						clearInterval(popupWatcher);
+						return;
+					}
+					this.enforceAllFiltersImmediately();
+				}, 5); // Every 5ms while popup is open
+				
+				// Store the watcher so we can clean it up
+				this.popupWatcher = popupWatcher;
 			}
-		} else if (event.key === 'Escape') {
-			this.setState({ showResults: false, searchResults: [] });
+		});
+	}
+};
+
+enforceAllFiltersImmediately = () => {
+	this.state.activeLayers.forEach((activeLayer) => {
+		if (activeLayer.currentWhereClause) {
+			const layer = activeLayer.layer.queryLayer;
+			if ('definitionExpression' in layer) {
+				(layer as any).definitionExpression = activeLayer.currentWhereClause;
+			}
+			activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
+		}
+	});
+};
+
+discoverLayers = async (jimuMapView: JimuMapView): Promise<LayerMetadata[]> => {
+	const view = jimuMapView?.view;
+
+	if (!view?.map) {
+		this.setState({ layerCache: [] });
+		return [];
+	}
+
+	const layerCache: LayerMetadata[] = [];
+
+	const toArray = (collection: any): any[] => {
+		if (!collection) return [];
+		if (typeof collection.toArray === 'function') return collection.toArray();
+		return Array.isArray(collection) ? collection : [];
+	};
+
+	const tokenizeTitlePath = (path: string[]): string[] =>
+		path.flatMap((segment) =>
+			String(segment).toLowerCase().split(/[\s_>›/-]+/).filter((token) => token.length > 0)
+		);
+
+	const collectFeatureLayer = async (
+		featureLayer: FeatureLayer,
+		titlePath: string[],
+		options: { 
+			sourceId?: string; 
+			applyDefinitionExpression?: (whereClause: string | null) => void;
+			setVisible?: (visible: boolean) => void;
+			parentLayers?: any[];
+		} = {},
+	) => {
+		try {
+			if (typeof (featureLayer as any).load === 'function') {
+				await (featureLayer as any).load();
+			} else if (typeof (featureLayer as any).when === 'function') {
+				await (featureLayer as any).when();
+			}
+		} catch (error) {
+			console.warn('Failed to load layer metadata.', featureLayer?.title ?? options.sourceId ?? 'feature-layer', error);
+		}
+
+		const fieldsSource = Array.isArray(featureLayer.fields) ? featureLayer.fields : [];
+		const fields: FieldMetadata[] = fieldsSource
+			.filter((field: any) => field && field.name)
+			.map((field: any) => {
+				const name = String(field.name);
+				const alias = field.alias ? String(field.alias) : name;
+				const type = normalizeFieldType(field.type);
+				return {
+					name,
+					alias,
+					type,
+					nameTokens: name.toLowerCase().split(/[_\s]+/),
+				};
+			});
+
+		if (fields.length === 0) return;
+
+		const titlePathClean = titlePath.filter((segment) => segment && segment.trim().length > 0);
+		const title = titlePathClean.length > 0 ? titlePathClean.join(' › ') : featureLayer.title ?? options.sourceId ?? 'Layer';
+		const idCandidateOrder = [options.sourceId, featureLayer.id, featureLayer.url, title];
+		let id = idCandidateOrder.find((value) => typeof value === 'string' && value.trim().length > 0) ?? `layer-${layerCache.length}-${Date.now()}`;
+		if (layerCache.some((cachedLayer) => cachedLayer.id === id)) {
+			id = `${id}-${layerCache.length}`;
+		}
+
+		const applyDefinitionExpression = options.applyDefinitionExpression
+			? options.applyDefinitionExpression
+			: (whereClause: string | null) => {
+				featureLayer.definitionExpression = whereClause ?? '1=1';
+			};
+
+		const setVisible = options.setVisible
+			? options.setVisible
+			: (visible: boolean) => {
+				if ('visible' in featureLayer) {
+					(featureLayer as any).visible = visible;
+				}
+			};
+
+		layerCache.push({
+			id,
+			title,
+			url: featureLayer.url,
+			queryLayer: featureLayer,
+			fields,
+			titleTokens: tokenizeTitlePath(titlePathClean),
+			path: titlePathClean,
+			applyDefinitionExpression,
+			setVisible,
+			parentLayers: options.parentLayers || [],
+		});
+	};
+
+	const traverseSublayer = async (sublayer: any, parentTitles: string[], parentLayer: any, parentChain: any[] = []) => {
+		const sublayerTitle = String(
+			sublayer?.title && sublayer.title.trim().length > 0
+				? sublayer.title
+				: sublayer?.name ?? sublayer?.id ?? 'Sublayer',
+		);
+		const titlePath = [...parentTitles, sublayerTitle];
+		let featureLayer: FeatureLayer | null = null;
+
+		if (typeof sublayer.createFeatureLayer === 'function') {
+			try {
+				const result = sublayer.createFeatureLayer();
+				featureLayer = typeof (result as any)?.then === 'function' ? await result : result;
+			} catch (error) {
+				console.warn('Unable to create feature layer from sublayer.', titlePath.join(' › '), error);
+			}
+		} else if (sublayer?.layer?.type === 'feature') {
+			featureLayer = sublayer.layer as FeatureLayer;
+		}
+
+		if (featureLayer) {
+			await collectFeatureLayer(featureLayer, titlePath, {
+				sourceId: `${parentLayer?.id ?? parentLayer?.uid ?? 'layer'}-${sublayer.id ?? sublayer.uid ?? sublayerTitle}`,
+				applyDefinitionExpression: (whereClause: string | null) => {
+					if ('definitionExpression' in sublayer) {
+						sublayer.definitionExpression = whereClause ?? '1=1';
+					}
+				},
+				setVisible: (visible: boolean) => {
+					if ('visible' in sublayer) {
+						sublayer.visible = visible;
+					}
+					if ('visible' in parentLayer) {
+						parentLayer.visible = visible;
+					}
+				},
+				parentLayers: [...parentChain, parentLayer],
+			});
+		}
+
+		const childSublayers = toArray(sublayer?.sublayers ?? sublayer?.subLayers);
+		for (const childSublayer of childSublayers) {
+			await traverseSublayer(childSublayer, titlePath, parentLayer, [...parentChain, parentLayer]);
 		}
 	};
 
-	render() {
-		const {
-			searchText,
-			searchResults,
-			showResults,
-			connectionStatus,
-			statusMessage,
-			activeLayers,
-			selectedResultIndex,
-		} = this.state;
+	const traverseLayer = async (layer: any, parentTitles: string[] = [], parentChain: any[] = []) => {
+		const layerTitle = String(layer?.title ?? layer?.name ?? layer?.id ?? 'Layer');
+		const titlePath = [...parentTitles, layerTitle];
 
-		return (
-			<div className="smart-search-widget jimu-widget" style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-				<JimuMapViewComponent
-					useMapWidgetId={this.props.useMapWidgetIds?.[0]}
-					onActiveViewChange={this.onActiveViewChange}
-				/>
+		if (layer?.type === 'feature') {
+			await collectFeatureLayer(layer as FeatureLayer, titlePath, {
+				sourceId: layer.id ?? layer.uid ?? layerTitle,
+				applyDefinitionExpression: (whereClause: string | null) => {
+					(layer as FeatureLayer).definitionExpression = whereClause ?? '1=1';
+				},
+				setVisible: (visible: boolean) => {
+					if ('visible' in layer) {
+						layer.visible = visible;
+					}
+				},
+				parentLayers: parentChain,
+			});
+		}
 
-				{/* Search Box */}
-				<div style={{ padding: '12px', backgroundColor: '#fff', borderBottom: '1px solid #e0e0e0', position: 'relative' }}>
-					<div style={{ position: 'relative' }}>
-						<TextInput
-							ref={this.searchInputRef}
-							placeholder="Search layers or fields..."
-							value={searchText}
-							onChange={this.handleSearchChange}
-							onKeyDown={this.handleKeyDown}
-							disabled={connectionStatus !== 'ready'}
-							style={{ 
-								width: '100%',
-								paddingRight: '35px',
-								fontSize: '14px',
-								height: '38px'
-							}}
-						/>
-						{searchText && (
-							<button
-								onClick={() => this.setState({ searchText: '', searchResults: [], showResults: false })}
-								style={{
-									position: 'absolute',
-									right: '8px',
-									top: '50%',
-									transform: 'translateY(-50%)',
-									background: 'none',
-									border: 'none',
-									cursor: 'pointer',
-									padding: '4px',
-									color: '#666',
-									fontSize: '18px',
-								}}
-							>
-								×
-							</button>
-						)}
-					</div>
+		const sublayers = toArray(layer?.sublayers ?? layer?.subLayers);
+		for (const sublayer of sublayers) {
+			await traverseSublayer(sublayer, titlePath, layer, [...parentChain, layer]);
+		}
 
-					{/* Search Results Dropdown */}
-					{showResults && searchResults.length > 0 && (
-						<div style={{
-							position: 'absolute',
-							top: '100%',
-							left: '12px',
-							right: '12px',
-							backgroundColor: '#fff',
-							border: '1px solid #ddd',
-							borderRadius: '4px',
-							boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-							maxHeight: '300px',
-							overflowY: 'auto',
-							zIndex: 1000,
-							marginTop: '4px',
-						}}>
-							{searchResults.map((result, index) => (
-								<div
-									key={index}
-									onClick={() => this.handleResultClick(result)}
-									onMouseEnter={() => this.setState({ selectedResultIndex: index })}
-									style={{
-										padding: '10px 12px',
-										cursor: 'pointer',
-										borderBottom: index < searchResults.length - 1 ? '1px solid #f0f0f0' : 'none',
-										backgroundColor: selectedResultIndex === index ? '#f5f5f5' : '#fff',
-									}}
-								>
-									<div style={{ fontWeight: 500, fontSize: '13px', color: '#333' }}>
-										{result.label}
-									</div>
-									{result.sublabel && (
-										<div style={{ fontSize: '11px', color: '#666', marginTop: '2px' }}>
-											{result.sublabel}
-										</div>
-									)}
-								</div>
-							))}
-						</div>
-					)}
-				</div>
+		const childLayers = toArray(layer?.layers);
+		for (const childLayer of childLayers) {
+			await traverseLayer(childLayer, titlePath, [...parentChain, layer]);
+		}
+	};
 
-				{/* Active Layers */}
-				<div style={{ flex: 1, overflowY: 'auto', backgroundColor: '#f9f9f9' }}>
-					{connectionStatus !== 'ready' ? (
-						<div style={{ padding: '20px', textAlign: 'center', color: '#666' }}>
-							<div style={{ fontSize: '14px' }}>{statusMessage}</div>
-						</div>
-					) : activeLayers.length === 0 ? (
-						<div style={{ padding: '40px 20px', textAlign: 'center', color: '#999' }}>
-							<div style={{ fontSize: '40px', marginBottom: '10px' }}>🔍</div>
-							<div style={{ fontSize: '14px' }}>Search and select a layer to get started</div>
-						</div>
-					) : (
-						<div>
-							<div style={{ 
-								padding: '10px 12px', 
-								backgroundColor: '#fff', 
-								borderBottom: '1px solid #e0e0e0',
-								display: 'flex',
-								justifyContent: 'space-between',
-								alignItems: 'center'
-							}}>
-								<Label style={{ margin: 0, fontSize: '13px', fontWeight: 600 }}>
-									Active Layers ({activeLayers.length})
-								</Label>
-								<Button
-									size="sm"
-									type="tertiary"
-									onClick={this.clearAllLayers}
-									style={{ fontSize: '12px', padding: '4px 8px' }}
-								>
-									Clear All
-								</Button>
-							</div>
-
-							{activeLayers.map((activeLayer) => (
-								<div key={activeLayer.id} style={{ 
-									backgroundColor: '#fff', 
-									marginBottom: '8px',
-									border: '1px solid #e0e0e0',
-									borderRadius: '4px',
-									margin: '8px',
-								}}>
-									{/* Layer Header */}
-									<div 
-										style={{
-											padding: '10px 12px',
-											display: 'flex',
-											justifyContent: 'space-between',
-											alignItems: 'center',
-											cursor: 'pointer',
-											borderBottom: activeLayer.expanded ? '1px solid #f0f0f0' : 'none',
-										}}
-										onClick={() => this.toggleLayerExpanded(activeLayer.id)}
-									>
-										<div style={{ display: 'flex', alignItems: 'center', gap: '8px', flex: 1 }}>
-											<span style={{ fontSize: '12px' }}>
-												{activeLayer.expanded ? '▼' : '▶'}
-											</span>
-											<span style={{ fontSize: '13px', fontWeight: 500, color: '#333' }}>
-												{activeLayer.layer.title}
-											</span>
-										</div>
-										<button
-											onClick={(e) => {
-												e.stopPropagation();
-												this.removeLayer(activeLayer.id);
-											}}
-											style={{
-												background: 'none',
-												border: 'none',
-												cursor: 'pointer',
-												padding: '2px 6px',
-												color: '#666',
-												fontSize: '18px',
-											}}
-										>
-											×
-										</button>
-									</div>
-
-									{/* Field Filters */}
-									{activeLayer.expanded && (
-										<div style={{ padding: '8px 12px' }}>
-											{activeLayer.layer.fields.map((field) => (
-												<div key={field.name} style={{ marginBottom: '8px' }}>
-													<Label style={{ 
-														fontSize: '11px', 
-														marginBottom: '4px',
-														color: '#666',
-														display: 'block'
-													}}>
-														{field.alias || field.name} ({this.getFieldTypeLabel(field.type)})
-													</Label>
-													<TextInput
-														placeholder={`Filter ${field.alias || field.name}...`}
-														value={activeLayer.fieldFilters[field.name] || ''}
-														onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-															this.handleFieldFilterChange(activeLayer.id, field.name, e.target.value)
-														}
-														style={{ width: '100%', fontSize: '12px', height: '32px' }}
-													/>
-												</div>
-											))}
-										</div>
-									)}
-								</div>
-							))}
-						</div>
-					)}
-				</div>
-			</div>
-		);
+	const allLayers = toArray(view.map.allLayers);
+	for (const layer of allLayers) {
+		await traverseLayer(layer);
 	}
-}
+
+	this.setState({ layerCache });
+	return layerCache;
+};
+
+handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+	const searchText = event.target.value;
+	this.setState({ searchText, selectedResultIndex: -1 });
+
+	if (this.searchDebounceTimer) {
+		clearTimeout(this.searchDebounceTimer);
+	}
+
+	if (!searchText.trim()) {
+		this.setState({ valueResults: [], structureResults: [], showResults: false });
+		return;
+	}
+
+	this.searchDebounceTimer = setTimeout(() => {
+		this.performSearch(searchText);
+	}, 150);
+};
+
+performSearch = async (searchText: string) => {
+	const { layerCache, connectionStatus } = this.state;
+
+	if (connectionStatus !== 'ready' || !searchText.trim()) {
+		this.setState({ valueResults: [], structureResults: [], showResults: false });
+		return;
+	}
+
+	const query = searchText.toLowerCase().trim();
+	const structureResults: SearchResult[] = [];
+	const valueResults: SearchResult[] = [];
+
+	// Search structure (layers and fields)
+	layerCache.forEach((layer) => {
+		const layerScore = this.calculateMatchScore(query, layer.title.toLowerCase(), layer.titleTokens);
+		
+		if (layerScore > 0) {
+			structureResults.push({
+				type: 'layer',
+				label: layer.title,
+				sublabel: 'Layer',
+				score: layerScore,
+				layer,
+				matchedText: layer.title,
+			});
+		}
+
+		layer.fields.forEach((field) => {
+			const fieldNameScore = this.calculateMatchScore(query, field.name.toLowerCase(), field.nameTokens);
+			const fieldAliasScore = this.calculateMatchScore(query, field.alias.toLowerCase(), []);
+			const fieldScore = Math.max(fieldNameScore, fieldAliasScore);
+
+			if (fieldScore > 0) {
+				const fieldTypeLabel = this.getFieldTypeLabel(field.type);
+				structureResults.push({
+					type: 'field',
+					label: field.alias || field.name,
+					sublabel: `${fieldTypeLabel} in ${layer.path.join(' › ')}`,
+					score: fieldScore,
+					layer,
+					field,
+					matchedText: field.name,
+				});
+			}
+		});
+	});
+
+	// Search for exact value matches
+	await this.searchForValues(query, layerCache, valueResults);
+
+	structureResults.sort((a, b) => b.score - a.score);
+	valueResults.sort((a, b) => b.score - a.score);
+
+	this.setState({ 
+		structureResults: structureResults.slice(0, 10),
+		valueResults: valueResults.slice(0, 10),
+		showResults: structureResults.length > 0 || valueResults.length > 0,
+		activeTab: valueResults.length > 0 ? 'values' : 'structure',
+	});
+};
+
+searchForValues = async (query: string, layerCache: LayerMetadata[], valueResults: SearchResult[]) => {
+	// Search through all string fields in all layers
+	for (const layer of layerCache) {
+		const stringFields = layer.fields.filter((field) => isStringFieldType(field.type));
+		
+		if (stringFields.length === 0) continue;
+
+		try {
+			const queryLayer = layer.queryLayer;
+			if (typeof queryLayer.queryFeatures !== 'function') continue;
+
+			const queryFeatures = queryLayer.queryFeatures.bind(queryLayer);
+			const queryObj = typeof queryLayer.createQuery === 'function' ? queryLayer.createQuery() : ({} as any);
+			
+			// Build OR condition for all string fields
+			const conditions = stringFields.map((field) => {
+				const sanitized = query.replace(/'/g, "''");
+				return `UPPER(${field.name}) = UPPER('${sanitized}')`;
+			});
+
+			queryObj.where = conditions.join(' OR ');
+			queryObj.returnGeometry = true;
+			queryObj.outFields = ['*'];
+			queryObj.num = 10;
+
+			const results = await queryFeatures(queryObj);
+			
+			if (results?.features && results.features.length > 0) {
+				results.features.forEach((feature: any) => {
+					// Find which field matched
+					const matchedField = stringFields.find((field) => {
+						const value = feature.attributes[field.name];
+						return value && String(value).toLowerCase() === query;
+					});
+
+					if (matchedField) {
+						const value = feature.attributes[matchedField.name];
+						valueResults.push({
+							type: 'value',
+							label: String(value),
+							sublabel: `${matchedField.alias || matchedField.name} in ${layer.path.join(' › ')}`,
+							score: 100, // Exact match gets highest score
+							layer,
+							field: matchedField,
+							matchedText: String(value),
+							value,
+							featureData: feature,
+						});
+					}
+				});
+			}
+		} catch (error) {
+			console.warn('Error searching values in layer:', layer.title, error);
+		}
+	}
+};
+
+calculateMatchScore = (query: string, target: string, tokens: string[]): number => {
+	let score = 0;
+
+	if (target === query) return 100;
+	if (target.startsWith(query)) score += 80;
+	if (target.includes(query)) score += 60;
+
+	const queryTokens = query.split(/[\s_-]+/);
+	queryTokens.forEach((queryToken) => {
+		if (tokens.some((token) => token === queryToken)) {
+			score += 40;
+		} else if (tokens.some((token) => token.startsWith(queryToken))) {
+			score += 30;
+		} else if (tokens.some((token) => token.includes(queryToken))) {
+			score += 20;
+		}
+	});
+
+	const fuzzyScore = this.fuzzyMatch(query, target);
+	score += fuzzyScore * 10;
+
+	return score;
+};
+
+fuzzyMatch = (query: string, target: string): number => {
+	let queryIndex = 0;
+	let targetIndex = 0;
+	let matches = 0;
+
+	while (queryIndex < query.length && targetIndex < target.length) {
+		if (query[queryIndex] === target[targetIndex]) {
+			matches++;
+			queryIndex++;
+		}
+		targetIndex++;
+	}
+
+	return matches / query.length;
+};
+
+getFieldTypeLabel = (fieldType: string): string => {
+	if (isNumericFieldType(fieldType)) return 'Number';
+	if (isDateFieldType(fieldType)) return 'Date';
+	if (isStringFieldType(fieldType)) return 'Text';
+	return 'Field';
+};
+
+handleResultClick = (result: SearchResult) => {
+	if (result.type === 'value') {
+		this.handleValueResultClick(result);
+	} else if (result.type === 'layer') {
+		this.activateLayer(result.layer);
+	} else if (result.type === 'field') {
+		this.activateLayer(result.layer);
+	}
+	
+	this.setState({ 
+		searchText: '', 
+		valueResults: [],
+		structureResults: [],
+		showResults: false 
+	});
+};
+
+handleValueResultClick = async (result: SearchResult) => {
+	const { jimuMapView } = this.state;
+	const { layer, featureData } = result;
+
+	// Activate layer and all parent layers
+	this.activateLayerWithParents(layer);
+
+	// Zoom to the specific feature
+	if (jimuMapView?.view && featureData) {
+		try {
+			await jimuMapView.view.goTo(featureData, {
+				duration: 1000,
+				easing: 'ease-in-out'
+			});
+		} catch (error) {
+			console.warn('Failed to zoom to feature:', error);
+		}
+	}
+};
+
+activateLayerWithParents = (layer: LayerMetadata) => {
+	// First, activate all parent layers
+	if (layer.parentLayers && layer.parentLayers.length > 0) {
+		layer.parentLayers.forEach((parentLayer: any) => {
+			if ('visible' in parentLayer) {
+				parentLayer.visible = true;
+			}
+		});
+	}
+
+	// Then activate the layer itself
+	this.activateLayer(layer);
+};
+
+activateLayer = (layer: LayerMetadata) => {
+	const { activeLayers } = this.state;
+
+	const existingLayer = activeLayers.find((l) => l.layerId === layer.id);
+	if (existingLayer) return;
+
+	// Activate parent layers first
+	if (layer.parentLayers && layer.parentLayers.length > 0) {
+		layer.parentLayers.forEach((parentLayer: any) => {
+			if ('visible' in parentLayer) {
+				parentLayer.visible = true;
+			}
+		});
+	}
+
+	layer.setVisible?.(true);
+	layer.applyDefinitionExpression?.('1=1');
+
+	const newActiveLayer: ActiveLayer = {
+		id: `layer-${layer.id}-${Date.now()}`,
+		layerId: layer.id,
+		layer,
+		expanded: false,
+		fieldFilters: {},
+	};
+
+	this.setState({
+		activeLayers: [...activeLayers, newActiveLayer],
+	});
+};
+
+toggleLayerExpanded = (activeLayerId: string) => {
+	this.setState((prevState) => ({
+		activeLayers: prevState.activeLayers.map((layer) =>
+			layer.id === activeLayerId ? { ...layer, expanded: !layer.expanded } : layer
+		),
+	}));
+};
+
+handleFieldFilterChange = (activeLayerId: string, fieldName: string, value: string) => {
+	this.setState((prevState) => ({
+		activeLayers: prevState.activeLayers.map((layer) =>
+			layer.id === activeLayerId
+				? { ...layer, fieldFilters: { ...layer.fieldFilters, [fieldName]: value } }
+				: layer
+		),
+	}), () => {
+		this.applyLayerFilters(activeLayerId);
+	});
+};
+
+applyLayerFilters = (activeLayerId: string) => {
+	const activeLayer = this.state.activeLayers.find((l) => l.id === activeLayerId);
+	if (!activeLayer) return;
+
+	const conditions: string[] = [];
+
+	Object.entries(activeLayer.fieldFilters).forEach(([fieldName, filterValue]) => {
+		if (!filterValue.trim()) return;
+
+		const field = activeLayer.layer.fields.find((f) => f.name === fieldName);
+		if (!field) return;
+
+		const fieldType = normalizeFieldType(field.type);
+
+		if (isNumericFieldType(fieldType)) {
+			const num = parseFloat(filterValue);
+			if (!isNaN(num)) {
+				conditions.push(`${fieldName} = ${num}`);
+			}
+		} else if (isStringFieldType(fieldType)) {
+			const sanitized = filterValue.replace(/'/g, "''");
+			conditions.push(`UPPER(${fieldName}) LIKE UPPER('%${sanitized}%')`);
+		} else if (isDateFieldType(fieldType)) {
+			const sanitized = filterValue.replace(/'/g, "''");
+			conditions.push(`${fieldName} >= TIMESTAMP '${sanitized}'`);
+		}
+	});
+
+	const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
+	
+	this.setState((prevState) => ({
+		activeLayers: prevState.activeLayers.map((layer) =>
+			layer.id === activeLayerId ? { ...layer, currentWhereClause: whereClause } : layer
+		),
+	}), () => {
+		const layer = activeLayer.layer.queryLayer;
+		const applyFilter = () => {
+			if ('definitionExpression' in layer) {
+				(layer as any).definitionExpression = whereClause;
+			}
+			activeLayer.layer.applyDefinitionExpression?.(whereClause);
+		};
+		
+		applyFilter();
+		setTimeout(applyFilter, 10);
+		setTimeout(applyFilter, 50);
+		setTimeout(applyFilter, 100);
+		
+		this.startFilterWatcher(activeLayerId);
+	});
+};
+
+startFilterWatcher = (activeLayerId: string) => {
+	const existingWatcher = this.filterWatchers.get(activeLayerId);
+	if (existingWatcher) {
+		clearInterval(existingWatcher);
+	}
+
+	const watcher = setInterval(() => {
+		const activeLayer = this.state.activeLayers.find((l) => l.id === activeLayerId);
+		if (!activeLayer || !activeLayer.currentWhereClause) {
+			const w = this.filterWatchers.get(activeLayerId);
+			if (w) clearInterval(w);
+			this.filterWatchers.delete(activeLayerId);
+			return;
+		}
+
+		const layer = activeLayer.layer.queryLayer;
+		
+		if (layer.definitionExpression !== activeLayer.currentWhereClause) {
+			console.log('Filter was cleared by map interaction, re-applying:', activeLayer.currentWhereClause);
+			activeLayer.layer.applyDefinitionExpression?.(activeLayer.currentWhereClause);
+			
+			if ('definitionExpression' in layer) {
+				(layer as any).definitionExpression = activeLayer.currentWhereClause;
+			}
+		}
+	}, 50);
+
+	this.filterWatchers.set(activeLayerId, watcher);
+};
+
+stopFilterWatcher = (activeLayerId: string) => {
+	const watcher = this.filterWatchers.get(activeLayerId);
+	if (watcher) {
+		clearInterval(watcher);
+		this.filterWatchers.delete(activeLayerId);
+	}
+};
+
+removeLayer = (activeLayerId: string) => {
+	const { activeLayers } = this.state;
+	const activeLayer = activeLayers.find((l) => l.id === activeLayerId);
+
+	if (activeLayer) {
+		this.stopFilterWatcher(activeLayerId);
+		activeLayer.layer.applyDefinitionExpression?.('1=1');
+	}
+
+	this.setState({
+		activeLayers: activeLayers.filter((l) => l.id !== activeLayerId),
+	});
+};
+
+clearAllLayers = () => {
+	const { activeLayers } = this.state;
+
+	activeLayers.forEach((activeLayer) => {
+		this.stopFilterWatcher(activeLayer.id);
+		activeLayer.layer.applyDefinitionExpression?.('1=1');
+	});
+
+	this.setState({ activeLayers: [] });
+};
+
+handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+	const { structureResults, valueResults, selectedResultIndex, showResults, activeTab } = this.state;
+	const currentResults = activeTab === 'values' ? valueResults : structureResults;
+
+	if (!showResults || currentResults.length === 0) return;
+
+	if (event.key === 'ArrowDown') {
+		event.preventDefault();
+		const newIndex = selectedResultIndex < currentResults.length - 1 
+			? selectedResultIndex + 1 
+			: 0;
+```
