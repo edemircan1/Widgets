@@ -1395,30 +1395,3 @@ export default class SmartSearchWidget extends React.PureComponent<AllWidgetProp
 		);
 	}
 }
-
-
-
-------------------------------------------------------
-
-.smart-filter-widget {
-	background-color: #ffffff;
-	font-family: 'Avenir Next', Arial, sans-serif;
-}
-
-.smart-filter-widget .jimu-widget-component {
-	height: 100%;
-}
-
-/* Chat mesajları scroll */
-.smart-filter-widget::-webkit-scrollbar {
-	width: 6px;
-}
-
-.smart-filter-widget::-webkit-scrollbar-thumb {
-	background-color: rgba(0, 0, 0, 0.2);
-	border-radius: 3px;
-}
-
-.smart-filter-widget::-webkit-scrollbar-track {
-	background-color: rgba(0, 0, 0, 0.05);
-}
