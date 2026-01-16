@@ -1,20 +1,19 @@
 import { React } from "jimu-core";
 import { JimuMapViewComponent, JimuMapView } from "jimu-arcgis";
+import VectorTileLayer from "esri/layers/VectorTileLayer";
 
 const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
 const MANUAL_BEARER = "your_bearer_token_here";
 
 export default class Widget extends React.PureComponent<any, any> {
-  private mvtLayer: any = null;
+  private mvtLayer: VectorTileLayer = null;
   private originalFetch: any = null;
 
   componentDidMount() {
-    // Global fetch'i intercept et - TÜM isteklere Bearer ekle
     this.originalFetch = window.fetch;
     window.fetch = (url, options = {}) => {
-      // API domain'ine giden tüm isteklere Authorization ekle
       const urlString = url.toString();
-      if (urlString.includes('your-api.com')) { // Buraya kendi domain'ini yaz
+      if (urlString.includes('your-api.com')) { // Kendi domain'ini yaz
         const newOptions = {
           ...options,
           headers: {
@@ -30,7 +29,6 @@ export default class Widget extends React.PureComponent<any, any> {
   }
 
   componentWillUnmount() {
-    // Original fetch'i geri yükle
     if (this.originalFetch) {
       window.fetch = this.originalFetch;
     }
@@ -48,11 +46,7 @@ export default class Widget extends React.PureComponent<any, any> {
 
   loadMVTLayer = async (jmv: JimuMapView) => {
     try {
-      console.log("🔄 VectorTileLayer yükleniyor...");
-      
-      const VectorTileLayer = (await import("esri/layers/VectorTileLayer")).default;
-      
-      console.log("✅ Modül yüklendi, style fetch ediliyor...");
+      console.log("🔄 Style fetch ediliyor...");
 
       const response = await fetch(MVT_STYLE_URL);
       
