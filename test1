@@ -3,7 +3,7 @@ import { React, jsx } from "jimu-core";
 
 const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
 const MANUAL_BEARER = "your_bearer_token_here";
-const ARCGIS_API_VERSION = "4.27";
+const ARCGIS_API_VERSION = "4.32";
 
 interface State {
   message: string;
@@ -22,28 +22,10 @@ export default class Widget extends React.PureComponent<any, State> {
   }
 
   componentDidMount() {
-    // Fetch interceptor
-    const self = this;
-    window.fetch = function(url, options = {}) {
-      const urlStr = url.toString();
-      if (urlStr.includes('your-api.com')) {
-        return self.originalFetch(url, {
-          ...options,
-          headers: {
-            ...(options['headers'] || {}),
-            'Authorization': `Bearer ${MANUAL_BEARER}`
-          }
-        });
-      }
-      return self.originalFetch(url, options);
-    };
-
-    // ArcGIS API'yi yükle
     this.loadArcGISAPI();
   }
 
   componentWillUnmount() {
-    window.fetch = this.originalFetch;
     if (this.mapView) {
       this.mapView.destroy();
     }
@@ -52,21 +34,16 @@ export default class Widget extends React.PureComponent<any, State> {
   loadArcGISAPI = () => {
     this.setState({ message: "📦 ArcGIS API yükleniyor..." });
 
-    // CSS yükle
     const cssLink = document.createElement("link");
     cssLink.rel = "stylesheet";
     cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
     document.head.appendChild(cssLink);
 
-    // JS yükle
     const script = document.createElement("script");
     script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
     script.onload = () => {
       this.setState({ message: "✅ ArcGIS API yüklendi" });
       this.createMap();
-    };
-    script.onerror = () => {
-      this.setState({ message: "❌ ArcGIS API yüklenemedi!" });
     };
     document.head.appendChild(script);
   };
@@ -77,8 +54,9 @@ export default class Widget extends React.PureComponent<any, State> {
     (window as any).require([
       'esri/Map',
       'esri/views/MapView',
-      'esri/layers/VectorTileLayer'
-    ], (Map, MapView, VectorTileLayer) => {
+      'esri/layers/VectorTileLayer',
+      'esri/request'
+    ], (Map, MapView, VectorTileLayer, esriRequest) => {
       
       const map = new Map({
         basemap: 'dark-gray-vector'
@@ -93,26 +71,58 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      fetch(MVT_STYLE_URL)
-        .then(res => {
-          this.setState({ message: `📡 Fetch: ${res.status}` });
-          return res.json();
-        })
-        .then(styleJson => {
-          this.setState({ message: "📄 Style alındı" });
-          console.log("STYLE:", styleJson);
+      // esriRequest ile Authorization header ekle
+      esriRequest(MVT_STYLE_URL, {
+        headers: {
+          'Authorization': `Bearer ${MANUAL_BEARER}`
+        },
+        responseType: 'json'
+      }).then(response => {
+        this.setState({ message: "📄 Style JSON alındı" });
+        const styleJson = response.data;
+        console.log("STYLE JSON:", styleJson);
 
-          const mvtLayer = new VectorTileLayer({
-            style: styleJson
-          });
-
-          map.add(mvtLayer);
-          this.setState({ message: "✅ MVT eklendi!" });
-        })
-        .catch(err => {
-          this.setState({ message: `❌ ${err.message}` });
-          console.error(err);
+        // VectorTileLayer oluştur
+        const mvtLayer = new VectorTileLayer({
+          style: styleJson,
+          // Tile istekleri için de custom header gerekebilir
+          customParameters: {
+            token: MANUAL_BEARER
+          }
         });
+
+        // Layer load event'inde tile URL'lerini intercept et
+        mvtLayer.when(() => {
+          this.setState({ message: "✅ MVT Layer yüklendi!" });
+          
+          // Override fetch for tile requests
+          const originalFetch = window.fetch;
+          window.fetch = (url, options = {}) => {
+            const urlStr = url.toString();
+            if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+              return originalFetch(url, {
+                ...options,
+                headers: {
+                  ...(options['headers'] || {}),
+                  'Authorization': `Bearer ${MANUAL_BEARER}`
+                }
+              });
+            }
+            return originalFetch(url, options);
+          };
+        }).catch(err => {
+          this.setState({ message: `❌ Layer error: ${err.message}` });
+          console.error("Layer hatası:", err);
+        });
+
+        map.add(mvtLayer);
+        
+      }).catch(err => {
+        this.setState({ message: `❌ Fetch error: ${err.message}` });
+        console.error("FETCH HATASI detay:", err);
+        console.error("URL:", MVT_STYLE_URL);
+        console.error("Token:", MANUAL_BEARER ? "Var" : "YOK!");
+      });
     });
   };
 
