@@ -1,81 +1,51 @@
 import { React } from "jimu-core";
 import { JimuMapViewComponent, JimuMapView } from "jimu-arcgis";
-import VectorTileLayer from "@arcgis/core/layers/VectorTileLayer";
+import { loadModules } from "esri-loader";
 
-// API Configuration
 const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
 const MANUAL_BEARER = "your_bearer_token_here";
 
-interface State {
-  jimuMapView: JimuMapView;
-}
-
-export default class Widget extends React.PureComponent<any, State> {
-  private mvtLayer: VectorTileLayer = null;
-
-  constructor(props) {
-    super(props);
-    this.state = {
-      jimuMapView: null
-    };
-  }
+export default class Widget extends React.PureComponent<any, any> {
+  private mvtLayer: any = null;
 
   onActiveViewChange = (jmv: JimuMapView) => {
-    console.log("Map view aktif oldu:", jmv);
+    console.log("✅ Map aktif");
     if (jmv) {
-      this.setState({ jimuMapView: jmv });
       this.loadMVTLayer(jmv);
     }
   };
 
   loadMVTLayer = async (jmv: JimuMapView) => {
-    console.log("MVT Layer yükleniyor...");
-    
     try {
-      // Önce style.json'u çekelim
-      console.log("Style URL fetch ediliyor:", MVT_STYLE_URL);
+      console.log("🔄 VectorTileLayer yükleniyor...");
       
+      const [VectorTileLayer] = await loadModules(["esri/layers/VectorTileLayer"]);
+      
+      console.log("✅ Modül yüklendi, style fetch ediliyor...");
+
       const response = await fetch(MVT_STYLE_URL, {
-        headers: {
-          'Authorization': `Bearer ${MANUAL_BEARER}`
-        }
+        headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` }
       });
 
-      console.log("Response status:", response.status);
-
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-
+      console.log("📡 Status:", response.status);
       const styleJson = await response.json();
-      console.log("Style JSON alındı:", styleJson);
+      console.log("📄 Style:", styleJson);
 
-      // VectorTileLayer oluştur
       this.mvtLayer = new VectorTileLayer({
-        url: styleJson.sources?.esri?.url || MVT_STYLE_URL.replace('/style.json', ''),
         style: styleJson
       });
 
-      console.log("Layer oluşturuldu, map'e ekleniyor");
       jmv.view.map.add(this.mvtLayer);
-      
-      console.log("Layer başarıyla eklendi!");
+      console.log("✅ MVT Layer eklendi!");
 
     } catch (error) {
-      console.error("HATA - MVT Layer yüklenemedi:", error);
-      console.error("Error detayı:", error.message);
+      console.error("❌ Error:", error);
     }
   };
 
-  componentWillUnmount() {
-    if (this.mvtLayer && this.state.jimuMapView) {
-      this.state.jimuMapView.view.map.remove(this.mvtLayer);
-    }
-  }
-
   render() {
     return (
-      <div className="widget-mvt" style={{ width: "100%", height: "100%" }}>
+      <div style={{ width: "100%", height: "100%" }}>
         <JimuMapViewComponent
           useMapWidgetId={this.props.useMapWidgetIds?.[0]}
           onActiveViewChange={this.onActiveViewChange}
