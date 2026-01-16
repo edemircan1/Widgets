@@ -4,6 +4,7 @@ import { React, jsx } from "jimu-core";
 const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
 const MANUAL_BEARER = "your_bearer_token_here";
 const ARCGIS_API_VERSION = "4.32";
+const MAPLIBRE_VERSION = "4.7.1";
 
 interface State {
   message: string;
@@ -12,6 +13,7 @@ interface State {
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
+  private mapLibreMap: any;
 
   constructor(props) {
     super(props);
@@ -21,109 +23,89 @@ export default class Widget extends React.PureComponent<any, State> {
   }
 
   componentDidMount() {
-    this.loadArcGISAPI();
+    this.loadLibraries();
   }
 
   componentWillUnmount() {
+    if (this.mapLibreMap) {
+      this.mapLibreMap.remove();
+    }
     if (this.mapView) {
       this.mapView.destroy();
     }
   }
 
-  loadArcGISAPI = () => {
-    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
+  loadLibraries = () => {
+    this.setState({ message: "📦 MapLibre yükleniyor..." });
 
-    const cssLink = document.createElement("link");
-    cssLink.rel = "stylesheet";
-    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
-    document.head.appendChild(cssLink);
+    // MapLibre CSS
+    const maplibreCss = document.createElement("link");
+    maplibreCss.rel = "stylesheet";
+    maplibreCss.href = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.css`;
+    document.head.appendChild(maplibreCss);
 
-    const script = document.createElement("script");
-    script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
-    script.onload = () => {
-      this.setState({ message: "✅ ArcGIS API yüklendi" });
-      this.createMap();
+    // MapLibre JS
+    const maplibreScript = document.createElement("script");
+    maplibreScript.src = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.js`;
+    maplibreScript.onload = () => {
+      this.setState({ message: "✅ MapLibre yüklendi" });
+      this.createMapLibreMap();
     };
-    document.head.appendChild(script);
+    document.head.appendChild(maplibreScript);
   };
 
-  createMap = () => {
+  createMapLibreMap = async () => {
     this.setState({ message: "🗺️ Map oluşturuluyor..." });
 
-    (window as any).require([
-      'esri/Map',
-      'esri/views/MapView',
-      'esri/layers/VectorTileLayer',
-      'esri/request'
-    ], (Map, MapView, VectorTileLayer, esriRequest) => {
-      
-      const map = new Map({
-        basemap: 'dark-gray-vector'
-      });
-
-      this.mapView = new MapView({
-        container: this.mapDiv,
-        map: map,
-        center: [32, 39],
-        zoom: 6
-      });
-
-      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
-
-      esriRequest(MVT_STYLE_URL, {
+    try {
+      // Style JSON'u fetch et
+      const response = await fetch(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
-        },
-        responseType: 'json'
-      }).then(response => {
-        const styleJson = response.data;
-        
-        console.log("========== FULL STYLE JSON ==========");
-        console.log(JSON.stringify(styleJson, null, 2));
-        console.log("=====================================");
-        console.log("Sources:", styleJson.sources);
-        console.log("Layers:", styleJson.layers);
-        console.log("Version:", styleJson.version);
-        console.log("Glyphs:", styleJson.glyphs);
-        console.log("Sprite:", styleJson.sprite);
+        }
+      });
 
-        this.setState({ message: "📄 Style JSON alındı - Console'a yazdırıldı" });
+      const styleJson = await response.json();
+      console.log("Style JSON:", styleJson);
 
-        // Tile fetch için intercept
-        const originalFetch = window.fetch;
-        window.fetch = (url, options = {}) => {
-          const urlStr = url.toString();
-          if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-            return originalFetch(url, {
-              ...options,
+      this.setState({ message: "📄 Style JSON alındı" });
+
+      // Tile request'leri için transformRequest
+      const maplibregl = (window as any).maplibregl;
+      
+      this.mapLibreMap = new maplibregl.Map({
+        container: this.mapDiv,
+        style: styleJson,
+        center: [32, 39],
+        zoom: 6,
+        transformRequest: (url, resourceType) => {
+          // API domain'ine giden isteklere Authorization ekle
+          if (url.includes(new URL(MVT_STYLE_URL).hostname)) {
+            return {
+              url: url,
               headers: {
-                ...(options['headers'] || {}),
                 'Authorization': `Bearer ${MANUAL_BEARER}`
               }
-            });
+            };
           }
-          return originalFetch(url, options);
-        };
-
-        const mvtLayer = new VectorTileLayer({
-          style: styleJson
-        });
-
-        mvtLayer.when(() => {
-          this.setState({ message: "✅ MVT Layer yüklendi (tek renk görünüyor)" });
-          console.log("Layer loaded, current style:", mvtLayer.currentStyleInfo);
-        }).catch(err => {
-          this.setState({ message: `❌ Layer error: ${err.message}` });
-          console.error(err);
-        });
-
-        map.add(mvtLayer);
-        
-      }).catch(err => {
-        this.setState({ message: `❌ ${err.message}` });
-        console.error(err);
+          return { url };
+        }
       });
-    });
+
+      this.mapLibreMap.on('load', () => {
+        this.setState({ message: "✅ MapLibre map yüklendi!" });
+        console.log("Map layers:", this.mapLibreMap.getStyle().layers);
+      });
+
+      this.mapLibreMap.on('error', (e) => {
+        this.setState({ message: `❌ Map error: ${e.error.message}` });
+        console.error("MapLibre error:", e);
+      });
+
+    } catch (err) {
+      this.setState({ message: `❌ ${err.message}` });
+      console.error(err);
+    }
   };
 
   render() {
@@ -148,7 +130,7 @@ export default class Widget extends React.PureComponent<any, State> {
           fontFamily: "monospace",
           fontSize: "12px"
         }}>
-          <strong>MVT Widget:</strong>
+          <strong>MVT Widget (MapLibre):</strong>
           <div style={{ marginTop: "10px" }}>{message}</div>
         </div>
       </div>
