@@ -12,7 +12,6 @@ interface State {
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
-  private originalFetch = window.fetch;
 
   constructor(props) {
     super(props);
@@ -71,57 +70,58 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // esriRequest ile Authorization header ekle
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı" });
         const styleJson = response.data;
-        console.log("STYLE JSON:", styleJson);
+        
+        console.log("========== FULL STYLE JSON ==========");
+        console.log(JSON.stringify(styleJson, null, 2));
+        console.log("=====================================");
+        console.log("Sources:", styleJson.sources);
+        console.log("Layers:", styleJson.layers);
+        console.log("Version:", styleJson.version);
+        console.log("Glyphs:", styleJson.glyphs);
+        console.log("Sprite:", styleJson.sprite);
 
-        // VectorTileLayer oluştur
-        const mvtLayer = new VectorTileLayer({
-          style: styleJson,
-          // Tile istekleri için de custom header gerekebilir
-          customParameters: {
-            token: MANUAL_BEARER
+        this.setState({ message: "📄 Style JSON alındı - Console'a yazdırıldı" });
+
+        // Tile fetch için intercept
+        const originalFetch = window.fetch;
+        window.fetch = (url, options = {}) => {
+          const urlStr = url.toString();
+          if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+            return originalFetch(url, {
+              ...options,
+              headers: {
+                ...(options['headers'] || {}),
+                'Authorization': `Bearer ${MANUAL_BEARER}`
+              }
+            });
           }
+          return originalFetch(url, options);
+        };
+
+        const mvtLayer = new VectorTileLayer({
+          style: styleJson
         });
 
-        // Layer load event'inde tile URL'lerini intercept et
         mvtLayer.when(() => {
-          this.setState({ message: "✅ MVT Layer yüklendi!" });
-          
-          // Override fetch for tile requests
-          const originalFetch = window.fetch;
-          window.fetch = (url, options = {}) => {
-            const urlStr = url.toString();
-            if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-              return originalFetch(url, {
-                ...options,
-                headers: {
-                  ...(options['headers'] || {}),
-                  'Authorization': `Bearer ${MANUAL_BEARER}`
-                }
-              });
-            }
-            return originalFetch(url, options);
-          };
+          this.setState({ message: "✅ MVT Layer yüklendi (tek renk görünüyor)" });
+          console.log("Layer loaded, current style:", mvtLayer.currentStyleInfo);
         }).catch(err => {
           this.setState({ message: `❌ Layer error: ${err.message}` });
-          console.error("Layer hatası:", err);
+          console.error(err);
         });
 
         map.add(mvtLayer);
         
       }).catch(err => {
-        this.setState({ message: `❌ Fetch error: ${err.message}` });
-        console.error("FETCH HATASI detay:", err);
-        console.error("URL:", MVT_STYLE_URL);
-        console.error("Token:", MANUAL_BEARER ? "Var" : "YOK!");
+        this.setState({ message: `❌ ${err.message}` });
+        console.error(err);
       });
     });
   };
