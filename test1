@@ -1,139 +1,400 @@
-/** @jsx jsx */
-import { React, jsx } from "jimu-core";
-
-const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
-const MANUAL_BEARER = "your_bearer_token_here";
-const ARCGIS_API_VERSION = "4.32";
-const MAPLIBRE_VERSION = "4.7.1";
-
-interface State {
-  message: string;
-}
-
-export default class Widget extends React.PureComponent<any, State> {
-  private mapDiv: HTMLDivElement;
-  private mapView: any;
-  private mapLibreMap: any;
-
-  constructor(props) {
-    super(props);
-    this.state = {
-      message: "Widget yükleniyor..."
-    };
-  }
-
-  componentDidMount() {
-    this.loadLibraries();
-  }
-
-  componentWillUnmount() {
-    if (this.mapLibreMap) {
-      this.mapLibreMap.remove();
+{
+  "version": 8,
+  "name": "PROJE Coverage RSRP",
+  "metadata": {
+    "openmaptiles:version": "3.15.0"
+  },
+  "sources": {
+    "coverage_15z": {
+      "type": "vector",
+      "tiles": [
+        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
+      ],
+      "minzoom": 15,
+      "maxzoom": 15
+    },
+    "coverage_11z": {
+      "type": "vector",
+      "tiles": [
+        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
+      ],
+      "minzoom": 11,
+      "maxzoom": 11
+    },
+    "coverage_7z": {
+      "type": "vector",
+      "tiles": [
+        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
+      ],
+      "minzoom": 7,
+      "maxzoom": 7
+    },
+    "coverage_3z": {
+      "type": "vector",
+      "tiles": [
+        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
+      ],
+      "minzoom": 3,
+      "maxzoom": 3
     }
-    if (this.mapView) {
-      this.mapView.destroy();
+  },
+  "layers": [
+    {
+      "id": "vis_mvt_15z",
+      "type": "fill",
+      "source": "coverage_15z",
+      "minzoom": 15,
+      "maxzoom": 24,
+      "layout": {"visibility": "visible"},
+      "source-layer": "data",
+      "paint": {
+        "fill-opacity": 0.5,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_11z",
+      "type": "fill",
+      "source": "coverage_11z",
+      "minzoom":11,
+      "maxzoom":15,
+      "layout": {"visibility": "visible"},
+      "source-layer": "data",
+      "paint": {
+        "fill-opacity": 0.5,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_7z",
+      "type": "fill",
+      "source": "coverage_7z",
+      "minzoom": 7,
+      "maxzoom":11,
+      "layout": {"visibility": "visible"},
+      "source-layer": "data",
+      "paint": {
+        "fill-opacity": 0.5,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_3z",
+      "type": "fill",
+      "source": "coverage_3z",
+      "minzoom": 3,
+      "maxzoom":7,
+      "layout": {"visibility": "visible"},
+      "source-layer": "data",
+      "paint": {
+        "fill-opacity": 0.5,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_15z_line",
+      "type": "line",
+      "source": "coverage_15z",
+      "minzoom": 15,
+      "maxzoom": 24,
+      "source-layer": "data",
+      "paint": {
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_11z_line",
+      "type": "line",
+      "source": "coverage_11z",
+      "minzoom": 11,
+      "maxzoom": 15,
+      "source-layer": "data",
+      "paint": {
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_7z_line",
+      "type": "line",
+      "source": "coverage_7z",
+      "minzoom": 7,
+      "maxzoom": 11,
+      "source-layer": "data",
+      "paint": {
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_3z_line",
+      "type": "line",
+      "source": "coverage_3z",
+      "minzoom": 3,
+      "maxzoom": 7,
+      "source-layer": "data",
+      "paint": {
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
     }
-  }
-
-  loadLibraries = () => {
-    this.setState({ message: "📦 MapLibre yükleniyor..." });
-
-    // MapLibre CSS
-    const maplibreCss = document.createElement("link");
-    maplibreCss.rel = "stylesheet";
-    maplibreCss.href = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.css`;
-    document.head.appendChild(maplibreCss);
-
-    // MapLibre JS
-    const maplibreScript = document.createElement("script");
-    maplibreScript.src = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.js`;
-    maplibreScript.onload = () => {
-      this.setState({ message: "✅ MapLibre yüklendi" });
-      this.createMapLibreMap();
-    };
-    document.head.appendChild(maplibreScript);
-  };
-
-  createMapLibreMap = async () => {
-    this.setState({ message: "🗺️ Map oluşturuluyor..." });
-
-    try {
-      // Style JSON'u fetch et
-      const response = await fetch(MVT_STYLE_URL, {
-        headers: {
-          'Authorization': `Bearer ${MANUAL_BEARER}`
-        }
-      });
-
-      const styleJson = await response.json();
-      console.log("Style JSON:", styleJson);
-
-      this.setState({ message: "📄 Style JSON alındı" });
-
-      // Tile request'leri için transformRequest
-      const maplibregl = (window as any).maplibregl;
-      
-      this.mapLibreMap = new maplibregl.Map({
-        container: this.mapDiv,
-        style: styleJson,
-        center: [32, 39],
-        zoom: 6,
-        transformRequest: (url, resourceType) => {
-          // API domain'ine giden isteklere Authorization ekle
-          if (url.includes(new URL(MVT_STYLE_URL).hostname)) {
-            return {
-              url: url,
-              headers: {
-                'Authorization': `Bearer ${MANUAL_BEARER}`
-              }
-            };
-          }
-          return { url };
-        }
-      });
-
-      this.mapLibreMap.on('load', () => {
-        this.setState({ message: "✅ MapLibre map yüklendi!" });
-        console.log("Map layers:", this.mapLibreMap.getStyle().layers);
-      });
-
-      this.mapLibreMap.on('error', (e) => {
-        this.setState({ message: `❌ Map error: ${e.error.message}` });
-        console.error("MapLibre error:", e);
-      });
-
-    } catch (err) {
-      this.setState({ message: `❌ ${err.message}` });
-      console.error(err);
-    }
-  };
-
-  render() {
-    const { message } = this.state;
-
-    return (
-      <div style={{ width: "100%", height: "100%", position: "relative" }}>
-        <div 
-          ref={el => this.mapDiv = el}
-          style={{ width: "100%", height: "100%" }}
-        />
-
-        <div style={{
-          position: "absolute",
-          top: "10px",
-          left: "10px",
-          background: "rgba(0,0,0,0.8)",
-          color: "white",
-          padding: "15px",
-          borderRadius: "5px",
-          zIndex: 9999,
-          fontFamily: "monospace",
-          fontSize: "12px"
-        }}>
-          <strong>MVT Widget (MapLibre):</strong>
-          <div style={{ marginTop: "10px" }}>{message}</div>
-        </div>
-      </div>
-    );
-  }
+  ],
+  "id": "PROJE_coverage_style"
 }
