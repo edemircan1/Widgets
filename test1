@@ -1,27 +1,27 @@
 /** @jsx jsx */
 import { React, jsx } from "jimu-core";
-import { JimuMapView } from "jimu-arcgis";
 
 const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
 const MANUAL_BEARER = "your_bearer_token_here";
 
 interface State {
   message: string;
-  mapLoaded: boolean;
 }
 
 export default class Widget extends React.PureComponent<any, State> {
+  private mapDiv: HTMLDivElement;
+  private mapView: any;
   private originalFetch = window.fetch;
 
   constructor(props) {
     super(props);
     this.state = {
-      message: "Widget yükleniyor...",
-      mapLoaded: false
+      message: "Widget yükleniyor..."
     };
   }
 
   componentDidMount() {
+    // Fetch interceptor
     const self = this;
     window.fetch = function(url, options = {}) {
       const urlStr = url.toString();
@@ -37,93 +37,93 @@ export default class Widget extends React.PureComponent<any, State> {
       return self.originalFetch(url, options);
     };
 
-    // Map manager'ı dinamik import et
-    this.findMap();
+    // Map'i oluştur
+    this.createMap();
   }
 
   componentWillUnmount() {
     window.fetch = this.originalFetch;
+    if (this.mapView) {
+      this.mapView.destroy();
+    }
   }
 
-  findMap = async () => {
-    try {
-      this.setState({ message: "🔍 Map Manager yükleniyor..." });
-      
-      const { MapViewManager } = await import("jimu-arcgis");
-      const manager = MapViewManager.getInstance();
-      const allViews = manager.getAllJimuMapViewIds();
-      
-      console.log("Bulunan map'ler:", allViews);
-      
-      if (allViews && allViews.length > 0) {
-        this.setState({ message: `📍 Map bulundu: ${allViews[0]}` });
-        const jmv = await manager.getJimuMapViewById(allViews[0]);
-        this.onMapReady(jmv);
-      } else {
-        this.setState({ message: "❌ Map widget bulunamadı! Experience'a Map ekle." });
-      }
-    } catch (err) {
-      this.setState({ message: `❌ Map Manager hatası: ${err.message}` });
-      console.error(err);
-    }
-  };
+  createMap = () => {
+    this.setState({ message: "🗺️ Map oluşturuluyor..." });
 
-  onMapReady = (jmv: JimuMapView) => {
-    if (!jmv) {
-      this.setState({ message: "❌ Map view null!" });
-      return;
-    }
-
-    this.setState({ 
-      message: "✅ Map yüklendi! MVT ekleniyor...",
-      mapLoaded: true 
-    });
-
-    (window as any).require(['esri/layers/VectorTileLayer'], (VectorTileLayer) => {
-      this.setState({ message: "📦 VectorTileLayer yüklendi" });
+    (window as any).require([
+      'esri/Map',
+      'esri/views/MapView',
+      'esri/layers/VectorTileLayer'
+    ], (Map, MapView, VectorTileLayer) => {
       
+      this.setState({ message: "📦 ArcGIS modülleri yüklendi" });
+
+      // Basemap ile map oluştur
+      const map = new Map({
+        basemap: 'dark-gray-vector'
+      });
+
+      // MapView oluştur
+      this.mapView = new MapView({
+        container: this.mapDiv,
+        map: map,
+        center: [32, 39], // Türkiye merkez
+        zoom: 6
+      });
+
+      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
+
+      // MVT layer ekle
       fetch(MVT_STYLE_URL)
         .then(res => {
-          this.setState({ message: `📡 Fetch: ${res.status}` });
+          this.setState({ message: `📡 Style fetch: ${res.status}` });
           return res.json();
         })
         .then(styleJson => {
           this.setState({ message: "📄 Style JSON alındı" });
-          console.log("STYLE:", styleJson);
-          
-          const layer = new VectorTileLayer({ style: styleJson });
-          jmv.view.map.add(layer);
-          
+          console.log("STYLE JSON:", styleJson);
+
+          const mvtLayer = new VectorTileLayer({
+            style: styleJson
+          });
+
+          map.add(mvtLayer);
           this.setState({ message: "✅ MVT Layer eklendi!" });
         })
         .catch(err => {
-          this.setState({ message: `❌ ${err.message}` });
-          console.error(err);
+          this.setState({ message: `❌ HATA: ${err.message}` });
+          console.error("Detaylı hata:", err);
         });
     });
   };
 
   render() {
-    const { message, mapLoaded } = this.state;
-    
+    const { message } = this.state;
+
     return (
-      <div style={{
-        position: "fixed",
-        top: "10px",
-        left: "10px",
-        background: "rgba(0,0,0,0.8)",
-        color: "white",
-        padding: "15px",
-        borderRadius: "5px",
-        zIndex: 9999,
-        maxWidth: "400px",
-        fontFamily: "monospace",
-        fontSize: "12px"
-      }}>
-        <div><strong>MVT Widget Debug:</strong></div>
-        <div style={{ marginTop: "10px" }}>{message}</div>
-        <div style={{ marginTop: "5px", color: mapLoaded ? "#0f0" : "#f00" }}>
-          Map: {mapLoaded ? "LOADED" : "NOT LOADED"}
+      <div style={{ width: "100%", height: "100%", position: "relative" }}>
+        {/* Map container */}
+        <div 
+          ref={el => this.mapDiv = el}
+          style={{ width: "100%", height: "100%" }}
+        />
+
+        {/* Debug overlay */}
+        <div style={{
+          position: "absolute",
+          top: "10px",
+          left: "10px",
+          background: "rgba(0,0,0,0.8)",
+          color: "white",
+          padding: "15px",
+          borderRadius: "5px",
+          zIndex: 9999,
+          fontFamily: "monospace",
+          fontSize: "12px"
+        }}>
+          <div><strong>MVT Widget:</strong></div>
+          <div style={{ marginTop: "10px" }}>{message}</div>
         </div>
       </div>
     );
