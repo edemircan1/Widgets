@@ -1,11 +1,68 @@
-{
-  "name": "your-widget-name",
-  "type": "widget",
-  "version": "1.0.0",
-  "exbVersion": "1.14.0",
-  "dependency": [
-    "esri/layers/VectorTileLayer"
-  ],
-  "properties": {},
-  "translations": {}
+/** @jsx jsx */
+import { React, jsx } from "jimu-core";
+import { JimuMapViewComponent, JimuMapView } from "jimu-arcgis";
+
+const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
+const MANUAL_BEARER = "your_bearer_token_here";
+
+export default class Widget extends React.PureComponent<any, any> {
+  private originalFetch = window.fetch;
+
+  componentDidMount() {
+    const self = this;
+    window.fetch = function(url, options = {}) {
+      const urlStr = url.toString();
+      if (urlStr.includes('your-api.com')) {
+        return self.originalFetch(url, {
+          ...options,
+          headers: {
+            ...(options['headers'] || {}),
+            'Authorization': `Bearer ${MANUAL_BEARER}`
+          }
+        });
+      }
+      return self.originalFetch(url, options);
+    };
+  }
+
+  componentWillUnmount() {
+    window.fetch = this.originalFetch;
+  }
+
+  onActiveViewChange = (jmv: JimuMapView) => {
+    if (!jmv) return;
+
+    const modules = (jmv.view as any).declaredClass ? ['esri/layers/VectorTileLayer'] : null;
+    
+    if (!modules) {
+      console.error("❌ ArcGIS API bulunamadı");
+      return;
+    }
+
+    // JimuMapView'in kendi require'ını kullan
+    (window as any).require(modules, (VectorTileLayer) => {
+      console.log("✅ VectorTileLayer yüklendi");
+      
+      fetch(MVT_STYLE_URL)
+        .then(res => res.json())
+        .then(styleJson => {
+          console.log("📄 Style JSON alındı");
+          const layer = new VectorTileLayer({ style: styleJson });
+          jmv.view.map.add(layer);
+          console.log("✅ MVT Layer eklendi!");
+        })
+        .catch(err => console.error("❌ Hata:", err));
+    });
+  };
+
+  render() {
+    return (
+      <div style={{ width: "100%", height: "100%" }}>
+        <JimuMapViewComponent
+          useMapWidgetId={this.props.useMapWidgetIds?.[0]}
+          onActiveViewChange={this.onActiveViewChange}
+        />
+      </div>
+    );
+  }
 }
