@@ -1,6 +1,5 @@
 import { React } from "jimu-core";
 import { JimuMapViewComponent, JimuMapView } from "jimu-arcgis";
-import { loadModules } from "esri-loader";
 
 const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
 const MANUAL_BEARER = "your_bearer_token_here";
@@ -8,10 +7,10 @@ const MANUAL_BEARER = "your_bearer_token_here";
 export default class Widget extends React.PureComponent<any, any> {
   private mvtLayer: any = null;
 
-  onActiveViewChange = (jmv: JimuMapView) => {
+  onActiveViewChange = async (jmv: JimuMapView) => {
     console.log("✅ Map aktif");
     if (jmv) {
-      this.loadMVTLayer(jmv);
+      await this.loadMVTLayer(jmv);
     }
   };
 
@@ -19,7 +18,8 @@ export default class Widget extends React.PureComponent<any, any> {
     try {
       console.log("🔄 VectorTileLayer yükleniyor...");
       
-      const [VectorTileLayer] = await loadModules(["esri/layers/VectorTileLayer"]);
+      // Experience Builder'da böyle import ediliyor
+      const VectorTileLayer = (await import("esri/layers/VectorTileLayer")).default;
       
       console.log("✅ Modül yüklendi, style fetch ediliyor...");
 
