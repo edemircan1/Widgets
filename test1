@@ -6,6 +6,38 @@ const MANUAL_BEARER = "your_bearer_token_here";
 
 export default class Widget extends React.PureComponent<any, any> {
   private mvtLayer: any = null;
+  private originalFetch: any = null;
+
+  componentDidMount() {
+    // Global fetch'i intercept et - TÜM isteklere Bearer ekle
+    this.originalFetch = window.fetch;
+    window.fetch = (url, options = {}) => {
+      // API domain'ine giden tüm isteklere Authorization ekle
+      const urlString = url.toString();
+      if (urlString.includes('your-api.com')) { // Buraya kendi domain'ini yaz
+        const newOptions = {
+          ...options,
+          headers: {
+            ...(options.headers || {}),
+            'Authorization': `Bearer ${MANUAL_BEARER}`
+          }
+        };
+        console.log("🔐 Auth eklendi:", urlString);
+        return this.originalFetch(url, newOptions);
+      }
+      return this.originalFetch(url, options);
+    };
+  }
+
+  componentWillUnmount() {
+    // Original fetch'i geri yükle
+    if (this.originalFetch) {
+      window.fetch = this.originalFetch;
+    }
+    if (this.mvtLayer && this.state?.jimuMapView) {
+      this.state.jimuMapView.view.map.remove(this.mvtLayer);
+    }
+  }
 
   onActiveViewChange = async (jmv: JimuMapView) => {
     console.log("✅ Map aktif");
@@ -18,15 +50,12 @@ export default class Widget extends React.PureComponent<any, any> {
     try {
       console.log("🔄 VectorTileLayer yükleniyor...");
       
-      // Experience Builder'da böyle import ediliyor
       const VectorTileLayer = (await import("esri/layers/VectorTileLayer")).default;
       
       console.log("✅ Modül yüklendi, style fetch ediliyor...");
 
-      const response = await fetch(MVT_STYLE_URL, {
-        headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` }
-      });
-
+      const response = await fetch(MVT_STYLE_URL);
+      
       console.log("📡 Status:", response.status);
       const styleJson = await response.json();
       console.log("📄 Style:", styleJson);
