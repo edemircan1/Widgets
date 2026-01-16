@@ -1,6 +1,6 @@
 /** @jsx jsx */
 import { React, jsx } from "jimu-core";
-import { MapViewManager, JimuMapView } from "jimu-arcgis";
+import { JimuMapView } from "jimu-arcgis";
 
 const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
 const MANUAL_BEARER = "your_bearer_token_here";
@@ -37,58 +37,59 @@ export default class Widget extends React.PureComponent<any, State> {
       return self.originalFetch(url, options);
     };
 
-    // Map'i otomatik bul
-    this.findAndUseMap();
+    // Map manager'ı dinamik import et
+    this.findMap();
   }
 
   componentWillUnmount() {
     window.fetch = this.originalFetch;
   }
 
-  findAndUseMap = () => {
-    this.setState({ message: "🔍 Map aranıyor..." });
-    
-    const mapViewManager = MapViewManager.getInstance();
-    const allViews = mapViewManager.getAllJimuMapViewIds();
-    
-    console.log("Bulunan map view'lar:", allViews);
-    
-    if (allViews && allViews.length > 0) {
-      const firstMapId = allViews[0];
-      this.setState({ message: `📍 Map bulundu: ${firstMapId}` });
+  findMap = async () => {
+    try {
+      this.setState({ message: "🔍 Map Manager yükleniyor..." });
       
-      mapViewManager.getJimuMapViewById(firstMapId).then((jmv: JimuMapView) => {
+      const { MapViewManager } = await import("jimu-arcgis");
+      const manager = MapViewManager.getInstance();
+      const allViews = manager.getAllJimuMapViewIds();
+      
+      console.log("Bulunan map'ler:", allViews);
+      
+      if (allViews && allViews.length > 0) {
+        this.setState({ message: `📍 Map bulundu: ${allViews[0]}` });
+        const jmv = await manager.getJimuMapViewById(allViews[0]);
         this.onMapReady(jmv);
-      });
-    } else {
-      this.setState({ message: "❌ Hiç map widget bulunamadı!" });
+      } else {
+        this.setState({ message: "❌ Map widget bulunamadı! Experience'a Map ekle." });
+      }
+    } catch (err) {
+      this.setState({ message: `❌ Map Manager hatası: ${err.message}` });
+      console.error(err);
     }
   };
 
   onMapReady = (jmv: JimuMapView) => {
-    console.log("🗺️ Map hazır:", jmv);
-    
     if (!jmv) {
-      this.setState({ message: "❌ Map view yüklenemedi!" });
+      this.setState({ message: "❌ Map view null!" });
       return;
     }
 
     this.setState({ 
-      message: "✅ Map yüklendi! MVT layer ekleniyor...",
+      message: "✅ Map yüklendi! MVT ekleniyor...",
       mapLoaded: true 
     });
 
     (window as any).require(['esri/layers/VectorTileLayer'], (VectorTileLayer) => {
-      this.setState({ message: "📦 VectorTileLayer modülü yüklendi" });
+      this.setState({ message: "📦 VectorTileLayer yüklendi" });
       
       fetch(MVT_STYLE_URL)
         .then(res => {
-          this.setState({ message: `📡 Style fetch: ${res.status}` });
+          this.setState({ message: `📡 Fetch: ${res.status}` });
           return res.json();
         })
         .then(styleJson => {
-          this.setState({ message: "📄 Style JSON alındı, işleniyor..." });
-          console.log("STYLE JSON:", styleJson);
+          this.setState({ message: "📄 Style JSON alındı" });
+          console.log("STYLE:", styleJson);
           
           const layer = new VectorTileLayer({ style: styleJson });
           jmv.view.map.add(layer);
@@ -96,8 +97,8 @@ export default class Widget extends React.PureComponent<any, State> {
           this.setState({ message: "✅ MVT Layer eklendi!" });
         })
         .catch(err => {
-          this.setState({ message: `❌ HATA: ${err.message}` });
-          console.error("Detaylı hata:", err);
+          this.setState({ message: `❌ ${err.message}` });
+          console.error(err);
         });
     });
   };
@@ -122,7 +123,7 @@ export default class Widget extends React.PureComponent<any, State> {
         <div><strong>MVT Widget Debug:</strong></div>
         <div style={{ marginTop: "10px" }}>{message}</div>
         <div style={{ marginTop: "5px", color: mapLoaded ? "#0f0" : "#f00" }}>
-          Map Status: {mapLoaded ? "LOADED" : "NOT LOADED"}
+          Map: {mapLoaded ? "LOADED" : "NOT LOADED"}
         </div>
       </div>
     );
