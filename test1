@@ -1,23 +1,24 @@
 /** @jsx jsx */
 import { React, jsx } from "jimu-core";
 
-// API Configuration
 const MVT_STYLE_URL = "url/vector/styles/all/style.json?coverageLayer=rsrp_dbm";
 const MANUAL_BEARER = "token";
 const ARCGIS_API_VERSION = "4.32";
 
 interface State {
   message: string;
+  is3D: boolean;
 }
 
 export default class Widget extends React.PureComponent<any, State> {
-  private mapDiv: HTMLDivElement;
-  private mapView: any;
+  private viewDiv: HTMLDivElement;
+  private view: any;
 
   constructor(props) {
     super(props);
     this.state = {
-      message: "Widget yükleniyor..."
+      message: "Widget yükleniyor...",
+      is3D: true // 3D mode aktif
     };
   }
 
@@ -26,8 +27,8 @@ export default class Widget extends React.PureComponent<any, State> {
   }
 
   componentWillUnmount() {
-    if (this.mapView) {
-      this.mapView.destroy();
+    if (this.view) {
+      this.view.destroy();
     }
   }
 
@@ -43,33 +44,69 @@ export default class Widget extends React.PureComponent<any, State> {
     script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
     script.onload = () => {
       this.setState({ message: "✅ ArcGIS API yüklendi" });
-      this.createMap();
+      this.createScene();
     };
     document.head.appendChild(script);
   };
 
-  createMap = () => {
-    this.setState({ message: "🗺️ Map oluşturuluyor..." });
+  createScene = () => {
+    this.setState({ message: "🌍 3D Scene oluşturuluyor..." });
 
     (window as any).require([
       'esri/Map',
-      'esri/views/MapView',
+      'esri/views/SceneView',
       'esri/layers/VectorTileLayer',
       'esri/request'
-    ], (Map, MapView, VectorTileLayer, esriRequest) => {
+    ], (Map, SceneView, VectorTileLayer, esriRequest) => {
       
       const map = new Map({
-        basemap: 'dark-gray-vector'
+        basemap: 'dark-gray-vector',
+        ground: 'world-elevation' // 3D terrain
       });
 
-      this.mapView = new MapView({
-        container: this.mapDiv,
+      // SceneView (3D)
+      this.view = new SceneView({
+        container: this.viewDiv,
         map: map,
-        center: [32, 39],
-        zoom: 6
+        camera: {
+          position: {
+            longitude: 32,
+            latitude: 39,
+            z: 500000 // Yükseklik (metre)
+          },
+          tilt: 45, // Kamera açısı
+          heading: 0
+        },
+        qualityProfile: "high", // Yüksek kalite rendering
+        environment: {
+          atmosphere: {
+            quality: "high"
+          },
+          lighting: {
+            date: new Date(),
+            directShadowsEnabled: true,
+            ambientOcclusionEnabled: true
+          }
+        }
       });
 
-      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
+      this.setState({ message: "✅ 3D Scene oluşturuldu! MVT yükleniyor..." });
+
+      // Fetch interceptor
+      const originalFetch = window.fetch;
+      window.fetch = (url, options = {}) => {
+        const urlStr = url.toString();
+        if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+          return originalFetch(url, {
+            ...options,
+            headers: {
+              ...(options['headers'] || {}),
+              'Authorization': `Bearer ${MANUAL_BEARER}`
+            }
+          });
+        }
+        return originalFetch(url, options);
+      };
 
       esriRequest(MVT_STYLE_URL, {
         headers: {
@@ -79,88 +116,47 @@ export default class Widget extends React.PureComponent<any, State> {
       }).then(response => {
         const styleJson = response.data;
         
-        console.log("========== FULL STYLE JSON ==========");
-        console.log(JSON.stringify(styleJson, null, 2));
-        console.log("=====================================");
-        console.log("Sources:", styleJson.sources);
-        console.log("Layers:", styleJson.layers);
-        console.log("Version:", styleJson.version);
-        console.log("Glyphs:", styleJson.glyphs);
-        console.log("Sprite:", styleJson.sprite);
+        console.log("Style JSON loaded:", styleJson);
 
-        // Fix for visual artifacts (black lines / gaps) and missing quality
-        try {
-            const newLayers: any[] = [];
-            (styleJson.layers || []).forEach(layer => {
-                newLayers.push(layer);
-                // Check for fill layers that might miss a line outline
-                // Identify them by 'vis_mvt_' prefix or just being a fill layer with 'coverage_' source
-                if (layer.type === 'fill' && layer.source && typeof layer.id === 'string' && layer.id.startsWith('vis_mvt_')) {
-                    const lineId = `${layer.id}_line`;
-                    // Check if line layer exists in original layers
-                    const lineExists = (styleJson.layers as any[]).some(l => l.id === lineId);
-                    
-                    if (!lineExists) {
-                        console.log(`Running auto-patch: Creating missing line layer for ${layer.id}`);
-                        const lineLayer = JSON.parse(JSON.stringify(layer));
-                        lineLayer.id = lineId;
-                        lineLayer.type = 'line';
-                        
-                        // Transform paint properties
-                        const fillColor = lineLayer.paint['fill-color'];
-                        const fillOpacity = lineLayer.paint['fill-opacity'];
-                        
-                        lineLayer.paint = {
-                            'line-color': fillColor,
-                            'line-width': 1, // Add outline to fix tile gaps/black lines
-                            'line-opacity': fillOpacity || 0.5
-                        };
-                        
-                        // Ensure layout property exists
-                        if (!lineLayer.layout) lineLayer.layout = {};
-                        lineLayer.layout.visibility = 'visible';
-
-                        // Remove fill-specific props
-                        delete lineLayer.paint['fill-outline-color'];
-                        delete lineLayer.paint['fill-color'];
-                        delete lineLayer.paint['fill-opacity'];
-                        
-                        newLayers.push(lineLayer);
-                    }
-                }
-            });
-            styleJson.layers = newLayers;
-        } catch(e) {
-            console.error("Error patching style:", e);
+        // Siyah çizgileri düzelt - line stroke ekle
+        if (styleJson.layers && Array.isArray(styleJson.layers)) {
+          styleJson.layers.forEach((layer: any) => {
+            if (layer.type === 'fill' && layer.paint) {
+              // Fill outline ekle - siyah çizgileri önler
+              if (!layer.paint['fill-outline-color']) {
+                layer.paint['fill-outline-color'] = layer.paint['fill-color'];
+              }
+              // Anti-aliasing için
+              layer.paint['fill-antialias'] = true;
+            }
+            
+            if (layer.type === 'line' && layer.paint) {
+              // Line width artır - görünürlük için
+              if (!layer.paint['line-width']) {
+                layer.paint['line-width'] = 0.5;
+              }
+            }
+          });
         }
 
-        this.setState({ message: "📄 Style JSON alındı (ve patchlendi)" });
-
-        // Tile fetch için intercept
-        const originalFetch = window.fetch;
-        window.fetch = (url, options = {}) => {
-          const urlStr = url.toString();
-          if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-            return originalFetch(url, {
-              ...options,
-              headers: {
-                ...(options['headers'] || {}),
-                'Authorization': `Bearer ${MANUAL_BEARER}`
-              }
-            });
-          }
-          return originalFetch(url, options);
-        };
+        this.setState({ message: "📄 Style optimized for 3D" });
 
         const mvtLayer = new VectorTileLayer({
-          style: styleJson
+          style: styleJson,
+          // 3D için elevation mode
+          elevationInfo: {
+            mode: "on-the-ground" // Zemin üzerinde render et
+          },
+          // Rendering quality
+          labelsVisible: true,
+          opacity: 0.85 // Hafif transparan - 3D objelerle uyum için
         });
 
         mvtLayer.when(() => {
-          this.setState({ message: "✅ MVT Layer loaded" });
-          console.log("Layer loaded, current style:", mvtLayer.currentStyleInfo);
+          this.setState({ message: "✅ MVT Layer 3D'de yüklendi!" });
+          console.log("Layer info:", mvtLayer.currentStyleInfo);
         }).catch(err => {
-          this.setState({ message: `❌ Layer error: ${err.message}` });
+          this.setState({ message: `❌ ${err.message}` });
           console.error(err);
         });
 
@@ -173,13 +169,32 @@ export default class Widget extends React.PureComponent<any, State> {
     });
   };
 
+  toggleView = () => {
+    this.setState({ is3D: !this.state.is3D }, () => {
+      if (this.view) {
+        this.view.destroy();
+      }
+      if (this.state.is3D) {
+        this.createScene();
+      } else {
+        this.createMap();
+      }
+    });
+  };
+
+  createMap = () => {
+    // 2D fallback (isteğe bağlı)
+    this.setState({ message: "🗺️ 2D Map modu..." });
+    // MapView kodu buraya gelir
+  };
+
   render() {
-    const { message } = this.state;
+    const { message, is3D } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
         <div 
-          ref={el => this.mapDiv = el}
+          ref={el => this.viewDiv = el}
           style={{ width: "100%", height: "100%" }}
         />
 
@@ -187,16 +202,27 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           left: "10px",
-          background: "rgba(0,0,0,0.8)",
+          background: "rgba(0,0,0,0.85)",
           color: "white",
-          padding: "15px",
-          borderRadius: "5px",
+          padding: "15px 20px",
+          borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px"
+          fontSize: "12px",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
         }}>
-          <strong>MVT Widget:</strong>
-          <div style={{ marginTop: "10px" }}>{message}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <strong>🌍 3D MVT Widget</strong>
+            <span style={{ 
+              fontSize: "10px", 
+              padding: "2px 8px", 
+              background: is3D ? "#00aa00" : "#666",
+              borderRadius: "4px"
+            }}>
+              {is3D ? "3D" : "2D"}
+            </span>
+          </div>
+          <div style={{ marginTop: "10px", fontSize: "11px" }}>{message}</div>
         </div>
       </div>
     );
