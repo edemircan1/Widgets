@@ -21,6 +21,7 @@ export default class Widget extends React.PureComponent<any, State> {
   }
 
   onActiveViewChange = (jmv: JimuMapView) => {
+    console.log("Map view aktif oldu:", jmv);
     if (jmv) {
       this.setState({ jimuMapView: jmv });
       this.loadMVTLayer(jmv);
@@ -28,54 +29,42 @@ export default class Widget extends React.PureComponent<any, State> {
   };
 
   loadMVTLayer = async (jmv: JimuMapView) => {
-    if (this.mvtLayer) {
-      jmv.view.map.remove(this.mvtLayer);
-    }
-
+    console.log("MVT Layer yükleniyor...");
+    
     try {
-      // Fetch style.json with Bearer token
+      // Önce style.json'u çekelim
+      console.log("Style URL fetch ediliyor:", MVT_STYLE_URL);
+      
       const response = await fetch(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         }
       });
 
+      console.log("Response status:", response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const styleJson = await response.json();
+      console.log("Style JSON alındı:", styleJson);
 
-      // Create VectorTileLayer from style
-      this.mvtLayer = VectorTileLayer.fromArcGISStyle(styleJson);
+      // VectorTileLayer oluştur
+      this.mvtLayer = new VectorTileLayer({
+        url: styleJson.sources?.esri?.url || MVT_STYLE_URL.replace('/style.json', ''),
+        style: styleJson
+      });
 
-      // Intercept tile requests to add auth
-      const loadFunc = this.mvtLayer.load.bind(this.mvtLayer);
-      this.mvtLayer.load = async () => {
-        await loadFunc();
-        this.interceptTileRequests();
-        return this.mvtLayer;
-      };
-
+      console.log("Layer oluşturuldu, map'e ekleniyor");
       jmv.view.map.add(this.mvtLayer);
       
-    } catch (error) {
-      console.error("MVT Layer yüklenemedi:", error);
-    }
-  };
+      console.log("Layer başarıyla eklendi!");
 
-  interceptTileRequests = () => {
-    const originalFetch = window.fetch;
-    window.fetch = (url, options = {}) => {
-      // Check if this is a tile request from our API
-      if (url.toString().includes(new URL(MVT_STYLE_URL).hostname)) {
-        const newOptions = {
-          ...options,
-          headers: {
-            ...options.headers,
-            'Authorization': `Bearer ${MANUAL_BEARER}`
-          }
-        };
-        return originalFetch(url, newOptions);
-      }
-      return originalFetch(url, options);
-    };
+    } catch (error) {
+      console.error("HATA - MVT Layer yüklenemedi:", error);
+      console.error("Error detayı:", error.message);
+    }
   };
 
   componentWillUnmount() {
