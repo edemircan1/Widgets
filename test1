@@ -3,6 +3,7 @@ import { React, jsx } from "jimu-core";
 
 const MVT_STYLE_URL = "https://your-api.com/api/vector/styles/all/style.json?coverageLayer=rsrp_dbm_poly";
 const MANUAL_BEARER = "your_bearer_token_here";
+const ARCGIS_API_VERSION = "4.27";
 
 interface State {
   message: string;
@@ -37,8 +38,8 @@ export default class Widget extends React.PureComponent<any, State> {
       return self.originalFetch(url, options);
     };
 
-    // Map'i oluştur
-    this.createMap();
+    // ArcGIS API'yi yükle
+    this.loadArcGISAPI();
   }
 
   componentWillUnmount() {
@@ -47,6 +48,28 @@ export default class Widget extends React.PureComponent<any, State> {
       this.mapView.destroy();
     }
   }
+
+  loadArcGISAPI = () => {
+    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
+
+    // CSS yükle
+    const cssLink = document.createElement("link");
+    cssLink.rel = "stylesheet";
+    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
+    document.head.appendChild(cssLink);
+
+    // JS yükle
+    const script = document.createElement("script");
+    script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
+    script.onload = () => {
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.createMap();
+    };
+    script.onerror = () => {
+      this.setState({ message: "❌ ArcGIS API yüklenemedi!" });
+    };
+    document.head.appendChild(script);
+  };
 
   createMap = () => {
     this.setState({ message: "🗺️ Map oluşturuluyor..." });
@@ -57,43 +80,38 @@ export default class Widget extends React.PureComponent<any, State> {
       'esri/layers/VectorTileLayer'
     ], (Map, MapView, VectorTileLayer) => {
       
-      this.setState({ message: "📦 ArcGIS modülleri yüklendi" });
-
-      // Basemap ile map oluştur
       const map = new Map({
         basemap: 'dark-gray-vector'
       });
 
-      // MapView oluştur
       this.mapView = new MapView({
         container: this.mapDiv,
         map: map,
-        center: [32, 39], // Türkiye merkez
+        center: [32, 39],
         zoom: 6
       });
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // MVT layer ekle
       fetch(MVT_STYLE_URL)
         .then(res => {
-          this.setState({ message: `📡 Style fetch: ${res.status}` });
+          this.setState({ message: `📡 Fetch: ${res.status}` });
           return res.json();
         })
         .then(styleJson => {
-          this.setState({ message: "📄 Style JSON alındı" });
-          console.log("STYLE JSON:", styleJson);
+          this.setState({ message: "📄 Style alındı" });
+          console.log("STYLE:", styleJson);
 
           const mvtLayer = new VectorTileLayer({
             style: styleJson
           });
 
           map.add(mvtLayer);
-          this.setState({ message: "✅ MVT Layer eklendi!" });
+          this.setState({ message: "✅ MVT eklendi!" });
         })
         .catch(err => {
-          this.setState({ message: `❌ HATA: ${err.message}` });
-          console.error("Detaylı hata:", err);
+          this.setState({ message: `❌ ${err.message}` });
+          console.error(err);
         });
     });
   };
@@ -103,13 +121,11 @@ export default class Widget extends React.PureComponent<any, State> {
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
-        {/* Map container */}
         <div 
           ref={el => this.mapDiv = el}
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Debug overlay */}
         <div style={{
           position: "absolute",
           top: "10px",
@@ -122,7 +138,7 @@ export default class Widget extends React.PureComponent<any, State> {
           fontFamily: "monospace",
           fontSize: "12px"
         }}>
-          <div><strong>MVT Widget:</strong></div>
+          <strong>MVT Widget:</strong>
           <div style={{ marginTop: "10px" }}>{message}</div>
         </div>
       </div>
