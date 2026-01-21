@@ -1,18 +1,26 @@
 /** @jsx jsx */
 import {
-  React, ReactDOM, css, jsx, getAppStore, type AllWidgetProps, SessionManager, type DataRecordSet, TimezoneConfig, AppMode, type IMState,
-  classNames, polished, ReactResizeDetector, MutableStoreManager, type IMUrlParameters, type DataSource, ExBAddedJSAPIProperties
+  React, ReactDOM, css, jsx, getAppStore, type AllWidgetProps, SessionManager,
+  type DataRecordSet, TimezoneConfig, AppMode, type IMState,
+  classNames, polished, ReactResizeDetector, MutableStoreManager,
+  type IMUrlParameters, type DataSource, ExBAddedJSAPIProperties
 } from 'jimu-core'
 import { type IMConfig } from '../config'
 import MultiSourceMap from './components/multisourcemap'
 import DefaultMap from './components/default-map'
 import { type IFeature } from '@esri/arcgis-rest-feature-service'
-import { checkIsLive, type MapUrlHashParams, isFullscreenEnabled, getFullscreenElement, requestFullscreen, exitFullscreen } from './utils'
 import {
-  type JimuMapViewGroup, type ShowOnMapDatas, type AddToMapDatas, type JimuMapView, type JimuLayerView,
+  checkIsLive, type MapUrlHashParams, isFullscreenEnabled, getFullscreenElement,
+  requestFullscreen, exitFullscreen
+} from './utils'
+import {
+  type JimuMapViewGroup, type ShowOnMapDatas, type AddToMapDatas,
+  type JimuMapView, type JimuLayerView,
   DataChangeStatus, loadArcGISJSAPIModules, MapViewManager
 } from 'jimu-arcgis'
-import { ViewportVisibilityContext, PageVisibilityContext, ViewVisibilityContext } from 'jimu-layouts/layout-runtime'
+import {
+  ViewportVisibilityContext, PageVisibilityContext, ViewVisibilityContext
+} from 'jimu-layouts/layout-runtime'
 import { versionManager } from '../version-manager'
 import { Loading, LoadingType, Icon, DataActionList, DataActionListStyle } from 'jimu-ui'
 import { type ZoomToFeatureActionValue } from '../message-actions/zoom-to-feature-action'
@@ -20,9 +28,11 @@ import { type PanToActionValue } from '../message-actions/pan-to-action'
 import defaultMessages from './translations/default'
 import { Global } from 'jimu-theme'
 
-const MVT_STYLE_URL = 'url'
-const MANUAL_BEARER = 'token'
+const MVT_STYLE_URL = 'https://your.api.host/path/to/style.json' // TODO: replace
+const MANUAL_BEARER = 'YOUR_MANUAL_BEARER_TOKEN' // TODO: replace
 const MVT_LAYER_ID = 'custom-arcgis-map-mvt-layer'
+// Match all tile requests for your MVT service host (adjust as needed)
+const MVT_REQUEST_URL_REGEX = /https:\/\/your\.api\.host\/.*/ // TODO: replace
 
 export interface ActionRelatedProps {
   zoomToFeatureActionValue?: ZoomToFeatureActionValue
@@ -62,17 +72,12 @@ interface State {
   startLoadModules: boolean
   widthBreakpoint: string
   widgetHeight: number
-  // true means map is in full screen mode, isFullScreen is recursively passed to fullscreen.tsx, used to control the icon of the fullscreen tool
   isFullScreen: boolean
   dataActionDataSet: DataRecordSet
   mvtEnabled: boolean
   mvtMessage?: string
 }
 
-// .map-component-container:fullscreen takes effect when map enters the real full screen mode.
-// .fake-fullscreen-map takes effect when map enters the fake full screen mode.
-// The global style of .fake-fullscreen-map is used to support the fake full screen for iPhone browsers.
-// If the browser supports full screen API, we don't add the .fake-fullscreen-map class for this.container.
 const fakeFullscreenClassName = 'fake-fullscreen-map'
 
 export default class Widget extends React.PureComponent<MapWidgetProps, State> {
@@ -97,13 +102,14 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
                         <path fill-rule="evenodd" clip-rule="evenodd" d="M1.66642 14.375C0.9115 14.375 0.428811 13.5705 0.784067 12.9044L7.1174 1.02941C7.49387 0.323529 8.50564 0.323529 8.88211 1.02941L15.2154 12.9044C15.5707 13.5705 15.088 14.375 14.3331 14.375H1.66642ZM1.66642 13.375L7.99975 1.5L14.3331 13.375H1.66642Z" fill="#938500"/>
                         </svg>`
     this.state = {
+      startLoadModules: false,
       widthBreakpoint: null,
       widgetHeight: null,
       isFullScreen: false,
       dataActionDataSet: null,
       mvtEnabled: false,
       mvtMessage: null
-    } as State
+    }
 
     this.dataActionListContainer = document.createElement('div')
     this.dataActionListContainer.className = 'data-action-list-wrapper'
@@ -112,18 +118,7 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
   }
 
   getWidgetGlobalStyle () {
-    // .map-component-container:fullscreen takes effect when map enters the real full screen mode.
-    // .fake-fullscreen-map takes effect when map enters the fake full screen mode.
-    // The global style of .fake-fullscreen-map is used to support the fake full screen for iPhone browsers.
-    // If the browser supports full screen API, we don't add the .fake-fullscreen-map class for this.container.
-
     return css`
-    /*
-      Position fixed doesn't work when using transform
-      https://stackoverflow.com/questions/2637058/position-fixed-doesnt-work-when-using-webkit-transform
-      Need to clear the transform of this.container's all ancestors.
-      We also need  to make sure all ancestors have fixed position, otherwise strange behavior may occur on iPhone browsers of iOS 17.7.1.
-    */
     *:has(.fake-fullscreen-map) {
       transform: none !important;
       position: fixed !important;
@@ -134,11 +129,6 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
       z-index: 1;
     }
 
-    /*
-      Put the map widget into a widget controller and open the map widget from widget controller on mobile devices, you can see the map widget is placed at a MobilePanel.
-      After click the full screen map tool, you can see the close button of MobilePanel overlaps the map widget.
-      To solve the above case, we need to update the z-index of widget-content.
-    */
     .widget-renderer > .widget-content:has(.fake-fullscreen-map) {
       z-index: 1;
     }
@@ -147,30 +137,14 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
 
   getWidgetSyle () {
     return css`
-      /*
-        If the initial zoom of map is small (e.g. zoom is 0), map tiles can't cover all the map widget.
-        When the above map enter real full screen mode, the blank area of map shows black. So we need to update the map's background color for full screen mode.
-        https://stackoverflow.com/questions/16163089/background-element-goes-black-when-entering-fullscreen-with-html5
-      */
       .map-component-container:fullscreen {
         background: white;
 
-        /*
-          case1: When map is not in real full screen mode, document.fullscreenElement is null and popper is placed into document.body. So, the popper of map tool is above map popup as expected.
-          case2: When map is in real full screen mode, document.fullscreenElement is this.container and popper is placed into this.container.
-                 The default z-index of popper is 1, but z-index of .esri-popup is 9, so the popper of map tool is below .esri-popup. This is not expected.
-          We need to add the following css to fix case2 for both pc layout tool (.map-tool-popper), mobile layout tool (.map-tool-mobile-panel) and other widget's Popper or MobilePanel (.popper[role="dialog"]).
-          If fact, if we set .popper[role="dialog"], we don't need to set .map-tool-popper and .map-tool-mobile-panel, but we can still keep it here.
-          The className of normal Popper is 'popper' and the className of MobilePanel is 'popper mobile-panel-popper'. The role attribute of both normal Popper and MobilePanel is 'dialog'.
-        */
         .map-tool-popper, .map-tool-mobile-panel, .popper[role="dialog"] {
           z-index: 9 !important;
         }
       }
 
-      /*
-        .fake-fullscreen-map is used to support the fake full screen for iPhone browsers.
-      */
       .fake-fullscreen-map {
         position: fixed !important;
         left: 0;
@@ -180,10 +154,6 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
         background: white;
       }
 
-      /*
-        Put map widget2 into map widget1. Both map widgets enable full screen tool. After click the full screen tool of map widget2, you can see the map tools of map widget1 overlap map widget2.
-        To solve the above case, we need to hide the map-tool-layout of map widget1.
-      */
       .multi-source-map:has(.fake-fullscreen-map) > .map-tool-layout {
         display: none;
       }
@@ -459,23 +429,18 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
       runtimeUrlHashParams = state.urlHashObject[mapWidgetId]
     }
 
-    // MapView.timeZone
     let mapTimeZone: string = ''
-
     const timeZoneInfo = state.appConfig?.attributes?.timezone
 
     if (timeZoneInfo) {
-      // user sets timeZone info in ExB
       if (timeZoneInfo.type === TimezoneConfig.Device) {
         mapTimeZone = 'system'
       } else if (timeZoneInfo.type === TimezoneConfig.Specific) {
         mapTimeZone = timeZoneInfo.value
       } else if (timeZoneInfo.type === TimezoneConfig.Data) {
-        // set mapTimeZone to empty, means we need to uses MapViewer's timeZone
         mapTimeZone = ''
       }
     } else {
-      // if user doesn't set timeZone info in ExB, we should use 'system' for compatibility
       mapTimeZone = 'system'
     }
 
@@ -505,13 +470,11 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
       }
     }
 
-    // iPhone doesn't support fullscreenchange event. iPad only supports webkitfullscreenchange event.
-    document.addEventListener('webkitfullscreenchange', this.onFullscreenChangeHandler) // for iPad
+    document.addEventListener('webkitfullscreenchange', this.onFullscreenChangeHandler)
     document.addEventListener('fullscreenchange', this.onFullscreenChangeHandler)
   }
 
-  componentDidUpdate (prevProps: MapWidgetProps, prevState: State) {
-    // check if props.state changed or not
+  componentDidUpdate (prevProps: MapWidgetProps) {
     const preWidgetState = prevProps.state
     const currWidgetState = this.props.state
     if (preWidgetState !== currWidgetState) {
@@ -521,7 +484,6 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
       })
     }
 
-    // check if props.config.showPopupUponSelection changed or not
     const preShowPopupUponSelection = !!(prevProps?.config?.showPopupUponSelection)
     const curShowPopupUponSelection = !!(this.props?.config?.showPopupUponSelection)
 
@@ -532,19 +494,16 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
       })
     }
 
-    // check if props.enableDataAction changed or not
     const preEnableDataAction = prevProps?.enableDataAction
     const currEnableDataAction = this.props.enableDataAction
 
     if (preEnableDataAction !== currEnableDataAction) {
-      // console.log('enableDataAction changed')
       this.handleDataActionWhenPopupSelectedFeatureChange(this.activeJimuMapView)
     }
   }
 
   componentWillUnmount () {
-    // iPhone doesn't support fullscreenchange event. iPad only supports webkitfullscreenchange event.
-    document.removeEventListener('webkitfullscreenchange', this.onFullscreenChangeHandler) // for iPad
+    document.removeEventListener('webkitfullscreenchange', this.onFullscreenChangeHandler)
     document.removeEventListener('fullscreenchange', this.onFullscreenChangeHandler)
 
     const widgets = getAppStore().getState().appConfig.widgets
@@ -570,14 +529,12 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
     let placeHolderImage = this.props.config.placeholderImage
     const session = SessionManager.getInstance().getMainSession()
     if (placeHolderImage) {
-      // eslint-disable-next-line
       const isPortalThumbExp = new RegExp('^(.)+/sharing/rest/content/items/(.)+/info/(.)+')
 
       if (isPortalThumbExp.test(placeHolderImage)) {
         if (session) {
           placeHolderImage = placeHolderImage + `?token=${session.token}`
         } else {
-          // eslint-disable-next-line no-self-assign
           placeHolderImage = placeHolderImage
         }
       }
@@ -586,9 +543,8 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
     return placeHolderImage
   }
 
-  onFullscreenChangeHandler = (event) => {
+  onFullscreenChangeHandler = () => {
     const fullscreenElement = getFullscreenElement()
-
     const isCurrentMapFullScreen = fullscreenElement && fullscreenElement === this.container
 
     this.setState({
@@ -596,38 +552,25 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
     })
   }
 
-  // toggle map full screen mode
   fullScreenMap = () => {
     const fullscreenEnabled = isFullscreenEnabled()
 
     if (fullscreenEnabled) {
-      // The browser supports full screen API.
       const fullscreenElement = getFullscreenElement()
 
       if (fullscreenElement === this.container) {
-        // Don't need to call this.setState({isFullScreen: false}) here, because we will do it in this.onFullscreenChangeHandler.
-
-        // Currently, map is in full screen mode. Map will exit full screen mode.
         exitFullscreen()
       } else {
-        // Don't need to call this.setState({isFullScreen: true}) here, because we will do it in this.onFullscreenChangeHandler.
-
-        // Currently, map is not in full screen mode. Map will enter full screen mode.
         requestFullscreen(this.container)
       }
     } else {
-      // The browser doesn't support full screen API, the typical cases is iPhone.
-      // All browsers on iPhone doesn't support fullscreen API, so need to support fullscreen for iPhone by hacking.
-
       if (this.container.classList.contains(fakeFullscreenClassName)) {
-        // Currently, map is in full screen mode. Map will exit full screen mode.
         this.container.classList.remove(fakeFullscreenClassName)
 
         this.setState({
           isFullScreen: false
         })
       } else {
-        // Currently, map is not in full screen mode. Map will enter full screen mode.
         this.container.classList.add(fakeFullscreenClassName)
 
         this.setState({
@@ -711,7 +654,7 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
     const mvtBearer = MANUAL_BEARER
 
     if (!mvtStyleUrl || !mvtBearer) {
-      this.setState({ mvtMessage: '⚠️ MVT settings missing (style URL / bearer).' })
+      this.setState({ mvtMessage: 'MVT settings missing (style URL / bearer).' })
       return
     }
 
@@ -750,7 +693,7 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
     }
 
     try {
-      this.setState({ mvtMessage: '⏳ Loading MVT style…' })
+      this.setState({ mvtMessage: 'Loading MVT style…' })
       const response = await esriRequest(mvtStyleUrl, {
         headers: {
           Authorization: `Bearer ${mvtBearer}`
@@ -781,23 +724,25 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
       const layerView = await jimuMapView.view.whenLayerView(mvtLayer)
       layerView.watch('updating', (updating) => {
         if (!updating) {
-          this.setState({ mvtMessage: '✅ MVT layer rendered.' })
+          this.setState({ mvtMessage: 'MVT layer rendered.' })
         }
       })
       jimuMapView.view.on('layerview-create-error', (event) => {
         if (event?.layer?.id === MVT_LAYER_ID) {
           const errorMessage = event?.error?.message || 'Layer view failed to create.'
-          this.setState({ mvtMessage: `❌ MVT layer view error: ${errorMessage}` })
+          this.setState({ mvtMessage: `MVT layer view error: ${errorMessage}` })
+          // eslint-disable-next-line no-console
           console.error('MVT layer view error:', event?.error)
         }
       })
       if (mvtLayer.fullExtent) {
         jimuMapView.view.goTo(mvtLayer.fullExtent).catch(() => {})
       }
-      this.setState({ mvtMessage: '✅ MVT layer loaded (awaiting tiles)...' })
+      this.setState({ mvtMessage: 'MVT layer loaded (awaiting tiles)...' })
     } catch (err: any) {
       const message = err?.message || 'Unknown error'
-      this.setState({ mvtMessage: `❌ MVT failed: ${message}` })
+      this.setState({ mvtMessage: `MVT failed: ${message}` })
+      // eslint-disable-next-line no-console
       console.error('MVT layer failed to load:', err)
     }
   }
@@ -880,15 +825,20 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
             >
               <div className={classNames('w-100 h-100', { 'map-is-design-mode': !checkIsLive(this.props.appMode) })}>
                 <DefaultMap
-                  fullScreenMap={this.fullScreenMap} baseWidgetProps={this.props} startLoadModules={this.state.startLoadModules}
-                  isDefaultMap setMultiSourceMapInstance={this.setMultiSourceMapInstance}
+                  fullScreenMap={this.fullScreenMap}
+                  baseWidgetProps={this.props}
+                  startLoadModules={this.state.startLoadModules}
+                  isDefaultMap
+                  setMultiSourceMapInstance={this.setMultiSourceMapInstance}
                   onViewGroupCreate={this.handleViewGroupCreate}
                   onJimuMapViewCreated={this.onJimuMapViewCreated}
                   onActiveJimuMapViewChange={this.onActiveJimuMapViewChange}
-                  widgetHeight={this.state.widgetHeight} widthBreakpoint={this.state.widthBreakpoint} isFullScreen={this.state.isFullScreen} isMapInVisibleArea={isMapInVisibleArea}
+                  widgetHeight={this.state.widgetHeight}
+                  widthBreakpoint={this.state.widthBreakpoint}
+                  isFullScreen={this.state.isFullScreen}
+                  isMapInVisibleArea={isMapInVisibleArea}
                   autoControlWidgetId={this.props.autoControlWidgetId}
-                >
-                </DefaultMap>
+                />
                 {this.renderMvtToggle()}
               </div>
               <ReactResizeDetector handleWidth handleHeight onResize={this.onResize} />
@@ -905,13 +855,18 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
               <div className={classNames('w-100 h-100', { 'map-is-design-mode': !checkIsLive(this.props.appMode) })}>
                 {this.props.useDataSources.length >= 1 &&
                   <MultiSourceMap
-                    key={1} fullScreenMap={this.fullScreenMap} baseWidgetProps={this.props} startLoadModules={this.state.startLoadModules}
+                    key={1}
+                    fullScreenMap={this.fullScreenMap}
+                    baseWidgetProps={this.props}
+                    startLoadModules={this.state.startLoadModules}
                     ref={this.setMultiSourceMapInstance}
                     onViewGroupCreate={this.handleViewGroupCreate}
                     onJimuMapViewCreated={this.onJimuMapViewCreated}
                     onActiveJimuMapViewChange={this.onActiveJimuMapViewChange}
-                    widgetHeight={this.state.widgetHeight} widthBreakpoint={this.state.widthBreakpoint}
-                    isFullScreen={this.state.isFullScreen} isMapInVisibleArea={isMapInVisibleArea}
+                    widgetHeight={this.state.widgetHeight}
+                    widthBreakpoint={this.state.widthBreakpoint}
+                    isFullScreen={this.state.isFullScreen}
+                    isMapInVisibleArea={isMapInVisibleArea}
                     autoControlWidgetId={this.props.autoControlWidgetId}
                   />}
                 {this.renderMvtToggle()}
@@ -949,17 +904,18 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
       this.handleDataActionWhenPopupSelectedFeatureChange(activeJimuMapView)
     }
 
-    this.watchSelectedFeatureHandle = this.reactiveUtils.watch(() => activeJimuMapView?.view?.popup?.selectedFeature, async () => {
-      this.handleDataActionWhenPopupSelectedFeatureChange(activeJimuMapView)
-    })
+    this.watchSelectedFeatureHandle = this.reactiveUtils.watch(
+      () => activeJimuMapView?.view?.popup?.selectedFeature,
+      async () => {
+        this.handleDataActionWhenPopupSelectedFeatureChange(activeJimuMapView)
+      }
+    )
   }
 
   async handleDataActionWhenPopupSelectedFeatureChange (activeJimuMapView: JimuMapView) {
     const popup = activeJimuMapView?.view?.popup
     const originalSelectedFeature = popup?.selectedFeature
 
-    // firstly, we need to remove dataActionListContainer from popup domNode,
-    // when state.dataActionDataSet is ready, we can add dataActionListContainer to popup domNode
     if (this.dataActionListContainer.parentNode) {
       this.dataActionListContainer.parentNode.removeChild(this.dataActionListContainer)
     }
@@ -973,7 +929,6 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
     if (isDataActionEnabled && originalSelectedFeature) {
       const dataActionDataSet = await this.getDataActionDataSet(activeJimuMapView, originalSelectedFeature)
 
-      // getDataActionDataSet may take a long time, so we need to check should we go on or not
       if (this.getCurrentPopupSelectedFeature() !== originalSelectedFeature) {
         return
       }
@@ -1035,14 +990,11 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
     const popupActionsContainer = popupDomNode.querySelector(selector)
 
     if (popupActionsContainer && !popupActionsContainer.contains(this.dataActionListContainer)) {
-      // this.dataActionListContainer is not in popup
       if (this.state.dataActionDataSet) {
-        // DataActionList domNode is ready, we can add it to popup domNode now
         if (this.dataActionListContainer.parentNode) {
           this.dataActionListContainer.parentNode.removeChild(this.dataActionListContainer)
         }
 
-        // append this.dataActionListContainer into popupActionsContainer as the first child
         if (popupActionsContainer.firstChild) {
           popupActionsContainer.insertBefore(this.dataActionListContainer, popupActionsContainer.firstChild)
         } else {
@@ -1059,6 +1011,7 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
       layerDataSource = await this.getLayerDataSourceBySelectedFeature(jimuMapView, selectedFeature)
     } catch (err) {
       layerDataSource = null
+      // eslint-disable-next-line no-console
       console.error('getLayerDataSourceBySelectedFeature error', err)
     }
 
@@ -1091,27 +1044,20 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
   async getLayerDataSourceBySelectedFeature (jimuMapView: JimuMapView, selectedFeature: __esri.Graphic): Promise<DataSource> {
     let jimuLayerView: JimuLayerView = null
 
-    // If the selectedFeature is from JimuLayerView selection, we can get the jimuLayerViewId.
-    // See JimuFeatureLayerView.getSelectedFeatures() for more details.
     const jimuLayerViewId = (selectedFeature as any).jimuLayerViewId
 
     if (jimuLayerViewId) {
       jimuLayerView = jimuMapView.jimuLayerViews[jimuLayerViewId]
     }
 
-    // If jimuLayerView is still null, means the selectedFeature comes from clicking map, we can try to find the jimuLayerView by layer.
     if (!jimuLayerView) {
       const allJimuLayerViews = Object.values(jimuMapView.jimuLayerViews)
 
-      // In most cases, we should get jimuLayerView by selectedFeature.layer, but there is an exception.
-      // If selectedFeature is a feature of BuildingComponentSublayer, then selectedFeature.layer is BuildingSceneLayer and selectedFeature.sourceLayer is BuildingComponentSublayer.
-      // For this case, we should get jimuLayerView by selectedFeature.sourceLayer, not selectedFeature.layer.
       if (selectedFeature.layer && selectedFeature.layer.declaredClass !== 'esri.layers.BuildingSceneLayer') {
         jimuLayerView = allJimuLayerViews.find(item => item.layer === selectedFeature.layer)
       }
 
       if (!jimuLayerView) {
-        // If the selected feature comes from esri.layers.support.Sublayer, then the selectedFeature.layer is null and selectedFeature.sourceLayer is not null.
         const sourceLayer = (selectedFeature as any).sourceLayer
 
         if (sourceLayer) {
@@ -1134,8 +1080,6 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
   }
 
   isDataActionEnabled () {
-    // By default, this.props.enableDataAction is undefined, which means enabled.
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-boolean-literal-compare
     return this.props.enableDataAction !== false
   }
 
@@ -1143,10 +1087,13 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
     const isDataActionEnabled = this.isDataActionEnabled()
 
     if (isDataActionEnabled && this.state.dataActionDataSet) {
-      // render the DataActionList into this.dataActionListContainer, so we can append it to popup domNode
       return ReactDOM.createPortal(
-        <DataActionList widgetId={this.props.id} dataSets={[this.state.dataActionDataSet]}
-          disableDataSourceLevelActions={true} listStyle={DataActionListStyle.Dropdown} hideGroupTitle={true}
+        <DataActionList
+          widgetId={this.props.id}
+          dataSets={[this.state.dataActionDataSet]}
+          disableDataSourceLevelActions={true}
+          listStyle={DataActionListStyle.Dropdown}
+          hideGroupTitle={true}
         />,
         this.dataActionListContainer
       )
@@ -1156,63 +1103,14 @@ export default class Widget extends React.PureComponent<MapWidgetProps, State> {
   }
 
   render () {
+    const isMapInVisibleArea = true // if you use visibility contexts, wire them here
     const dataActionList = this.renderDataActionList()
 
     return (
       <div className='jimu-widget arcgis-map' css={this.getWidgetSyle()}>
         <Global styles={this.getWidgetGlobalStyle()} />
-        {this.isLoadingDisplayed() && <Loading className='map-loading-bar' type={LoadingType.Bar}/>}
-        {this.isWarningDisplayed() && <div className='map-warning-bar'>
-          <Icon className='warning-icon' icon={this.warningIcon} size={26} currentColor={false} />
-          <span>{this.props.intl.formatMessage({ id: 'failToAddTheDataOnMap', defaultMessage: 'Fail to add the data.' })}</span>
-        </div>}
-        { dataActionList }
-        <PageVisibilityContext.Consumer>
-          {(isPageVisible) => {
-            return (
-              <ViewportVisibilityContext.Consumer>
-                {(isVisibleInViewPort) => {
-                  return (
-                    <ViewVisibilityContext.Consumer>
-                      {(viewVisibilityContextProps) => {
-                        // isPageVisible:
-                        // App can have page1, page2, isPageVisible is used to judge whether the current page is visible.
-
-                        // isVisibleInViewPort:
-                        // When scrolling the scroll page, the widget may be scrolled out of the current viewport,
-                        // isVisibleInViewPort is used to determine whether the current widget is in the viewport of the browser.
-
-                        // isPrintPreview
-                        // isPrintPreview is used to determine whether it is currently in browser printing mode.
-
-                        // isVisibleInView:
-                        // The widget is ultimately placed in a view in a layout. It is possible that we have a section with multiple views in it, similar to tabs.
-                        // isVisibleInView is used to determine whether the widget is in the currently visible view.
-
-                        const isVisibleInView = viewVisibilityContextProps.isInView ? viewVisibilityContextProps.isInCurrentView : true
-
-                        // isMapInVisibleArea:
-                        // isMapInVisibleArea is used to finally determine whether the dom of the map is visible to the user.
-
-                        // Here we use (isVisibleInViewPort || this.props.isPrintPreview), not only isVisibleInViewPort, consider the following case.
-                        // Case:
-                        // We create a scroll page with map. We scroll the page and the map is not visible for user.
-                        // User wants to print the scroll page, including the map (even the map is not visible).
-                        // Then the user enables print view mode by a button. Now, isVisibleInViewPort is false and this.props.isPrintPreview is true.
-                        // We need to make sure the map widget is visible (let isMapInVisibleArea be true) when in print view mode, otherwise the print result will lose map.
-                        // So we use (isVisibleInViewPort || this.props.isPrintPreview), instead of this.props.isPrintPreview.
-                        const isMapInVisibleArea = isPageVisible && (isVisibleInViewPort || this.props.isPrintPreview) && isVisibleInView
-
-                        return this.getInnerContent(isMapInVisibleArea)
-                      }}
-                    </ViewVisibilityContext.Consumer>
-
-                  )
-                }}
-              </ViewportVisibilityContext.Consumer>
-            )
-          }}
-        </PageVisibilityContext.Consumer>
+        {this.getInnerContent(isMapInVisibleArea)}
+        {dataActionList}
       </div>
     )
   }
