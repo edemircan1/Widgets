@@ -19,7 +19,7 @@ export default class Widget extends React.PureComponent<any, State> {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
-      currentZoom: 7
+      currentZoom: 15
     };
   }
 
@@ -90,7 +90,7 @@ export default class Widget extends React.PureComponent<any, State> {
     ], (Map, MapView, VectorTileLayer, esriRequest) => {
       
       const map = new Map({
-        basemap: 'dark-gray-vector'  // Veya 'gray-vector', 'streets-night-vector'
+        basemap: 'dark-gray-vector'
       });
 
       this.mapView = new MapView({
@@ -99,21 +99,19 @@ export default class Widget extends React.PureComponent<any, State> {
         center: [32, 39],
         zoom: 15,
         constraints: {
-          snapToZoom: false,  // ✅ Smooth zoom - tam sayılara yapışma
+          snapToZoom: false,
           minZoom: 3,
           maxzoom: 22,
-          rotationEnabled: false  // Rotation'ı kapat - daha stabil zoom
+          rotationEnabled: false
         },
-        // ✅ Mouse wheel zoom increment'ini küçült
         navigation: {
           mouseWheelZoomEnabled: true,
           browserTouchPanEnabled: true
         }
       });
 
-      // ✅✅✅ MOUSE WHEEL ZOOM SPEED'İNİ AYARLA
+      // Mouse wheel zoom control
       this.mapView.when(() => {
-        // Mouse wheel event'ini intercept et
         const container = this.mapView.container as HTMLElement;
         
         container.addEventListener('wheel', (event: WheelEvent) => {
@@ -121,15 +119,13 @@ export default class Widget extends React.PureComponent<any, State> {
           
           const currentZoom = this.mapView.zoom;
           const delta = event.deltaY;
-          
-          // ✅ 0.2 increment ile zoom (çok daha smooth)
           const zoomChange = delta > 0 ? -0.2 : 0.2;
           const newZoom = Math.max(3, Math.min(22, currentZoom + zoomChange));
           
           this.mapView.goTo({
             zoom: newZoom
           }, {
-            duration: 100  // Hızlı transition
+            duration: 100
           });
         }, { passive: false });
       });
@@ -140,147 +136,81 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // esriRequest ile Authorization header ekle
+      // Fetch override for authorization
+      const originalFetch = window.fetch;
+      window.fetch = (url, options = {}) => {
+        const urlStr = url.toString();
+        if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+          if (zxyMatch) {
+            const [, z] = zxyMatch;
+            console.log(`🔍 Tile request: zoom ${z}`);
+          }
+          
+          return originalFetch(url, {
+            ...options,
+            headers: {
+              ...(options['headers'] || {}),
+              'Authorization': `Bearer ${MANUAL_BEARER}`
+            }
+          });
+        }
+        return originalFetch(url, options);
+      };
+
+      // ✅✅✅ YENİ YAKLAŞIM: Her zoom level için AYRI layer oluştur
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı" });
-        let styleJson = response.data;
+        this.setState({ message: "📄 Style JSON alındı, layer'lar oluşturuluyor..." });
+        const originalStyle = response.data;
 
-        // ZOOM RANGE AYARLA + OVERZOOM FIX
-        Object.keys(styleJson.sources).forEach(key => {
-          const source = styleJson.sources[key];
-          if (key === 'coverage_15z') {
-            source.minzoom = 15;
-            source.maxzoom = 15;  // ✅ API sadece 15'te tile üretiyor
-          } else if (key === 'coverage_11z') {
-            source.minzoom = 11;
-            source.maxzoom = 11;
-          } else if (key === 'coverage_7z') {
-            source.minzoom = 7;
-            source.maxzoom = 7;
-          } else if (key === 'coverage_3z') {
-            source.minzoom = 3;
-            source.maxzoom = 3;
-          }
-        });
+        // Her zoom level için ayrı style JSON oluştur
+        const zoomConfigs = [
+          { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
+          { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
+          { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
+          { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
+        ];
 
-        // ✅✅✅ SOURCE ZOOM RANGE'LERİNİ DÜZELT (tile production zoom'ları)
-        Object.keys(styleJson.sources).forEach(key => {
-          const source = styleJson.sources[key];
-          if (key === 'coverage_15z') {
-            source.minzoom = 15;
-            source.maxzoom = 22;  // ✅ Zoom 22'ye kadar 15z tile'ı kullan
-          } else if (key === 'coverage_11z') {
-            source.minzoom = 11;
-            source.maxzoom = 14;  // ✅ 15'E ULAŞINCA KES!
-          } else if (key === 'coverage_7z') {
-            source.minzoom = 7;
-            source.maxzoom = 10;  // ✅ 11'E ULAŞINCA KES!
-          } else if (key === 'coverage_3z') {
-            source.minzoom = 3;
-            source.maxzoom = 6;   // ✅ 7'YE ULAŞINCA KES!
-          }
-        });
-
-        console.log("Source zoom ranges:");
-        Object.keys(styleJson.sources).forEach(key => {
-          const src = styleJson.sources[key];
-          console.log(`  ${key}: ${src.minzoom} - ${src.maxzoom}`);
-        });
-
-        // ✅✅✅ KRİTİK: Layer zoom range'lerini OVERLAP OLMADAN ayarla
-        styleJson.layers = styleJson.layers.map(layer => {
-          const newLayer = {...layer};
-          
-          if (layer.id.includes('15z')) {
-            newLayer.minzoom = 15;  // ✅ TAM 15'te başla
-            newLayer.maxzoom = 22;
-          } else if (layer.id.includes('11z')) {
-            newLayer.minzoom = 11;
-            newLayer.maxzoom = 14.99;  // ✅ 15'TEN ÖNCE BİT (overlap yok)
-          } else if (layer.id.includes('7z')) {
-            newLayer.minzoom = 7;
-            newLayer.maxzoom = 10.99;  // ✅ 11'DEN ÖNCE BİT
-          } else if (layer.id.includes('3z')) {
-            newLayer.minzoom = 3;
-            newLayer.maxzoom = 6.99;   // ✅ 7'DEN ÖNCE BİT
-          }
-          
-          return newLayer;
-        });
-
-        console.log("Style JSON (zoom adjusted):", styleJson);
-        console.log("Layer zoom ranges:");
-        styleJson.layers.forEach(layer => {
-          console.log(`  ${layer.id}: ${layer.minzoom} - ${layer.maxzoom}`);
-        });
-
-        // VectorTileLayer oluştur - OVERZOOM ayarlarıyla
-        const mvtLayer = new VectorTileLayer({
-          style: styleJson,
-          minScale: 0,
-          maxScale: 0
-        });
-
-        // Layer load event'inde tile URL'lerini intercept et
-        mvtLayer.when(() => {
-          this.setState({ message: "✅ MVT Layer yüklendi!" });
-          
-          // Override fetch for tile requests
-          const originalFetch = window.fetch;
-          window.fetch = (url, options = {}) => {
-            const urlStr = url.toString();
-            if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-              
-              // ✅✅✅ DEBUG: Hangi tile isteniyor göster
-              const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
-              if (zxyMatch) {
-                const [, z, x, y] = zxyMatch;
-                console.log(`🔍 Tile request: zoom ${z} (${x}, ${y})`);
-              }
-              
-              // ✅✅✅ OVERZOOM FIX: Zoom 16+ için zoom 15 tile'ını kullan
-              let modifiedUrl = urlStr;
-              if (zxyMatch) {
-                const [, z, x, y] = zxyMatch;
-                const zoom = parseInt(z);
-                
-                if (zoom > 15) {
-                  // Zoom 16+ → zoom 15 tile'ını kullan (overzoom)
-                  const scale = Math.pow(2, zoom - 15);
-                  const x15 = Math.floor(parseInt(x) / scale);
-                  const y15 = Math.floor(parseInt(y) / scale);
-                  modifiedUrl = urlStr.replace(/\/\d+\/\d+\/\d+\.pbf/, `/15/${x15}/${y15}.pbf`);
-                  console.log(`🔄 Overzoom redirect: ${z}/${x}/${y} → 15/${x15}/${y15}`);
-                }
-              }
-              
-              return originalFetch(modifiedUrl, {
-                ...options,
-                headers: {
-                  ...(options['headers'] || {}),
-                  'Authorization': `Bearer ${MANUAL_BEARER}`
-                }
-              }).then(resp => {
-                if (zxyMatch) {
-                  const [, z] = zxyMatch;
-                  console.log(`✅ Tile loaded: zoom ${z}, status: ${resp.status}`);
-                }
-                return resp;
-              });
-            }
-            return originalFetch(url, options);
+        zoomConfigs.forEach(config => {
+          // Bu zoom level için özel style JSON
+          const customStyle = {
+            version: 8,
+            sources: {
+              [config.source]: originalStyle.sources[config.source]
+            },
+            layers: originalStyle.layers.filter(layer => 
+              layer.source === config.source
+            ).map(layer => ({
+              ...layer,
+              minzoom: config.minZoom,
+              maxzoom: config.maxZoom
+            }))
           };
-        }).catch(err => {
-          this.setState({ message: `❌ Layer error: ${err.message}` });
-          console.error("Layer hatası:", err);
+
+          console.log(`Creating layer ${config.name}:`, customStyle);
+
+          const layer = new VectorTileLayer({
+            style: customStyle,
+            minScale: 0,
+            maxScale: 0,
+            title: `Coverage ${config.name}`
+          });
+
+          layer.when(() => {
+            console.log(`✅ Layer ${config.name} loaded`);
+          }).catch(err => {
+            console.error(`❌ Layer ${config.name} error:`, err);
+          });
+
+          map.add(layer);
         });
 
-        map.add(mvtLayer);
+        this.setState({ message: "✅ Tüm layer'lar oluşturuldu!" });
         
       }).catch(err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
@@ -302,6 +232,86 @@ export default class Widget extends React.PureComponent<any, State> {
           style={{ width: "100%", height: "100%" }}
         />
 
+        {/* Zoom Control Panel */}
+        <div style={{
+          position: "absolute",
+          top: "10px",
+          right: "10px",
+          background: "rgba(0,0,0,0.9)",
+          color: "white",
+          padding: "20px",
+          borderRadius: "8px",
+          zIndex: 9999,
+          fontFamily: "monospace",
+          fontSize: "14px",
+          minWidth: "200px"
+        }}>
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
+            🎮 ZOOM TEST
+          </div>
+          
+          <div style={{ 
+            background: "rgba(255,255,255,0.1)", 
+            padding: "15px", 
+            borderRadius: "5px",
+            marginBottom: "15px",
+            textAlign: "center"
+          }}>
+            <div style={{ fontSize: "12px", color: "#aaa", marginBottom: "5px" }}>
+              Zoom Level
+            </div>
+            <div style={{ fontSize: "32px", fontWeight: "bold", color: "#FFD700" }}>
+              {currentZoom}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+            <button
+              onClick={() => {
+                if (this.mapView) {
+                  const newZoom = this.mapView.zoom - 0.5;
+                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: "15px",
+                fontSize: "20px",
+                background: "#f44336",
+                color: "white",
+                border: "none",
+                borderRadius: "5px",
+                cursor: "pointer",
+                fontWeight: "bold"
+              }}
+            >
+              -
+            </button>
+            <button
+              onClick={() => {
+                if (this.mapView) {
+                  const newZoom = this.mapView.zoom + 0.5;
+                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: "15px",
+                fontSize: "20px",
+                background: "#4CAF50",
+                color: "white",
+                border: "none",
+                borderRadius: "5px",
+                cursor: "pointer",
+                fontWeight: "bold"
+              }}
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        {/* Status Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
@@ -314,13 +324,13 @@ export default class Widget extends React.PureComponent<any, State> {
           fontFamily: "monospace",
           fontSize: "12px"
         }}>
-          <strong>MVT Widget:</strong>
+          <strong>MVT Multi-Layer:</strong>
           <div style={{ marginTop: "10px" }}>{message}</div>
           <div style={{ marginTop: "5px", fontSize: "11px" }}>
-            Zoom: {currentZoom} | Bins: {
-              currentZoom < 6 ? "10km" :
-              currentZoom < 10 ? "1km" :
-              currentZoom < 14 ? "100m" : "10m"
+            Expected: {
+              currentZoom < 7 ? "10km (3z)" :
+              currentZoom < 11 ? "1km (7z)" :
+              currentZoom < 15 ? "100m (11z)" : "10m (15z)"
             }
           </div>
         </div>
