@@ -19,7 +19,7 @@ export default class Widget extends React.PureComponent<any, State> {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
-      currentZoom: 6
+      currentZoom: 7
     };
   }
 
@@ -31,7 +31,6 @@ export default class Widget extends React.PureComponent<any, State> {
     if (this.mapView) {
       this.mapView.destroy();
     }
-    window.fetch = this.originalFetch;
   }
 
   loadArcGISAPI = () => {
@@ -98,55 +97,21 @@ export default class Widget extends React.PureComponent<any, State> {
         container: this.mapDiv,
         map: map,
         center: [32, 39],
-        zoom: 7,  // ✅ 6'dan 7'ye çıkardık - API'nin 7z tile'ı var!
+        zoom: 7,  // 7z tile'lar için
         constraints: {
-          snapToZoom: false,  // ✅ Smooth zoom
+          snapToZoom: false,
           minZoom: 3,
           maxZoom: 20
         }
       });
 
-      // Zoom tracking
       this.mapView.watch('zoom', (newZoom) => {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
-        console.log(`🔍 Current zoom: ${newZoom}, Closest API zoom: ${this.getClosestApiZoom(newZoom)}`);
       });
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
       // esriRequest ile Authorization header ekle
-      // ✅✅✅ ÖNEMLİ: FETCH OVERRIDE'I LAYER OLUŞTURMADAN ÖNCE YAP!
-      const originalFetch = window.fetch;
-      window.fetch = (url, options = {}) => {
-        const urlStr = url.toString();
-        if (urlStr.includes('abc.com') || urlStr.includes('/api/vector/tile')) {
-          console.log("🔐 Tile request intercepted:", urlStr);
-          console.log("📋 Original headers:", options['headers']);
-          
-          const newOptions = {
-            ...options,
-            headers: {
-              ...(options['headers'] || {}),
-              'Authorization': `Bearer ${MANUAL_BEARER}`
-            }
-          };
-          
-          console.log("📋 Modified headers:", newOptions.headers);
-          
-          return originalFetch(url, newOptions).then(resp => {
-            console.log(`📡 Response for ${urlStr}:`, resp.status, resp.statusText);
-            if (!resp.ok) {
-              console.error(`❌ HTTP Error ${resp.status} for:`, urlStr);
-            }
-            return resp;
-          }).catch(err => {
-            console.error(`❌ Fetch error for ${urlStr}:`, err);
-            throw err;
-          });
-        }
-        return originalFetch(url, options);
-      };
-
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
@@ -154,95 +119,53 @@ export default class Widget extends React.PureComponent<any, State> {
         responseType: 'json'
       }).then(response => {
         this.setState({ message: "📄 Style JSON alındı" });
-        let styleJson = response.data;
+        const styleJson = response.data;
         
-        console.log("📥 Original Style JSON:", JSON.stringify(styleJson, null, 2));
-        
-        // ✅ TILE URL'LERİNİ KONTROL ET
-        Object.keys(styleJson.sources).forEach(sourceKey => {
-          const source = styleJson.sources[sourceKey];
-          console.log(`🔍 Source: ${sourceKey}`);
-          console.log(`   Tiles:`, source.tiles);
-          console.log(`   Min/Max Zoom:`, source.minzoom, '/', source.maxzoom);
-        });
+        console.log("ORIGINAL STYLE JSON:", styleJson);
 
-        // ✅✅✅ KRİTİK: SOURCE ZOOM RANGE'LERİNİ GENİŞLET
-        // API sadece belirli zoom'larda tile üretiyor ama ArcGIS'e daha geniş range söylemeliyiz
-        if (styleJson.sources.coverage_3z) {
-          styleJson.sources.coverage_3z.minzoom = 0;
-          styleJson.sources.coverage_3z.maxzoom = 7;
-        }
-        if (styleJson.sources.coverage_7z) {
-          styleJson.sources.coverage_7z.minzoom = 7;
-          styleJson.sources.coverage_7z.maxzoom = 11;
-        }
-        if (styleJson.sources.coverage_11z) {
-          styleJson.sources.coverage_11z.minzoom = 11;
-          styleJson.sources.coverage_11z.maxzoom = 15;
-        }
-        if (styleJson.sources.coverage_15z) {
-          styleJson.sources.coverage_15z.minzoom = 15;
-          styleJson.sources.coverage_15z.maxzoom = 24;
-        }
-
-        console.log("📝 Modified source zoom ranges");
-
-        // ✅ OPTİMİZASYON 1: Line layer'ları kaldır (siyah çizgileri önler)
-        styleJson = {
-          ...styleJson,
-          layers: styleJson.layers.filter(layer => layer.type === 'fill')
-        };
-
-        // ✅ OPTİMİZASYON 2: Fill opacity artır (daha belirgin)
-        styleJson.layers = styleJson.layers.map(layer => ({
-          ...layer,
-          paint: {
-            ...layer.paint,
-            'fill-opacity': 0.7,  // 0.5'ten 0.7'ye çıkardık
-            'fill-antialias': true
-          }
-        }));
-
-        console.log("📤 Modified Style JSON:", styleJson);
-
-        // VectorTileLayer oluştur
+        // VectorTileLayer oluştur - SADE HALİ
         const mvtLayer = new VectorTileLayer({
-          style: styleJson,
-          opacity: 1,
-          visible: true  // ✅ Explicit visible
+          style: styleJson
         });
 
+        // Layer load event'inde tile URL'lerini intercept et
         mvtLayer.when(() => {
           this.setState({ message: "✅ MVT Layer yüklendi!" });
-          console.log("✅ Layer loaded successfully");
-          console.log("   Layer visible:", mvtLayer.visible);
-          console.log("   Layer opacity:", mvtLayer.opacity);
-          console.log("   Layer in map:", map.layers.includes(mvtLayer));
+          
+          // Override fetch for tile requests
+          const originalFetch = window.fetch;
+          window.fetch = (url, options = {}) => {
+            const urlStr = url.toString();
+            if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+              console.log("🔒 Intercepting:", urlStr);
+              return originalFetch(url, {
+                ...options,
+                headers: {
+                  ...(options['headers'] || {}),
+                  'Authorization': `Bearer ${MANUAL_BEARER}`
+                }
+              }).then(resp => {
+                console.log("📡", urlStr, "→", resp.status);
+                return resp;
+              });
+            }
+            return originalFetch(url, options);
+          };
         }).catch(err => {
           this.setState({ message: `❌ Layer error: ${err.message}` });
-          console.error("❌ Layer hatası:", err);
+          console.error("Layer hatası:", err);
         });
 
         map.add(mvtLayer);
         
       }).catch(err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
-        console.error("❌ FETCH HATASI detay:", err);
-        console.error("URL:", MVT_STYLE_URL);
-        console.error("Token:", MANUAL_BEARER ? "Var" : "YOK!");
+        console.error("FETCH HATASI:", err);
       });
     }, (err) => {
       this.setState({ message: `❌ Loader error: ${err?.message || err}` });
-      console.error('❌ AMD require error:', err);
+      console.error('AMD require error:', err);
     });
-  };
-
-  // Zoom level'ı scale'e çevir (ArcGIS için)
-  getClosestApiZoom = (zoom: number): number => {
-    const apiZooms = [3, 7, 11, 15];
-    return apiZooms.reduce((prev, curr) => 
-      Math.abs(curr - zoom) < Math.abs(prev - zoom) ? curr : prev
-    );
   };
 
   render() {
@@ -259,63 +182,18 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           left: "10px",
-          background: "rgba(0,0,0,0.85)",
+          background: "rgba(0,0,0,0.8)",
           color: "white",
           padding: "15px",
-          borderRadius: "8px",
+          borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px",
-          minWidth: "280px",
-          boxShadow: "0 4px 6px rgba(0,0,0,0.3)"
+          fontSize: "12px"
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <strong style={{ color: "#4CAF50" }}>📡 MVT Coverage</strong>
-            <span style={{ 
-              fontSize: "10px", 
-              background: "#2196F3", 
-              padding: "2px 6px", 
-              borderRadius: "3px" 
-            }}>
-              Optimized
-            </span>
-          </div>
-          
-          <div style={{ 
-            marginTop: "10px", 
-            borderTop: "1px solid rgba(255,255,255,0.2)", 
-            paddingTop: "10px" 
-          }}>
-            {message}
-          </div>
-          
-          <div style={{ 
-            marginTop: "10px",
-            padding: "8px",
-            background: "rgba(255,255,255,0.05)",
-            borderRadius: "4px",
-            fontSize: "11px"
-          }}>
-            <div style={{ marginBottom: "4px" }}>
-              Zoom: <span style={{ color: "#FFD700", fontWeight: "bold" }}>{currentZoom}</span>
-            </div>
-            <div style={{ fontSize: "10px", color: "#888" }}>
-              Active: {
-                currentZoom < 7 ? "3z tiles (zoom 3-7)" :
-                currentZoom < 11 ? "7z tiles (zoom 7-11)" :
-                currentZoom < 15 ? "11z tiles (zoom 11-15)" : "15z tiles (zoom 15+)"
-              }
-            </div>
-          </div>
-
-          <div style={{
-            marginTop: "8px",
-            fontSize: "9px",
-            color: "#666",
-            borderTop: "1px solid rgba(255,255,255,0.1)",
-            paddingTop: "6px"
-          }}>
-            ✨ No line borders • Higher opacity • Smooth zoom
+          <strong>MVT Widget (Minimal):</strong>
+          <div style={{ marginTop: "10px" }}>{message}</div>
+          <div style={{ marginTop: "5px", fontSize: "11px" }}>
+            Zoom: {currentZoom}
           </div>
         </div>
       </div>
