@@ -212,21 +212,26 @@ export default class Widget extends React.PureComponent<any, State> {
             const urlStr = url.toString();
             if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
               
+              // ✅✅✅ DEBUG: Hangi tile isteniyor göster
+              const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+              if (zxyMatch) {
+                const [, z, x, y] = zxyMatch;
+                console.log(`🔍 Tile request: zoom ${z} (${x}, ${y})`);
+              }
+              
               // ✅✅✅ OVERZOOM FIX: Zoom 16+ için zoom 15 tile'ını kullan
               let modifiedUrl = urlStr;
-              const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
               if (zxyMatch) {
                 const [, z, x, y] = zxyMatch;
                 const zoom = parseInt(z);
                 
                 if (zoom > 15) {
                   // Zoom 16+ → zoom 15 tile'ını kullan (overzoom)
-                  // x, y koordinatlarını zoom 15'e çevir
                   const scale = Math.pow(2, zoom - 15);
                   const x15 = Math.floor(parseInt(x) / scale);
                   const y15 = Math.floor(parseInt(y) / scale);
                   modifiedUrl = urlStr.replace(/\/\d+\/\d+\/\d+\.pbf/, `/15/${x15}/${y15}.pbf`);
-                  console.log(`🔄 Overzoom: ${z}/${x}/${y} → 15/${x15}/${y15}`);
+                  console.log(`🔄 Overzoom redirect: ${z}/${x}/${y} → 15/${x15}/${y15}`);
                 }
               }
               
@@ -236,6 +241,12 @@ export default class Widget extends React.PureComponent<any, State> {
                   ...(options['headers'] || {}),
                   'Authorization': `Bearer ${MANUAL_BEARER}`
                 }
+              }).then(resp => {
+                if (zxyMatch) {
+                  const [, z] = zxyMatch;
+                  console.log(`✅ Tile loaded: zoom ${z}, status: ${resp.status}`);
+                }
+                return resp;
               });
             }
             return originalFetch(url, options);
