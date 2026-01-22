@@ -123,7 +123,15 @@ export default class Widget extends React.PureComponent<any, State> {
         this.setState({ message: "📄 Style JSON alındı" });
         let styleJson = response.data;
         
-        console.log("📥 Original Style JSON:", styleJson);
+        console.log("📥 Original Style JSON:", JSON.stringify(styleJson, null, 2));
+        
+        // ✅ TILE URL'LERİNİ KONTROL ET
+        Object.keys(styleJson.sources).forEach(sourceKey => {
+          const source = styleJson.sources[sourceKey];
+          console.log(`🔍 Source: ${sourceKey}`);
+          console.log(`   Tiles:`, source.tiles);
+          console.log(`   Min/Max Zoom:`, source.minzoom, '/', source.maxzoom);
+        });
 
         // ✅ OPTİMİZASYON 1: Line layer'ları kaldır (siyah çizgileri önler)
         styleJson = {
@@ -159,12 +167,20 @@ export default class Widget extends React.PureComponent<any, State> {
             const urlStr = url.toString();
             if (urlStr.includes(new URL(MVT_STYLE_URL).hostname) || urlStr.includes('/api/vector/tile')) {
               console.log("🔐 Tile request intercepted:", urlStr);
+              console.log("📋 Request options:", options);
+              console.log("🔑 Authorization header:", options['headers']?.['Authorization'] || 'MISSING!');
               return originalFetch(url, {
                 ...options,
                 headers: {
                   ...(options['headers'] || {}),
                   'Authorization': `Bearer ${MANUAL_BEARER}`
                 }
+              }).then(resp => {
+                console.log(`📡 Response for ${urlStr}:`, resp.status, resp.statusText);
+                return resp;
+              }).catch(err => {
+                console.error(`❌ Fetch error for ${urlStr}:`, err);
+                throw err;
               });
             }
             return originalFetch(url, options);
