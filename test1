@@ -1,178 +1,24 @@
-/** @jsx jsx */
-import { React, jsx, DataSourceManager } from "jimu-core";
 
-// API Configuration
-const ARCGIS_API_VERSION = "4.32";
-const PORTAL_URL = "portal";
-const DEFAULT_WEBSCENE_ID = "id";
-const BUILDINGS_SCENELAYER_URL = "https://tiles.arcgis.com/tiles/V6ZHFr6zdgNZuVG0/ArcGIS/rest/services/Buildings/SceneServer";
-const MVT_STYLE_URL = "abc";
+/** @jsx jsx */
+import { React, jsx } from "jimu-core";
+
+const MVT_STYLE_URL = "url//api/vector/styles/all/style.json?coverageLayer=rsrp_dbm";
 const MANUAL_BEARER = "token";
+const ARCGIS_API_VERSION = "4.32";
 
 interface State {
   message: string;
-  is3D: boolean;
 }
 
 export default class Widget extends React.PureComponent<any, State> {
-  private viewDiv: HTMLDivElement;
-  private view: any;
-  private resizeHandler: () => void;
-  private mvtInterceptorAdded = false;
-  private lastViewpoint: any;
-
-  private resolveOverlayWebMapId = () => {
-    const overlayWebMapId = this.props?.config?.overlayWebMapId as string | undefined;
-    const useDataSources = (this.props as any)?.useDataSources as Array<{ dataSourceId: string }> | undefined;
-
-    if (useDataSources?.length) {
-      const dsId = useDataSources[0]?.dataSourceId;
-      const ds = dsId ? DataSourceManager.getInstance().getDataSource(dsId) as any : null;
-      const dsJson = ds?.getDataSourceJson ? ds.getDataSourceJson() : ds?.dataSourceJson;
-      const itemId = dsJson?.itemId || ds?.itemId;
-      return itemId || overlayWebMapId;
-    }
-
-    return overlayWebMapId;
-  };
-
-  private addMvtLayer = (targetMap: any, esriConfig: any, esriRequest: any, VectorTileLayer: any) => {
-    const mvtStyleUrl = (this.props?.config?.mvtStyleUrl as string | undefined) || MVT_STYLE_URL;
-    const mvtBearer = (this.props?.config?.mvtBearer as string | undefined) || MANUAL_BEARER;
-
-    if (!mvtStyleUrl || !mvtBearer) {
-      this.setState({ message: "⚠️ MVT ayarları eksik. mvtStyleUrl/mvtBearer gerekli." });
-      return;
-    }
-
-    if (!this.mvtInterceptorAdded) {
-      try {
-        const mvtOrigin = new URL(mvtStyleUrl).origin;
-        esriConfig.request.interceptors.push({
-          urls: [mvtOrigin],
-          headers: {
-            Authorization: `Bearer ${mvtBearer}`
-          }
-        });
-        this.mvtInterceptorAdded = true;
-      } catch {
-        // ignore malformed URL
-      }
-    }
-
-    esriRequest(mvtStyleUrl, {
-      headers: {
-        Authorization: `Bearer ${mvtBearer}`
-      },
-      responseType: 'json'
-    }).then(response => {
-      const styleJson = response.data;
-
-      const mvtLayer = new VectorTileLayer({
-        style: styleJson,
-        elevationInfo: {
-          mode: "on-the-ground"
-        },
-        labelsVisible: true,
-        opacity: 0.9
-      });
-
-      targetMap.add(mvtLayer);
-
-      mvtLayer.when(() => {
-        this.setState({ message: "✅ MVT Layer yüklendi!" });
-      }).catch((err: any) => {
-        this.setState({ message: `❌ MVT Layer yüklenemedi: ${err.message}` });
-        console.error("MVT layer failed to load:", err);
-      });
-    }).catch((err: any) => {
-      this.setState({ message: `❌ MVT style alınamadı: ${err.message}` });
-      console.error("MVT style request failed:", err);
-    });
-  };
-
-  private addWebMapOverlay = (targetMap: any, portalUrl: string, WebMap: any, Portal: any) => {
-    const overlayWebMapId = this.resolveOverlayWebMapId();
-    const useWebMapBasemap = !!this.props?.config?.useWebMapBasemap;
-
-    if (!overlayWebMapId) {
-      return;
-    }
-
-    const webMap = new WebMap({
-      portalItem: { id: overlayWebMapId },
-      portal: new Portal({ url: portalUrl })
-    });
-
-    webMap.load().then(() => {
-      if (useWebMapBasemap && webMap.basemap) {
-        targetMap.basemap = webMap.basemap;
-      }
-
-      const layers = webMap.layers?.toArray ? webMap.layers.toArray() : [];
-      if (layers.length) {
-        targetMap.addMany(layers);
-      }
-
-      this.setState({ message: "✅ Web Map overlay yüklendi!" });
-    }).catch((err: any) => {
-      this.setState({ message: `❌ Web Map yüklenemedi: ${err.message}` });
-      console.error("WebMap overlay failed to load:", err);
-    });
-  };
-
-  private applyQualityTweaks = () => {
-    if (!this.view) {
-      return;
-    }
-
-    const configPixelRatio = this.props?.config?.pixelRatio as number | undefined;
-    const configPixelRatioMax = this.props?.config?.pixelRatioMax as number | undefined;
-    const basePixelRatio = window.devicePixelRatio || 1;
-
-    const targetPixelRatio = typeof configPixelRatio === "number" && configPixelRatio > 0
-      ? configPixelRatio
-      : Math.max(2, basePixelRatio);
-
-    const maxCap = typeof configPixelRatioMax === "number" && configPixelRatioMax > 0
-      ? configPixelRatioMax
-      : 6;
-
-    this.view.pixelRatio = Math.min(targetPixelRatio, maxCap);
-
-    this.view.qualityProfile = "high";
-
-    const currentEnv = this.view.environment || {};
-    this.view.environment = {
-      ...currentEnv,
-      atmosphereEnabled: false,
-      starsEnabled: false,
-      lighting: {
-        ...(currentEnv.lighting || {}),
-        directShadowsEnabled: true,
-        ambientOcclusionEnabled: true
-      }
-    };
-
-    const allLayers = this.view.map?.allLayers;
-    if (allLayers && allLayers.forEach) {
-      allLayers.forEach((layer: any) => {
-        if (layer?.type === "scene" && "maximumScreenSpaceError" in layer) {
-          layer.maximumScreenSpaceError = 2;
-        }
-      });
-    }
-
-    if (this.view.renderNow) {
-      this.view.renderNow();
-    }
-  };
+  private mapDiv: HTMLDivElement;
+  private mapView: any;
+  private originalFetch = window.fetch;
 
   constructor(props) {
     super(props);
     this.state = {
-      message: "Widget yükleniyor...",
-      is3D: true // 3D mode aktif
+      message: "Widget yükleniyor..."
     };
   }
 
@@ -181,27 +27,41 @@ export default class Widget extends React.PureComponent<any, State> {
   }
 
   componentWillUnmount() {
-    if (this.view) {
-      this.view.destroy();
-    }
-    if (this.resizeHandler) {
-      window.removeEventListener("resize", this.resizeHandler);
+    if (this.mapView) {
+      this.mapView.destroy();
     }
   }
 
   loadArcGISAPI = () => {
     this.setState({ message: "📦 ArcGIS API yükleniyor..." });
 
+    // If API is already loaded, skip script injection
+    if ((window as any).require) {
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.createMap();
+      return;
+    }
+
     const cssLink = document.createElement("link");
     cssLink.rel = "stylesheet";
-    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/light/main.css`;
+    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
     document.head.appendChild(cssLink);
+
+    const existing = document.querySelector(`script[data-arcgis-api="${ARCGIS_API_VERSION}"]`) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => {
+        this.setState({ message: "✅ ArcGIS API yüklendi" });
+        this.createMap();
+      });
+      return;
+    }
 
     const script = document.createElement("script");
     script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
+    script.setAttribute('data-arcgis-api', ARCGIS_API_VERSION);
     script.onload = () => {
       this.setState({ message: "✅ ArcGIS API yüklendi" });
-      this.createScene();
+      this.createMap();
     };
     script.onerror = () => {
       this.setState({ message: "❌ ArcGIS API yüklenemedi" });
@@ -209,196 +69,105 @@ export default class Widget extends React.PureComponent<any, State> {
     document.head.appendChild(script);
   };
 
-  createScene = () => {
-    this.setState({ message: "🌍 3D Scene oluşturuluyor..." });
-
-    (window as any).require([
-      'esri/Map',
-      'esri/WebMap',
-      'esri/WebScene',
-      'esri/views/SceneView',
-      'esri/portal/Portal',
-      'esri/config',
-      'esri/identity/IdentityManager',
-      'esri/layers/SceneLayer',
-      'esri/layers/VectorTileLayer',
-      'esri/request'
-    ], (Map, WebMap, WebScene, SceneView, Portal, esriConfig, IdentityManager, SceneLayer, VectorTileLayer, esriRequest) => {
-      const portalUrl = (this.props?.config?.portalUrl as string | undefined) || PORTAL_URL;
-      const webSceneIdFromConfig = this.props?.config?.websceneId as string | undefined;
-      const webSceneIdFromUrl = new URLSearchParams(window.location.search).get("webscene") || undefined;
-      const webSceneId = webSceneIdFromConfig || webSceneIdFromUrl || DEFAULT_WEBSCENE_ID;
-      esriConfig.portalUrl = portalUrl;
-
-      if (webSceneId) {
-        const portal = new Portal({
-          url: portalUrl,
-          authMode: "immediate"
-        });
-
-        IdentityManager.checkSignInStatus(`${portalUrl}/sharing`).catch(() => {
-          this.setState({ message: "🔐 Portal oturumu gerekli. Lütfen giriş yapın." });
-        });
-
-        const scene = new WebScene({
-          portalItem: { id: webSceneId },
-          portal
-        });
-
-        this.view = new SceneView({
-          container: this.viewDiv,
-          map: scene,
-          qualityProfile: "high",
-          environment: {
-            atmosphereEnabled: false,
-            starsEnabled: false
-          }
-        });
-
-        scene.when(() => {
-          this.applyQualityTweaks();
-          this.attachResizeHandler();
-          if (this.lastViewpoint) {
-            this.view.goTo(this.lastViewpoint, { animate: false });
-          }
-          this.setState({ message: "✅ Portal WebScene yüklendi!" });
-          this.addMvtLayer(scene, esriConfig, esriRequest, VectorTileLayer);
-          this.addWebMapOverlay(scene, portalUrl, WebMap, Portal);
-        }).catch(err => {
-          this.setState({ message: `❌ WebScene yüklenemedi: ${err.message}` });
-          console.error("WebScene failed to load:", err);
-        });
-      } else {
-        const map = new Map({
-          basemap: "gray-vector",
-          ground: "world-elevation"
-        });
-
-        const buildings = new SceneLayer({
-          url: BUILDINGS_SCENELAYER_URL,
-          title: "3D Buildings",
-          popupEnabled: false
-        });
-        map.add(buildings);
-
-        this.view = new SceneView({
-          container: this.viewDiv,
-          map,
-          qualityProfile: "high",
-          environment: {
-            atmosphereEnabled: false,
-            starsEnabled: false
-          }
-        });
-
-        this.view.when(() => {
-          this.applyQualityTweaks();
-          this.attachResizeHandler();
-          if (this.lastViewpoint) {
-            this.view.goTo(this.lastViewpoint, { animate: false });
-          }
-          this.setState({ message: "⚠️ WebScene bulunamadı. Basemap yüklendi, buildings deneniyor..." });
-          this.addMvtLayer(map, esriConfig, esriRequest, VectorTileLayer);
-          this.addWebMapOverlay(map, portalUrl, WebMap, Portal);
-        }).catch(err => {
-          this.setState({ message: `❌ ${err.message}` });
-          console.error("SceneView failed to load:", err);
-        });
-
-        buildings.when(() => {
-          buildings.queryExtent().then(extent => {
-            this.view.goTo({
-              target: extent,
-              tilt: 65
-            }, { animate: false });
-          });
-          this.setState({ message: "✅ 3D Buildings yüklendi!" });
-        }).catch(err => {
-          this.setState({ message: `❌ Buildings yüklenemedi: ${err.message}` });
-          console.error("Buildings failed to load:", err);
-        });
-      }
-    }, (err) => {
-      this.setState({ message: `❌ ArcGIS modülleri yüklenemedi: ${err?.message || err}` });
-      console.error("ArcGIS require failed:", err);
-    });
-  };
-
-  toggleView = () => {
-    this.setState({ is3D: !this.state.is3D }, () => {
-      if (this.view) {
-        this.lastViewpoint = this.view.viewpoint?.clone ? this.view.viewpoint.clone() : this.view.viewpoint;
-        this.view.destroy();
-      }
-      if (this.state.is3D) {
-        this.createScene();
-      } else {
-        this.createMap();
-      }
-    });
-  };
-
   createMap = () => {
-    this.setState({ message: "🗺️ 2D Map modu..." });
+    this.setState({ message: "🗺️ Map oluşturuluyor..." });
 
-    (window as any).require([
-      'esri/Map',
-      'esri/WebMap',
-      'esri/views/MapView',
-      'esri/config',
-      'esri/portal/Portal',
-      'esri/layers/VectorTileLayer',
-      'esri/request'
-    ], (Map, WebMap, MapView, esriConfig, Portal, VectorTileLayer, esriRequest) => {
-      const portalUrl = (this.props?.config?.portalUrl as string | undefined) || PORTAL_URL;
-
-      const map = new Map({
-        basemap: "gray-vector"
-      });
-
-      this.view = new MapView({
-        container: this.viewDiv,
-        map,
-        constraints: {
-          rotationEnabled: false
-        }
-      });
-
-      this.view.when(() => {
-        this.attachResizeHandler();
-        if (this.lastViewpoint) {
-          this.view.goTo(this.lastViewpoint, { animate: false });
-        }
-        this.setState({ message: "✅ 2D Map yüklendi!" });
-        this.addMvtLayer(map, esriConfig, esriRequest, VectorTileLayer);
-        this.addWebMapOverlay(map, portalUrl, WebMap, Portal);
-      }).catch((err: any) => {
-        this.setState({ message: `❌ 2D Map yüklenemedi: ${err.message}` });
-        console.error("MapView failed to load:", err);
-      });
-    }, (err: any) => {
-      this.setState({ message: `❌ ArcGIS modülleri yüklenemedi: ${err?.message || err}` });
-      console.error("ArcGIS require failed:", err);
-    });
-  };
-
-  private attachResizeHandler = () => {
-    if (this.resizeHandler) {
+    if (!this.mapDiv) {
+      // Wait for ref to be set
+      setTimeout(() => this.createMap(), 50);
       return;
     }
-    this.resizeHandler = () => {
-      this.applyQualityTweaks();
-    };
-    window.addEventListener("resize", this.resizeHandler);
+
+    if (!(window as any).require) {
+      this.setState({ message: "❌ ArcGIS API loader bulunamadı" });
+      return;
+    }
+
+    (window as any).require([
+      'esri/Map',
+      'esri/views/MapView',
+      'esri/layers/VectorTileLayer',
+      'esri/request'
+    ], (Map, MapView, VectorTileLayer, esriRequest) => {
+      
+      const map = new Map({
+        basemap: 'dark-gray-vector'
+      });
+
+      this.mapView = new MapView({
+        container: this.mapDiv,
+        map: map,
+        center: [32, 39],
+        zoom: 6
+      });
+
+      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
+
+      // esriRequest ile Authorization header ekle
+      esriRequest(MVT_STYLE_URL, {
+        headers: {
+          'Authorization': `Bearer ${MANUAL_BEARER}`
+        },
+        responseType: 'json'
+      }).then(response => {
+        this.setState({ message: "📄 Style JSON alındı" });
+        const styleJson = response.data;
+        console.log("STYLE JSON:", styleJson);
+
+        // VectorTileLayer oluştur
+        const mvtLayer = new VectorTileLayer({
+          style: styleJson,
+          // Tile istekleri için de custom header gerekebilir
+          customParameters: {
+            token: MANUAL_BEARER
+          }
+        });
+
+        // Layer load event'inde tile URL'lerini intercept et
+        mvtLayer.when(() => {
+          this.setState({ message: "✅ MVT Layer yüklendi!" });
+          
+          // Override fetch for tile requests
+          const originalFetch = window.fetch;
+          window.fetch = (url, options = {}) => {
+            const urlStr = url.toString();
+            if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+              return originalFetch(url, {
+                ...options,
+                headers: {
+                  ...(options['headers'] || {}),
+                  'Authorization': `Bearer ${MANUAL_BEARER}`
+                }
+              });
+            }
+            return originalFetch(url, options);
+          };
+        }).catch(err => {
+          this.setState({ message: `❌ Layer error: ${err.message}` });
+          console.error("Layer hatası:", err);
+        });
+
+        map.add(mvtLayer);
+        
+      }).catch(err => {
+        this.setState({ message: `❌ Fetch error: ${err.message}` });
+        console.error("FETCH HATASI detay:", err);
+        console.error("URL:", MVT_STYLE_URL);
+        console.error("Token:", MANUAL_BEARER ? "Var" : "YOK!");
+      });
+    }, (err) => {
+      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
+      console.error('AMD require error:', err);
+    });
   };
 
   render() {
-    const { message, is3D } = this.state;
+    const { message } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
         <div 
-          ref={el => this.viewDiv = el}
+          ref={el => this.mapDiv = el}
           style={{ width: "100%", height: "100%" }}
         />
 
@@ -406,43 +175,16 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           left: "10px",
-          background: "rgba(0,0,0,0.85)",
+          background: "rgba(0,0,0,0.8)",
           color: "white",
-          padding: "15px 20px",
-          borderRadius: "8px",
+          padding: "15px",
+          borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
+          fontSize: "12px"
         }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <strong>🌍 3D MVT Widget</strong>
-            <span style={{ 
-              fontSize: "10px", 
-              padding: "2px 8px", 
-              background: is3D ? "#00aa00" : "#666",
-              borderRadius: "4px"
-            }}>
-              {is3D ? "3D" : "2D"}
-            </span>
-          </div>
-          <div style={{ marginTop: "10px", fontSize: "11px" }}>{message}</div>
-          <button
-            onClick={this.toggleView}
-            style={{
-              marginTop: "10px",
-              width: "100%",
-              background: "#1a73e8",
-              color: "white",
-              border: "none",
-              borderRadius: "6px",
-              padding: "6px 10px",
-              cursor: "pointer",
-              fontSize: "11px"
-            }}
-          >
-            {is3D ? "Switch to 2D" : "Switch to 3D"}
-          </button>
+          <strong>MVT Widget:</strong>
+          <div style={{ marginTop: "10px" }}>{message}</div>
         </div>
       </div>
     );
