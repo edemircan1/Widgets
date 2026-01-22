@@ -121,47 +121,58 @@ export default class Widget extends React.PureComponent<any, State> {
         this.setState({ message: "📄 Style JSON alındı" });
         let styleJson = response.data;
 
-        // ZOOM RANGE AYARLA - Overzoom için
+        // ZOOM RANGE AYARLA + OVERZOOM FIX
         Object.keys(styleJson.sources).forEach(key => {
           const source = styleJson.sources[key];
-          // Source'ların maxzoom'unu yüksek tut - overzoom için kritik
           if (key === 'coverage_15z') {
             source.minzoom = 15;
-            source.maxzoom = 24;  // ✅ Çok yüksek - tile'ı 24'e kadar kullan
+            source.maxzoom = 15;  // ✅ API sadece 15'te tile üretiyor
           } else if (key === 'coverage_11z') {
             source.minzoom = 11;
-            source.maxzoom = 15;
+            source.maxzoom = 11;
           } else if (key === 'coverage_7z') {
             source.minzoom = 7;
-            source.maxzoom = 11;
+            source.maxzoom = 7;
           } else if (key === 'coverage_3z') {
             source.minzoom = 3;
-            source.maxzoom = 7;
+            source.maxzoom = 3;
           }
         });
 
-        // Layer'ların zoom range'ini genişlet
-        styleJson.layers.forEach(layer => {
+        // ✅✅✅ KRİTİK: Layer'lara OVERZOOM özelliği ekle
+        styleJson.layers = styleJson.layers.map(layer => {
+          const newLayer = {...layer};
+          
           if (layer.id.includes('15z')) {
-            layer.minzoom = 15;
-            layer.maxzoom = 24;  // ✅ Zoom 24'e kadar göster
+            newLayer.minzoom = 15;
+            newLayer.maxzoom = 22;  // Layer zoom 22'ye kadar görünsün
+            // Paint özelliklerine overzoom için ayar ekle
+            if (!newLayer.paint) newLayer.paint = {};
+            // Fill antialiasing kapat - performance için
+            if (layer.type === 'fill') {
+              newLayer.paint['fill-antialias'] = false;
+            }
           } else if (layer.id.includes('11z')) {
-            layer.minzoom = 11;
-            layer.maxzoom = 15;
+            newLayer.minzoom = 11;
+            newLayer.maxzoom = 15;
           } else if (layer.id.includes('7z')) {
-            layer.minzoom = 7;
-            layer.maxzoom = 11;
+            newLayer.minzoom = 7;
+            newLayer.maxzoom = 11;
           } else if (layer.id.includes('3z')) {
-            layer.minzoom = 3;
-            layer.maxzoom = 7;
+            newLayer.minzoom = 3;
+            newLayer.maxzoom = 7;
           }
+          
+          return newLayer;
         });
 
         console.log("Style JSON (zoom adjusted):", styleJson);
 
-        // VectorTileLayer oluştur
+        // VectorTileLayer oluştur - OVERZOOM ayarlarıyla
         const mvtLayer = new VectorTileLayer({
-          style: styleJson
+          style: styleJson,
+          minScale: 0,  // ✅ Scale sınırı yok
+          maxScale: 0   // ✅ Scale sınırı yok
         });
 
         // Layer load event'inde tile URL'lerini intercept et
@@ -173,7 +184,26 @@ export default class Widget extends React.PureComponent<any, State> {
           window.fetch = (url, options = {}) => {
             const urlStr = url.toString();
             if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-              return originalFetch(url, {
+              
+              // ✅✅✅ OVERZOOM FIX: Zoom 16+ için zoom 15 tile'ını kullan
+              let modifiedUrl = urlStr;
+              const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+              if (zxyMatch) {
+                const [, z, x, y] = zxyMatch;
+                const zoom = parseInt(z);
+                
+                if (zoom > 15) {
+                  // Zoom 16+ → zoom 15 tile'ını kullan (overzoom)
+                  // x, y koordinatlarını zoom 15'e çevir
+                  const scale = Math.pow(2, zoom - 15);
+                  const x15 = Math.floor(parseInt(x) / scale);
+                  const y15 = Math.floor(parseInt(y) / scale);
+                  modifiedUrl = urlStr.replace(/\/\d+\/\d+\/\d+\.pbf/, `/15/${x15}/${y15}.pbf`);
+                  console.log(`🔄 Overzoom: ${z}/${x}/${y} → 15/${x15}/${y15}`);
+                }
+              }
+              
+              return originalFetch(modifiedUrl, {
                 ...options,
                 headers: {
                   ...(options['headers'] || {}),
