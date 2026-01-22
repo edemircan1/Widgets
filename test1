@@ -1,5 +1,277 @@
-     * zoom-levels: 
-            - Zoom Level 3, 10000m bins
-            - Zoom Level 7, 1000m bins
-            - Zoom Level 11, 100m bins
-            - Zoom Level 15, 10m bins            
+/** @jsx jsx */
+import { React, jsx } from "jimu-core";
+
+const MVT_STYLE_URL = "url//api/vector/styles/all/style.json?coverageLayer=rsrp_dbm";
+const MANUAL_BEARER = "token";
+const ARCGIS_API_VERSION = "4.32";
+
+interface State {
+  message: string;
+  currentZoom: number;
+}
+
+export default class Widget extends React.PureComponent<any, State> {
+  private mapDiv: HTMLDivElement;
+  private mapView: any;
+  private originalFetch = window.fetch;
+
+  constructor(props) {
+    super(props);
+    this.state = {
+      message: "Widget yükleniyor...",
+      currentZoom: 7
+    };
+  }
+
+  componentDidMount() {
+    this.loadArcGISAPI();
+  }
+
+  componentWillUnmount() {
+    if (this.mapView) {
+      this.mapView.destroy();
+    }
+  }
+
+  loadArcGISAPI = () => {
+    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
+
+    if ((window as any).require) {
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.createMap();
+      return;
+    }
+
+    const cssLink = document.createElement("link");
+    cssLink.rel = "stylesheet";
+    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
+    document.head.appendChild(cssLink);
+
+    const existing = document.querySelector(`script[data-arcgis-api="${ARCGIS_API_VERSION}"]`) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => {
+        this.setState({ message: "✅ ArcGIS API yüklendi" });
+        this.createMap();
+      });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
+    script.setAttribute('data-arcgis-api', ARCGIS_API_VERSION);
+    script.onload = () => {
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.createMap();
+    };
+    script.onerror = () => {
+      this.setState({ message: "❌ ArcGIS API yüklenemedi" });
+    };
+    document.head.appendChild(script);
+  };
+
+  createMap = () => {
+    this.setState({ message: "🗺️ Map oluşturuluyor..." });
+
+    if (!this.mapDiv) {
+      setTimeout(() => this.createMap(), 50);
+      return;
+    }
+
+    if (!(window as any).require) {
+      this.setState({ message: "❌ ArcGIS API loader bulunamadı" });
+      return;
+    }
+
+    (window as any).require([
+      'esri/Map',
+      'esri/views/MapView',
+      'esri/layers/VectorTileLayer',
+      'esri/request'
+    ], (Map, MapView, VectorTileLayer, esriRequest) => {
+      
+      const map = new Map({
+        basemap: 'dark-gray-vector'
+      });
+
+      this.mapView = new MapView({
+        container: this.mapDiv,
+        map: map,
+        center: [32, 39],
+        zoom: 15,  // ✅ 15'te başla - 10m bins görmek için
+        constraints: {
+          snapToZoom: false,
+          minZoom: 3,
+          maxZoom: 22  // ✅ Max zoom'u artır
+        }
+      });
+
+      this.mapView.watch('zoom', (newZoom) => {
+        this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
+      });
+
+      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
+
+      // esriRequest ile Authorization header ekle
+      esriRequest(MVT_STYLE_URL, {
+        headers: {
+          'Authorization': `Bearer ${MANUAL_BEARER}`
+        },
+        responseType: 'json'
+      }).then(response => {
+        this.setState({ message: "📄 Style JSON alındı" });
+        let styleJson = response.data;
+        
+        console.log("ORIGINAL STYLE JSON:", styleJson);
+
+        // ✅✅✅ KRİTİK FIX: ZOOM LEVEL MAPPING DÜZELT
+        // MapLibre vs ArcGIS zoom uyumsuzluğunu düzelt
+        // API'nin zoom 15'i (10m bins) daha geniş zoom range'de görünsün
+        
+        // Sources zoom range'lerini genişlet
+        if (styleJson.sources.coverage_15z) {
+          styleJson.sources.coverage_15z.minzoom = 14;  // 15'ten 14'e
+          styleJson.sources.coverage_15z.maxzoom = 22;  // 15'ten 22'ye
+        }
+        if (styleJson.sources.coverage_11z) {
+          styleJson.sources.coverage_11z.minzoom = 10;  // 11'den 10'a
+          styleJson.sources.coverage_11z.maxzoom = 14;  // 11'den 14'e (15z overlap için)
+        }
+        if (styleJson.sources.coverage_7z) {
+          styleJson.sources.coverage_7z.minzoom = 6;   // 7'den 6'ya
+          styleJson.sources.coverage_7z.maxzoom = 10;  // 7'den 10'a (11z overlap için)
+        }
+        if (styleJson.sources.coverage_3z) {
+          styleJson.sources.coverage_3z.minzoom = 0;   // 3'ten 0'a
+          styleJson.sources.coverage_3z.maxzoom = 6;   // 3'ten 6'ya (7z overlap için)
+        }
+
+        // Layers zoom range'lerini de genişlet
+        styleJson.layers = styleJson.layers.map(layer => {
+          const newLayer = {...layer};
+          
+          if (layer.id.includes('15z')) {
+            newLayer.minzoom = 14;
+            newLayer.maxzoom = 24;
+          } else if (layer.id.includes('11z')) {
+            newLayer.minzoom = 10;
+            newLayer.maxzoom = 14;
+          } else if (layer.id.includes('7z')) {
+            newLayer.minzoom = 6;
+            newLayer.maxzoom = 10;
+          } else if (layer.id.includes('3z')) {
+            newLayer.minzoom = 0;
+            newLayer.maxzoom = 6;
+          }
+          
+          // Line layer'ları KALDIR - siyah çizgiler için
+          return newLayer;
+        }).filter(layer => layer.type === 'fill');  // Sadece fill layer'ları tut
+
+        console.log("MODIFIED STYLE JSON (zoom adjusted):", styleJson);
+
+        // VectorTileLayer oluştur
+        const mvtLayer = new VectorTileLayer({
+          style: styleJson
+        });
+
+        // Layer load event'inde tile URL'lerini intercept et
+        mvtLayer.when(() => {
+          this.setState({ message: "✅ MVT Layer yüklendi!" });
+          
+          // Override fetch for tile requests
+          const originalFetch = window.fetch;
+          window.fetch = (url, options = {}) => {
+            const urlStr = url.toString();
+            if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+              console.log("🔒 Intercepting:", urlStr);
+              return originalFetch(url, {
+                ...options,
+                headers: {
+                  ...(options['headers'] || {}),
+                  'Authorization': `Bearer ${MANUAL_BEARER}`
+                }
+              }).then(resp => {
+                console.log("📡", urlStr, "→", resp.status);
+                return resp;
+              });
+            }
+            return originalFetch(url, options);
+          };
+        }).catch(err => {
+          this.setState({ message: `❌ Layer error: ${err.message}` });
+          console.error("Layer hatası:", err);
+        });
+
+        map.add(mvtLayer);
+        
+      }).catch(err => {
+        this.setState({ message: `❌ Fetch error: ${err.message}` });
+        console.error("FETCH HATASI:", err);
+      });
+    }, (err) => {
+      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
+      console.error('AMD require error:', err);
+    });
+  };
+
+  render() {
+    const { message, currentZoom } = this.state;
+
+    return (
+      <div style={{ width: "100%", height: "100%", position: "relative" }}>
+        <div 
+          ref={el => this.mapDiv = el}
+          style={{ width: "100%", height: "100%" }}
+        />
+
+        <div style={{
+          position: "absolute",
+          top: "10px",
+          left: "10px",
+          background: "rgba(0,0,0,0.9)",
+          color: "white",
+          padding: "15px",
+          borderRadius: "8px",
+          zIndex: 9999,
+          fontFamily: "monospace",
+          fontSize: "12px",
+          minWidth: "280px",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
+        }}>
+          <strong style={{ color: "#4CAF50" }}>📡 MVT Coverage Widget</strong>
+          <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: "1px solid rgba(255,255,255,0.2)" }}>
+            {message}
+          </div>
+          <div style={{ 
+            marginTop: "10px", 
+            padding: "10px",
+            background: "rgba(76, 175, 80, 0.1)",
+            borderRadius: "4px",
+            borderLeft: "3px solid #4CAF50"
+          }}>
+            <div style={{ fontSize: "11px", marginBottom: "6px" }}>
+              <span style={{ color: "#aaa" }}>Current Zoom:</span>{" "}
+              <span style={{ color: "#FFD700", fontWeight: "bold", fontSize: "14px" }}>{currentZoom}</span>
+            </div>
+            <div style={{ fontSize: "10px", color: "#aaa" }}>
+              Active Bin Size: {
+                currentZoom < 6 ? "10,000m (3z)" :
+                currentZoom < 10 ? "1,000m (7z)" :
+                currentZoom < 14 ? "100m (11z)" : 
+                "10m (15z) - MOST DETAILED"
+              }
+            </div>
+          </div>
+          <div style={{ 
+            marginTop: "8px", 
+            fontSize: "9px", 
+            color: "#666",
+            fontStyle: "italic"
+          }}>
+            💡 Zoom 14+ için en detaylı görünüm
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
