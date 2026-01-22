@@ -1,47 +1,220 @@
-{
-  "useMapWidgetIds": {
-    "type": "array",
-    "items": {
-      "type": "string"
-    },
-    "default": []
-  },
-  "tileEndpoint": {
-    "type": "string",
-    "default": "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all"
-  },
-  "bearerToken": {
-    "type": "string",
-    "default": ""
-  },
-  "coverageLayer": {
-    "type": "string",
-    "default": "rsrp_dbm_poly"
-  },
-  "minZoom": {
-    "type": "number",
-    "default": 15
-  },
-  "maxZoom": {
-    "type": "number",
-    "default": 22
-  },
-  "fillOpacity": {
-    "type": "number",
-    "default": 0.5,
-    "minimum": 0,
-    "maximum": 1
-  },
-  "outlineWidth": {
-    "type": "number",
-    "default": 0.5
-  },
-  "enableCache": {
-    "type": "boolean",
-    "default": true
-  },
-  "maxCacheSize": {
-    "type": "number",
-    "default": 100
+/** @jsx jsx */
+import { React, AllWidgetSettingProps, jsx, Immutable } from "jimu-core";
+import { MapWidgetSelector, SettingSection, SettingRow } from "jimu-ui/advanced/setting-components";
+import { TextInput, NumericInput, Switch, Label } from "jimu-ui";
+
+export default class Setting extends React.PureComponent<AllWidgetSettingProps<any>> {
+  
+  onMapWidgetSelected = (useMapWidgetIds: string[]) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      useMapWidgetIds: useMapWidgetIds
+    });
+  };
+
+  onTileEndpointChange = (value: string) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('tileEndpoint', value)
+    });
+  };
+
+  onBearerTokenChange = (value: string) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('bearerToken', value)
+    });
+  };
+
+  onCoverageLayerChange = (value: string) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('coverageLayer', value)
+    });
+  };
+
+  onMinZoomChange = (value: number) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('minZoom', value)
+    });
+  };
+
+  onMaxZoomChange = (value: number) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('maxZoom', value)
+    });
+  };
+
+  onFillOpacityChange = (value: number) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('fillOpacity', value)
+    });
+  };
+
+  onOutlineWidthChange = (value: number) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('outlineWidth', value)
+    });
+  };
+
+  onEnableCacheChange = (checked: boolean) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('enableCache', checked)
+    });
+  };
+
+  onMaxCacheSizeChange = (value: number) => {
+    this.props.onSettingChange({
+      id: this.props.id,
+      config: this.props.config.set('maxCacheSize', value)
+    });
+  };
+
+  render() {
+    const { config } = this.props;
+
+    return (
+      <div className="widget-setting-mvt-renderer" style={{ padding: "20px" }}>
+        
+        {/* Map Widget Selection */}
+        <SettingSection title="Map Configuration">
+          <SettingRow>
+            <Label>Select Map Widget</Label>
+          </SettingRow>
+          <SettingRow>
+            <MapWidgetSelector
+              onSelect={this.onMapWidgetSelected}
+              useMapWidgetIds={this.props.useMapWidgetIds}
+            />
+          </SettingRow>
+        </SettingSection>
+
+        {/* API Configuration */}
+        <SettingSection title="API Configuration">
+          <SettingRow label="Tile Endpoint">
+            <TextInput
+              className="w-100"
+              value={config?.tileEndpoint || ''}
+              onChange={(e) => this.onTileEndpointChange(e.target.value)}
+              placeholder="https://api.example.com/tile/polygons/zxy/all"
+            />
+          </SettingRow>
+
+          <SettingRow label="Bearer Token">
+            <TextInput
+              className="w-100"
+              type="password"
+              value={config?.bearerToken || ''}
+              onChange={(e) => this.onBearerTokenChange(e.target.value)}
+              placeholder="Enter your bearer token"
+            />
+          </SettingRow>
+
+          <SettingRow label="Coverage Layer">
+            <TextInput
+              className="w-100"
+              value={config?.coverageLayer || 'rsrp_dbm_poly'}
+              onChange={(e) => this.onCoverageLayerChange(e.target.value)}
+              placeholder="rsrp_dbm_poly"
+            />
+          </SettingRow>
+        </SettingSection>
+
+        {/* Zoom Configuration */}
+        <SettingSection title="Zoom Configuration">
+          <SettingRow label="Minimum Zoom">
+            <NumericInput
+              className="w-100"
+              value={config?.minZoom || 15}
+              min={0}
+              max={22}
+              onChange={this.onMinZoomChange}
+            />
+          </SettingRow>
+
+          <SettingRow label="Maximum Zoom">
+            <NumericInput
+              className="w-100"
+              value={config?.maxZoom || 22}
+              min={0}
+              max={22}
+              onChange={this.onMaxZoomChange}
+            />
+          </SettingRow>
+        </SettingSection>
+
+        {/* Visual Configuration */}
+        <SettingSection title="Visual Settings">
+          <SettingRow label="Fill Opacity (0-1)">
+            <NumericInput
+              className="w-100"
+              value={config?.fillOpacity || 0.5}
+              min={0}
+              max={1}
+              step={0.1}
+              onChange={this.onFillOpacityChange}
+            />
+          </SettingRow>
+
+          <SettingRow label="Outline Width">
+            <NumericInput
+              className="w-100"
+              value={config?.outlineWidth || 0.5}
+              min={0}
+              max={5}
+              step={0.5}
+              onChange={this.onOutlineWidthChange}
+            />
+          </SettingRow>
+        </SettingSection>
+
+        {/* Cache Configuration */}
+        <SettingSection title="Performance">
+          <SettingRow label="Enable Tile Cache">
+            <Switch
+              checked={config?.enableCache !== false}
+              onChange={(e) => this.onEnableCacheChange(e.target.checked)}
+            />
+          </SettingRow>
+
+          {config?.enableCache !== false && (
+            <SettingRow label="Max Cache Size (tiles)">
+              <NumericInput
+                className="w-100"
+                value={config?.maxCacheSize || 100}
+                min={10}
+                max={1000}
+                onChange={this.onMaxCacheSizeChange}
+              />
+            </SettingRow>
+          )}
+        </SettingSection>
+
+        {/* Info Section */}
+        <SettingSection>
+          <div style={{ 
+            padding: "15px", 
+            background: "rgba(0,0,0,0.05)", 
+            borderRadius: "5px",
+            fontSize: "12px"
+          }}>
+            <strong>ℹ️ Widget Info:</strong>
+            <ul style={{ marginTop: "10px", paddingLeft: "20px" }}>
+              <li>Fetches MVT tiles from configured endpoint</li>
+              <li>Decodes protobuf and converts to GeoJSON</li>
+              <li>Renders with RSRP-based color mapping</li>
+              <li>Only works at zoom levels {config?.minZoom || 15} and above</li>
+              <li>Uses tile caching for better performance</li>
+            </ul>
+          </div>
+        </SettingSection>
+
+      </div>
+    );
   }
 }
