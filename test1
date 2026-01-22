@@ -121,37 +121,39 @@ export default class Widget extends React.PureComponent<any, State> {
         this.setState({ message: "📄 Style JSON alındı" });
         let styleJson = response.data;
 
-        // SADECE ZOOM RANGE AYARLA - başka bir şey değiştirme
+        // ZOOM RANGE AYARLA - Overzoom için
         Object.keys(styleJson.sources).forEach(key => {
           const source = styleJson.sources[key];
+          // Source'ların maxzoom'unu yüksek tut - overzoom için kritik
           if (key === 'coverage_15z') {
-            source.minzoom = 14;
-            source.maxzoom = 22;
+            source.minzoom = 15;
+            source.maxzoom = 24;  // ✅ Çok yüksek - tile'ı 24'e kadar kullan
           } else if (key === 'coverage_11z') {
-            source.minzoom = 10;
-            source.maxzoom = 14;
+            source.minzoom = 11;
+            source.maxzoom = 15;
           } else if (key === 'coverage_7z') {
-            source.minzoom = 6;
-            source.maxzoom = 10;
+            source.minzoom = 7;
+            source.maxzoom = 11;
           } else if (key === 'coverage_3z') {
-            source.minzoom = 0;
-            source.maxzoom = 6;
+            source.minzoom = 3;
+            source.maxzoom = 7;
           }
         });
 
+        // Layer'ların zoom range'ini genişlet
         styleJson.layers.forEach(layer => {
           if (layer.id.includes('15z')) {
-            layer.minzoom = 14;
-            layer.maxzoom = 24;
+            layer.minzoom = 15;
+            layer.maxzoom = 24;  // ✅ Zoom 24'e kadar göster
           } else if (layer.id.includes('11z')) {
-            layer.minzoom = 10;
-            layer.maxzoom = 14;
+            layer.minzoom = 11;
+            layer.maxzoom = 15;
           } else if (layer.id.includes('7z')) {
-            layer.minzoom = 6;
-            layer.maxzoom = 10;
+            layer.minzoom = 7;
+            layer.maxzoom = 11;
           } else if (layer.id.includes('3z')) {
-            layer.minzoom = 0;
-            layer.maxzoom = 6;
+            layer.minzoom = 3;
+            layer.maxzoom = 7;
           }
         });
 
