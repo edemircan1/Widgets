@@ -90,7 +90,7 @@ export default class Widget extends React.PureComponent<any, State> {
     ], (Map, MapView, VectorTileLayer, esriRequest) => {
       
       const map = new Map({
-        basemap: 'dark-gray-vector'
+        basemap: 'dark-gray-vector'  // Veya 'gray-vector', 'streets-night-vector'
       });
 
       this.mapView = new MapView({
@@ -143,15 +143,19 @@ export default class Widget extends React.PureComponent<any, State> {
         styleJson.layers = styleJson.layers.map(layer => {
           const newLayer = {...layer};
           
+          // ✅ OPACITY FIX - Parlak ve canlı görünüm için
+          if (!newLayer.paint) newLayer.paint = {};
+          if (layer.type === 'fill') {
+            newLayer.paint['fill-opacity'] = 0.85;  // 0.5'ten 0.85'e çıkar
+            newLayer.paint['fill-antialias'] = true;
+          }
+          if (layer.type === 'line') {
+            newLayer.paint['line-opacity'] = 1;  // Line'lar tam opak
+          }
+          
           if (layer.id.includes('15z')) {
             newLayer.minzoom = 15;
-            newLayer.maxzoom = 22;  // Layer zoom 22'ye kadar görünsün
-            // Paint özelliklerine overzoom için ayar ekle
-            if (!newLayer.paint) newLayer.paint = {};
-            // Fill antialiasing kapat - performance için
-            if (layer.type === 'fill') {
-              newLayer.paint['fill-antialias'] = false;
-            }
+            newLayer.maxzoom = 22;
           } else if (layer.id.includes('11z')) {
             newLayer.minzoom = 11;
             newLayer.maxzoom = 15;
@@ -171,8 +175,10 @@ export default class Widget extends React.PureComponent<any, State> {
         // VectorTileLayer oluştur - OVERZOOM ayarlarıyla
         const mvtLayer = new VectorTileLayer({
           style: styleJson,
-          minScale: 0,  // ✅ Scale sınırı yok
-          maxScale: 0   // ✅ Scale sınırı yok
+          minScale: 0,
+          maxScale: 0,
+          opacity: 1,  // ✅ Layer opacity tam
+          effect: "bloom(1.5, 0.5px, 0.1)"  // ✅ Parlak görünüm için bloom effect
         });
 
         // Layer load event'inde tile URL'lerini intercept et
