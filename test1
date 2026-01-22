@@ -168,6 +168,30 @@ export default class Widget extends React.PureComponent<any, State> {
           }
         });
 
+        // ✅✅✅ SOURCE ZOOM RANGE'LERİNİ DÜZELT (tile production zoom'ları)
+        Object.keys(styleJson.sources).forEach(key => {
+          const source = styleJson.sources[key];
+          if (key === 'coverage_15z') {
+            source.minzoom = 15;
+            source.maxzoom = 22;  // ✅ Zoom 22'ye kadar 15z tile'ı kullan
+          } else if (key === 'coverage_11z') {
+            source.minzoom = 11;
+            source.maxzoom = 14;  // ✅ 15'E ULAŞINCA KES!
+          } else if (key === 'coverage_7z') {
+            source.minzoom = 7;
+            source.maxzoom = 10;  // ✅ 11'E ULAŞINCA KES!
+          } else if (key === 'coverage_3z') {
+            source.minzoom = 3;
+            source.maxzoom = 6;   // ✅ 7'YE ULAŞINCA KES!
+          }
+        });
+
+        console.log("Source zoom ranges:");
+        Object.keys(styleJson.sources).forEach(key => {
+          const src = styleJson.sources[key];
+          console.log(`  ${key}: ${src.minzoom} - ${src.maxzoom}`);
+        });
+
         // ✅✅✅ KRİTİK: Layer zoom range'lerini OVERLAP OLMADAN ayarla
         styleJson.layers = styleJson.layers.map(layer => {
           const newLayer = {...layer};
