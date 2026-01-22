@@ -97,11 +97,11 @@ export default class Widget extends React.PureComponent<any, State> {
         container: this.mapDiv,
         map: map,
         center: [32, 39],
-        zoom: 15,
+        zoom: 18,  // ✅ Daha yakın başla
         constraints: {
           snapToZoom: false,
           minZoom: 3,
-          maxZoom: 22
+          maxZoom: 24  // ✅ Max zoom artır
         }
       });
 
@@ -124,34 +124,37 @@ export default class Widget extends React.PureComponent<any, State> {
         // SADECE ZOOM RANGE AYARLA - başka bir şey değiştirme
         Object.keys(styleJson.sources).forEach(key => {
           const source = styleJson.sources[key];
+          // SOURCE minzoom/maxzoom = tile üretim zoom'u (API'dan gelen)
+          // Bunları DEĞİŞTİRME, API hangi zoom'da tile üretiyorsa o kalmalı
           if (key === 'coverage_15z') {
-            source.minzoom = 14;
-            source.maxzoom = 22;
+            source.minzoom = 15;  // API zoom 15'te tile üretiyor
+            source.maxzoom = 15;  // API zoom 15'te tile üretiyor
           } else if (key === 'coverage_11z') {
-            source.minzoom = 10;
-            source.maxzoom = 14;
+            source.minzoom = 11;
+            source.maxzoom = 11;
           } else if (key === 'coverage_7z') {
-            source.minzoom = 6;
-            source.maxzoom = 10;
+            source.minzoom = 7;
+            source.maxzoom = 7;
           } else if (key === 'coverage_3z') {
-            source.minzoom = 0;
-            source.maxzoom = 6;
+            source.minzoom = 3;
+            source.maxzoom = 3;
           }
         });
 
+        // LAYER minzoom/maxzoom = tile'ların hangi zoom'larda GÖRÜNECEĞI
         styleJson.layers.forEach(layer => {
           if (layer.id.includes('15z')) {
-            layer.minzoom = 14;
-            layer.maxzoom = 24;
+            layer.minzoom = 13;   // Zoom 13'ten itibaren göster
+            layer.maxzoom = 24;   // Zoom 24'e kadar göster (over-zoom)
           } else if (layer.id.includes('11z')) {
-            layer.minzoom = 10;
-            layer.maxzoom = 14;
+            layer.minzoom = 9;
+            layer.maxzoom = 13;   // 15z başladığında kes
           } else if (layer.id.includes('7z')) {
-            layer.minzoom = 6;
-            layer.maxzoom = 10;
+            layer.minzoom = 5;
+            layer.maxzoom = 9;    // 11z başladığında kes
           } else if (layer.id.includes('3z')) {
             layer.minzoom = 0;
-            layer.maxzoom = 6;
+            layer.maxzoom = 5;    // 7z başladığında kes
           }
         });
 
