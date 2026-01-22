@@ -1,23 +1,327 @@
-{
-  "name": "mvt-polygon-renderer",
-  "type": "widget",
-  "version": "1.0.0",
-  "exbVersion": "1.14.0",
-  "author": "Your Organization",
-  "description": "MVT Polygon Renderer with RSRP Color Mapping",
-  "copyright": "",
-  "license": "MIT",
-  "properties": {
-    "supportInlineEditing": false,
-    "hasEmbeddedLayout": false
-  },
-  "main": "dist/runtime/widget.js",
-  "thumbnail": "icon.svg",
-  "translatedLocales": [
-    "en"
-  ],
-  "defaultSize": {
-    "width": 800,
-    "height": 600
+/** @jsx jsx */
+import { React, jsx, AllWidgetProps, ReactRedux } from "jimu-core";
+import { JimuMapViewComponent, JimuMapView } from "jimu-arcgis";
+
+const { connect } = ReactRedux;
+
+interface State {
+  message: string;
+  currentZoom: number;
+  featureCount: number;
+}
+
+class Widget extends React.PureComponent<AllWidgetProps<any>, State> {
+  private graphicsLayer: any;
+  private jimuMapView: JimuMapView = null;
+  private isLoading: boolean = false;
+
+  constructor(props) {
+    super(props);
+    this.state = {
+      message: "Harita bekleniyor...",
+      currentZoom: 0,
+      featureCount: 0
+    };
+  }
+
+  componentWillUnmount() {
+    if (this.graphicsLayer && this.jimuMapView) {
+      this.jimuMapView.view.map.remove(this.graphicsLayer);
+    }
+  }
+
+  onActiveViewChange = (jimuMapView: JimuMapView) => {
+    if (!jimuMapView) {
+      this.jimuMapView = null;
+      return;
+    }
+
+    this.jimuMapView = jimuMapView;
+    const view = jimuMapView.view;
+
+    view.when(() => {
+      this.initializeLayer(view);
+    });
+  };
+
+  initializeLayer = (view: any) => {
+    (window as any).require([
+      'esri/layers/GraphicsLayer',
+      'esri/Graphic',
+      'esri/geometry/Polygon'
+    ], (GraphicsLayer, Graphic, Polygon) => {
+      
+      this.graphicsLayer = new GraphicsLayer({
+        title: "MVT Polygons"
+      });
+
+      view.map.add(this.graphicsLayer);
+
+      // Store for later use
+      (window as any).EsriGraphic = Graphic;
+      (window as any).EsriPolygon = Polygon;
+
+      this.setState({ message: "✅ Hazır!" });
+
+      // Watch zoom
+      view.watch('zoom', (zoom) => {
+        this.setState({ currentZoom: Math.round(zoom * 10) / 10 });
+      });
+
+      // Watch extent changes
+      view.watch('stationary', (stationary) => {
+        if (stationary && view.zoom >= 15) {
+          this.loadData(view);
+        }
+      });
+
+      // Initial load
+      if (view.zoom >= 15) {
+        this.loadData(view);
+      }
+    });
+  };
+
+  loadData = async (view: any) => {
+    if (this.isLoading) return;
+    this.isLoading = true;
+
+    this.setState({ message: "📡 Veri yükleniyor..." });
+
+    try {
+      const tiles = this.calculateTiles(view.extent);
+      let totalFeatures = 0;
+
+      this.graphicsLayer.removeAll();
+
+      for (const tile of tiles) {
+        const features = await this.fetchTile(tile.z, tile.x, tile.y);
+        this.renderFeatures(features);
+        totalFeatures += features.length;
+      }
+
+      this.setState({ 
+        message: `✅ ${totalFeatures} polygon yüklendi`,
+        featureCount: totalFeatures
+      });
+
+    } catch (error) {
+      console.error("Load error:", error);
+      this.setState({ message: `❌ Hata: ${error.message}` });
+    }
+
+    this.isLoading = false;
+  };
+
+  calculateTiles = (extent: any) => {
+    const zoom = 15;
+    const tiles = [];
+
+    const lon2tile = (lon, z) => Math.floor((lon + 180) / 360 * Math.pow(2, z));
+    const lat2tile = (lat, z) => Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * Math.pow(2, z));
+
+    const minX = lon2tile(extent.xmin, zoom);
+    const maxX = lon2tile(extent.xmax, zoom);
+    const minY = lat2tile(extent.ymax, zoom);
+    const maxY = lat2tile(extent.ymin, zoom);
+
+    for (let x = minX; x <= maxX; x++) {
+      for (let y = minY; y <= maxY; y++) {
+        tiles.push({ z: zoom, x, y });
+      }
+    }
+
+    return tiles;
+  };
+
+  fetchTile = async (z: number, x: number, y: number): Promise<any[]> => {
+    const endpoint = this.props.config?.tileEndpoint || 'https://abc.com/oauth21/api/vector/tile/polygons/zxy/all';
+    const token = this.props.config?.bearerToken || 'token';
+    const layer = this.props.config?.coverageLayer || 'rsrp_dbm_poly';
+
+    const url = `${endpoint}/${z}/${x}/${y}.pbf?coverageLayer=${layer}`;
+
+    const response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const buffer = await response.arrayBuffer();
+    return this.decodePBF(buffer, x, y, z);
+  };
+
+  decodePBF = (buffer: ArrayBuffer, x: number, y: number, z: number): any[] => {
+    // Simple PBF decode using native DataView
+    const features = [];
+    
+    try {
+      // Load external library if available
+      if ((window as any).Pbf && (window as any).VectorTile) {
+        const Pbf = (window as any).Pbf;
+        const VectorTile = (window as any).VectorTile;
+        
+        const tile = new VectorTile(new Pbf(buffer));
+        const layer = tile.layers['data'];
+        
+        if (layer) {
+          for (let i = 0; i < layer.length; i++) {
+            const feature = layer.feature(i);
+            const geojson = feature.toGeoJSON(x, y, z);
+            if (geojson.geometry.type === 'Polygon') {
+              features.push(geojson);
+            }
+          }
+        }
+      } else {
+        // Fallback: Load libraries on demand
+        this.loadVectorTileLibrary().then(() => {
+          console.log("Libraries loaded, retry fetch");
+        });
+      }
+    } catch (error) {
+      console.error("Decode error:", error);
+    }
+
+    return features;
+  };
+
+  loadVectorTileLibrary = (): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if ((window as any).Pbf && (window as any).VectorTile) {
+        resolve();
+        return;
+      }
+
+      // Load Pbf first
+      const script1 = document.createElement('script');
+      script1.src = 'https://unpkg.com/pbf@3.2.1/dist/pbf.js';
+      script1.onload = () => {
+        // Then load VectorTile
+        const script2 = document.createElement('script');
+        script2.src = 'https://unpkg.com/@mapbox/vector-tile@1.3.1/dist/vectortile.js';
+        script2.onload = () => {
+          console.log("✅ Libraries loaded");
+          resolve();
+        };
+        script2.onerror = reject;
+        document.head.appendChild(script2);
+      };
+      script1.onerror = reject;
+      document.head.appendChild(script1);
+    });
+  };
+
+  getColor = (rsrp: number): [number, number, number, number] => {
+    const colors = [
+      [-135, [49, 54, 149]],
+      [-126, [69, 117, 180]],
+      [-118, [116, 173, 209]],
+      [-109, [171, 217, 233]],
+      [-100, [224, 243, 248]],
+      [-92, [255, 255, 191]],
+      [-83, [254, 224, 144]],
+      [-75, [253, 174, 97]],
+      [-66, [244, 109, 67]],
+      [-57, [215, 48, 39]],
+      [-49, [165, 0, 38]]
+    ];
+
+    for (let i = 0; i < colors.length - 1; i++) {
+      if (rsrp >= colors[i][0] && rsrp < colors[i + 1][0]) {
+        const c1 = colors[i][1] as number[];
+        const c2 = colors[i + 1][1] as number[];
+        const ratio = (rsrp - colors[i][0]) / (colors[i + 1][0] - colors[i][0]);
+        
+        return [
+          Math.round(c1[0] + (c2[0] - c1[0]) * ratio),
+          Math.round(c1[1] + (c2[1] - c1[1]) * ratio),
+          Math.round(c1[2] + (c2[2] - c1[2]) * ratio),
+          128
+        ];
+      }
+    }
+
+    return rsrp <= -135 ? [49, 54, 149, 128] : [165, 0, 38, 128];
+  };
+
+  renderFeatures = (features: any[]) => {
+    const Graphic = (window as any).EsriGraphic;
+    const Polygon = (window as any).EsriPolygon;
+
+    features.forEach(feature => {
+      const rsrp = feature.properties?.rsrp_dbm;
+      if (rsrp === undefined) return;
+
+      const color = this.getColor(rsrp);
+      const rings = feature.geometry.coordinates.map(ring => 
+        ring.map(coord => [coord[0], coord[1]])
+      );
+
+      const polygon = new Polygon({
+        rings: rings,
+        spatialReference: { wkid: 4326 }
+      });
+
+      const graphic = new Graphic({
+        geometry: polygon,
+        symbol: {
+          type: "simple-fill",
+          color: color,
+          outline: { color: [100, 100, 100, 100], width: 0.5 }
+        },
+        attributes: { rsrp_dbm: rsrp }
+      });
+
+      this.graphicsLayer.add(graphic);
+    });
+  };
+
+  render() {
+    const { useMapWidgetIds } = this.props;
+    const { message, currentZoom, featureCount } = this.state;
+
+    if (!useMapWidgetIds || useMapWidgetIds.length === 0) {
+      return (
+        <div style={{ padding: "20px", textAlign: "center" }}>
+          ⚠️ Please select a Map widget in settings
+        </div>
+      );
+    }
+
+    return (
+      <div style={{ width: "100%", height: "100%", position: "relative" }}>
+        
+        <JimuMapViewComponent
+          useMapWidgetId={useMapWidgetIds[0]}
+          onActiveViewChange={this.onActiveViewChange}
+        />
+
+        <div style={{
+          position: "absolute",
+          top: "10px",
+          right: "10px",
+          background: "rgba(0,0,0,0.85)",
+          color: "white",
+          padding: "12px",
+          borderRadius: "6px",
+          fontSize: "11px",
+          fontFamily: "monospace",
+          zIndex: 999
+        }}>
+          <div style={{ fontWeight: "bold", marginBottom: "8px" }}>
+            🎨 MVT Renderer
+          </div>
+          <div>Zoom: {currentZoom}</div>
+          <div>Features: {featureCount}</div>
+          <div style={{ fontSize: "10px", color: "#aaa", marginTop: "8px" }}>
+            {message}
+          </div>
+        </div>
+
+      </div>
+    );
   }
 }
+
+export default connect()(Widget);
