@@ -101,7 +101,7 @@ export default class Widget extends React.PureComponent<any, State> {
         center: [32, 39],
         zoom: 6,
         constraints: {
-          snapToZoom: false,  // Sürekli zoom için - ÇOK ÖNEMLİ!
+          snapToZoom: false,  // Sürekli zoom için
           minZoom: 3,
           maxZoom: 20
         }
@@ -114,7 +114,7 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // Global fetch override - tile requests için
+      // FETCH OVERRIDE - Tile requests için Authorization ekle
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
         if (urlStr.includes('api/vector/tile') || urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
@@ -135,100 +135,54 @@ export default class Widget extends React.PureComponent<any, State> {
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı, layer'lar oluşturuluyor..." });
-        const styleJson = response.data;
+        this.setState({ message: "📄 Style JSON alındı" });
+        let styleJson = response.data;
 
-        // HER SOURCE İÇİN AYRI VECTORTILELAYER OLUŞTUR
-        const zoomLevels = [
-          { name: '3z', minZoom: 3, maxZoom: 7 },
-          { name: '7z', minZoom: 7, maxZoom: 11 },
-          { name: '11z', minZoom: 11, maxZoom: 15 },
-          { name: '15z', minZoom: 15, maxZoom: 24 }
-        ];
+        console.log("Original Style JSON:", JSON.stringify(styleJson, null, 2));
 
-        let layersLoaded = 0;
-        const totalLayers = zoomLevels.length;
+        // SADECE LINE LAYER'LARI KALDIR - Fill'leri tut
+        styleJson = {
+          ...styleJson,
+          layers: styleJson.layers.filter(layer => layer.type === 'fill')
+        };
 
-        zoomLevels.forEach(({ name, minZoom, maxZoom }) => {
-          const sourceName = `coverage_${name}`;
-          const sourceConfig = styleJson.sources[sourceName];
-
-          if (!sourceConfig) {
-            console.warn(`Source ${sourceName} bulunamadı`);
-            return;
+        // OPACITY ARTIR - Daha net görünüm için
+        styleJson.layers = styleJson.layers.map(layer => ({
+          ...layer,
+          paint: {
+            ...layer.paint,
+            'fill-opacity': layer.paint['fill-opacity'] ? 
+              Math.min(layer.paint['fill-opacity'] * 1.3, 1) : 0.7
           }
+        }));
 
-          // Bu zoom level için sadece fill layer'ları kullan (line'ları KES)
-          const filteredLayers = styleJson.layers.filter(layer => 
-            layer.source === sourceName && 
-            layer.type === 'fill'  // SADECE FILL - line'ları kaldır
-          ).map(layer => ({
-            ...layer,
-            minzoom: minZoom,
-            maxzoom: maxZoom,
-            paint: {
-              ...layer.paint,
-              'fill-opacity': 0.65,  // Daha net görünüm
-              'fill-antialias': true  // Kenar yumuşatma
-            }
-          }));
+        console.log("Modified Style JSON:", JSON.stringify(styleJson, null, 2));
 
-          // Bu source için özel style JSON
-          const customStyle = {
-            version: 8,
-            sources: {
-              [sourceName]: {
-                ...sourceConfig,
-                minzoom: minZoom,
-                maxzoom: maxZoom
-              }
-            },
-            layers: filteredLayers
-          };
-
-          console.log(`Creating layer for ${name}:`, customStyle);
-
-          const mvtLayer = new VectorTileLayer({
-            style: customStyle,
-            minScale: this.zoomToScale(minZoom),
-            maxScale: this.zoomToScale(maxZoom),
-            opacity: 0.9,
-            effect: "bloom(1.5, 0.5px, 0.1)"  // Daha net görünüm
-          });
-
-          mvtLayer.when(() => {
-            layersLoaded++;
-            this.setState({ 
-              message: `✅ ${layersLoaded}/${totalLayers} MVT Layer yüklendi (${name})` 
-            });
-            
-            if (layersLoaded === totalLayers) {
-              setTimeout(() => {
-                this.setState({ message: "✅ Tüm layer'lar hazır!" });
-              }, 1000);
-            }
-          }).catch(err => {
-            console.error(`Layer ${name} hatası:`, err);
-            this.setState({ message: `❌ Layer error (${name}): ${err.message}` });
-          });
-
-          map.add(mvtLayer);
+        // TEK LAYER OLUŞTUR - Orijinal yapıyı koru
+        const mvtLayer = new VectorTileLayer({
+          style: styleJson,
+          opacity: 1,
+          effect: "bloom(1.2, 0.5px, 0)"
         });
 
+        mvtLayer.when(() => {
+          this.setState({ message: "✅ MVT Layer yüklendi!" });
+          console.log("Layer başarıyla yüklendi");
+        }).catch(err => {
+          this.setState({ message: `❌ Layer error: ${err.message}` });
+          console.error("Layer hatası detay:", err);
+        });
+
+        map.add(mvtLayer);
+        
       }).catch(err => {
-        this.setState({ message: `❌ Style fetch error: ${err.message}` });
+        this.setState({ message: `❌ Fetch error: ${err.message}` });
         console.error("FETCH HATASI:", err);
       });
     }, (err) => {
       this.setState({ message: `❌ Loader error: ${err?.message || err}` });
       console.error('AMD require error:', err);
     });
-  };
-
-  // Zoom level'ı scale'e çevir (ArcGIS için)
-  zoomToScale = (zoom: number): number => {
-    // Web Mercator: scale = 591657527.591555 / (2^zoom)
-    return 591657527.591555 / Math.pow(2, zoom);
   };
 
   render() {
@@ -263,10 +217,10 @@ export default class Widget extends React.PureComponent<any, State> {
             Current Zoom: <span style={{ color: "#FFD700", fontWeight: "bold" }}>{currentZoom}</span>
           </div>
           <div style={{ marginTop: "6px", fontSize: "10px", color: "#888" }}>
-            Active Tiles: {
-              currentZoom < 7 ? "3z" :
-              currentZoom < 11 ? "7z" :
-              currentZoom < 15 ? "11z" : "15z"
+            Expected Tiles: {
+              currentZoom < 7 ? "3z (zoom 3-7)" :
+              currentZoom < 11 ? "7z (zoom 7-11)" :
+              currentZoom < 15 ? "11z (zoom 11-15)" : "15z (zoom 15+)"
             }
           </div>
         </div>
