@@ -97,11 +97,11 @@ export default class Widget extends React.PureComponent<any, State> {
         container: this.mapDiv,
         map: map,
         center: [32, 39],
-        zoom: 15,  // ✅ 15'te başla - 10m bins görmek için
+        zoom: 15,
         constraints: {
           snapToZoom: false,
           minZoom: 3,
-          maxZoom: 22  // ✅ Max zoom'u artır
+          maxZoom: 22
         }
       });
 
@@ -120,54 +120,42 @@ export default class Widget extends React.PureComponent<any, State> {
       }).then(response => {
         this.setState({ message: "📄 Style JSON alındı" });
         let styleJson = response.data;
-        
-        console.log("ORIGINAL STYLE JSON:", styleJson);
 
-        // ✅✅✅ KRİTİK FIX: ZOOM LEVEL MAPPING DÜZELT
-        // MapLibre vs ArcGIS zoom uyumsuzluğunu düzelt
-        // API'nin zoom 15'i (10m bins) daha geniş zoom range'de görünsün
-        
-        // Sources zoom range'lerini genişlet
-        if (styleJson.sources.coverage_15z) {
-          styleJson.sources.coverage_15z.minzoom = 14;  // 15'ten 14'e
-          styleJson.sources.coverage_15z.maxzoom = 22;  // 15'ten 22'ye
-        }
-        if (styleJson.sources.coverage_11z) {
-          styleJson.sources.coverage_11z.minzoom = 10;  // 11'den 10'a
-          styleJson.sources.coverage_11z.maxzoom = 14;  // 11'den 14'e (15z overlap için)
-        }
-        if (styleJson.sources.coverage_7z) {
-          styleJson.sources.coverage_7z.minzoom = 6;   // 7'den 6'ya
-          styleJson.sources.coverage_7z.maxzoom = 10;  // 7'den 10'a (11z overlap için)
-        }
-        if (styleJson.sources.coverage_3z) {
-          styleJson.sources.coverage_3z.minzoom = 0;   // 3'ten 0'a
-          styleJson.sources.coverage_3z.maxzoom = 6;   // 3'ten 6'ya (7z overlap için)
-        }
-
-        // Layers zoom range'lerini de genişlet
-        styleJson.layers = styleJson.layers.map(layer => {
-          const newLayer = {...layer};
-          
-          if (layer.id.includes('15z')) {
-            newLayer.minzoom = 14;
-            newLayer.maxzoom = 24;
-          } else if (layer.id.includes('11z')) {
-            newLayer.minzoom = 10;
-            newLayer.maxzoom = 14;
-          } else if (layer.id.includes('7z')) {
-            newLayer.minzoom = 6;
-            newLayer.maxzoom = 10;
-          } else if (layer.id.includes('3z')) {
-            newLayer.minzoom = 0;
-            newLayer.maxzoom = 6;
+        // SADECE ZOOM RANGE AYARLA - başka bir şey değiştirme
+        Object.keys(styleJson.sources).forEach(key => {
+          const source = styleJson.sources[key];
+          if (key === 'coverage_15z') {
+            source.minzoom = 14;
+            source.maxzoom = 22;
+          } else if (key === 'coverage_11z') {
+            source.minzoom = 10;
+            source.maxzoom = 14;
+          } else if (key === 'coverage_7z') {
+            source.minzoom = 6;
+            source.maxzoom = 10;
+          } else if (key === 'coverage_3z') {
+            source.minzoom = 0;
+            source.maxzoom = 6;
           }
-          
-          // Line layer'ları KALDIR - siyah çizgiler için
-          return newLayer;
-        }).filter(layer => layer.type === 'fill');  // Sadece fill layer'ları tut
+        });
 
-        console.log("MODIFIED STYLE JSON (zoom adjusted):", styleJson);
+        styleJson.layers.forEach(layer => {
+          if (layer.id.includes('15z')) {
+            layer.minzoom = 14;
+            layer.maxzoom = 24;
+          } else if (layer.id.includes('11z')) {
+            layer.minzoom = 10;
+            layer.maxzoom = 14;
+          } else if (layer.id.includes('7z')) {
+            layer.minzoom = 6;
+            layer.maxzoom = 10;
+          } else if (layer.id.includes('3z')) {
+            layer.minzoom = 0;
+            layer.maxzoom = 6;
+          }
+        });
+
+        console.log("Style JSON (zoom adjusted):", styleJson);
 
         // VectorTileLayer oluştur
         const mvtLayer = new VectorTileLayer({
@@ -183,16 +171,12 @@ export default class Widget extends React.PureComponent<any, State> {
           window.fetch = (url, options = {}) => {
             const urlStr = url.toString();
             if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-              console.log("🔒 Intercepting:", urlStr);
               return originalFetch(url, {
                 ...options,
                 headers: {
                   ...(options['headers'] || {}),
                   'Authorization': `Bearer ${MANUAL_BEARER}`
                 }
-              }).then(resp => {
-                console.log("📡", urlStr, "→", resp.status);
-                return resp;
               });
             }
             return originalFetch(url, options);
@@ -228,47 +212,22 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           left: "10px",
-          background: "rgba(0,0,0,0.9)",
+          background: "rgba(0,0,0,0.8)",
           color: "white",
           padding: "15px",
-          borderRadius: "8px",
+          borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px",
-          minWidth: "280px",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
+          fontSize: "12px"
         }}>
-          <strong style={{ color: "#4CAF50" }}>📡 MVT Coverage Widget</strong>
-          <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: "1px solid rgba(255,255,255,0.2)" }}>
-            {message}
-          </div>
-          <div style={{ 
-            marginTop: "10px", 
-            padding: "10px",
-            background: "rgba(76, 175, 80, 0.1)",
-            borderRadius: "4px",
-            borderLeft: "3px solid #4CAF50"
-          }}>
-            <div style={{ fontSize: "11px", marginBottom: "6px" }}>
-              <span style={{ color: "#aaa" }}>Current Zoom:</span>{" "}
-              <span style={{ color: "#FFD700", fontWeight: "bold", fontSize: "14px" }}>{currentZoom}</span>
-            </div>
-            <div style={{ fontSize: "10px", color: "#aaa" }}>
-              Active Bin Size: {
-                currentZoom < 6 ? "10,000m (3z)" :
-                currentZoom < 10 ? "1,000m (7z)" :
-                currentZoom < 14 ? "100m (11z)" : 
-                "10m (15z) - MOST DETAILED"
-              }
-            </div>
-          </div>
-          <div style={{ 
-            marginTop: "8px", 
-            fontSize: "9px", 
-            color: "#666",
-            fontStyle: "italic"
-          }}>
-            💡 Zoom 14+ için en detaylı görünüm
+          <strong>MVT Widget:</strong>
+          <div style={{ marginTop: "10px" }}>{message}</div>
+          <div style={{ marginTop: "5px", fontSize: "11px" }}>
+            Zoom: {currentZoom} | Bins: {
+              currentZoom < 6 ? "10km" :
+              currentZoom < 10 ? "1km" :
+              currentZoom < 14 ? "100m" : "10m"
+            }
           </div>
         </div>
       </div>
