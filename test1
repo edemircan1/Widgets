@@ -139,28 +139,32 @@ export default class Widget extends React.PureComponent<any, State> {
           }
         });
 
-        // ✅✅✅ KRİTİK: Layer'lara OVERZOOM özelliği ekle
+        // ✅✅✅ KRİTİK: Layer zoom range'lerini OVERLAP OLMADAN ayarla
         styleJson.layers = styleJson.layers.map(layer => {
           const newLayer = {...layer};
           
           if (layer.id.includes('15z')) {
-            newLayer.minzoom = 15;
+            newLayer.minzoom = 15;  // ✅ TAM 15'te başla
             newLayer.maxzoom = 22;
           } else if (layer.id.includes('11z')) {
             newLayer.minzoom = 11;
-            newLayer.maxzoom = 15;
+            newLayer.maxzoom = 14.99;  // ✅ 15'TEN ÖNCE BİT (overlap yok)
           } else if (layer.id.includes('7z')) {
             newLayer.minzoom = 7;
-            newLayer.maxzoom = 11;
+            newLayer.maxzoom = 10.99;  // ✅ 11'DEN ÖNCE BİT
           } else if (layer.id.includes('3z')) {
             newLayer.minzoom = 3;
-            newLayer.maxzoom = 7;
+            newLayer.maxzoom = 6.99;   // ✅ 7'DEN ÖNCE BİT
           }
           
           return newLayer;
         });
 
         console.log("Style JSON (zoom adjusted):", styleJson);
+        console.log("Layer zoom ranges:");
+        styleJson.layers.forEach(layer => {
+          console.log(`  ${layer.id}: ${layer.minzoom} - ${layer.maxzoom}`);
+        });
 
         // VectorTileLayer oluştur - OVERZOOM ayarlarıyla
         const mvtLayer = new VectorTileLayer({
