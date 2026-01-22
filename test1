@@ -114,6 +114,38 @@ export default class Widget extends React.PureComponent<any, State> {
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
       // esriRequest ile Authorization header ekle
+      // ✅✅✅ ÖNEMLİ: FETCH OVERRIDE'I LAYER OLUŞTURMADAN ÖNCE YAP!
+      const originalFetch = window.fetch;
+      window.fetch = (url, options = {}) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('abc.com') || urlStr.includes('/api/vector/tile')) {
+          console.log("🔐 Tile request intercepted:", urlStr);
+          console.log("📋 Original headers:", options['headers']);
+          
+          const newOptions = {
+            ...options,
+            headers: {
+              ...(options['headers'] || {}),
+              'Authorization': `Bearer ${MANUAL_BEARER}`
+            }
+          };
+          
+          console.log("📋 Modified headers:", newOptions.headers);
+          
+          return originalFetch(url, newOptions).then(resp => {
+            console.log(`📡 Response for ${urlStr}:`, resp.status, resp.statusText);
+            if (!resp.ok) {
+              console.error(`❌ HTTP Error ${resp.status} for:`, urlStr);
+            }
+            return resp;
+          }).catch(err => {
+            console.error(`❌ Fetch error for ${urlStr}:`, err);
+            throw err;
+          });
+        }
+        return originalFetch(url, options);
+      };
+
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
@@ -157,34 +189,8 @@ export default class Widget extends React.PureComponent<any, State> {
           opacity: 1
         });
 
-        // ✅ Layer load olunca fetch override yap
         mvtLayer.when(() => {
           this.setState({ message: "✅ MVT Layer yüklendi!" });
-          
-          // Override fetch for tile requests - ORİJİNAL YÖNTEM
-          const originalFetch = window.fetch;
-          window.fetch = (url, options = {}) => {
-            const urlStr = url.toString();
-            if (urlStr.includes(new URL(MVT_STYLE_URL).hostname) || urlStr.includes('/api/vector/tile')) {
-              console.log("🔐 Tile request intercepted:", urlStr);
-              console.log("📋 Request options:", options);
-              console.log("🔑 Authorization header:", options['headers']?.['Authorization'] || 'MISSING!');
-              return originalFetch(url, {
-                ...options,
-                headers: {
-                  ...(options['headers'] || {}),
-                  'Authorization': `Bearer ${MANUAL_BEARER}`
-                }
-              }).then(resp => {
-                console.log(`📡 Response for ${urlStr}:`, resp.status, resp.statusText);
-                return resp;
-              }).catch(err => {
-                console.error(`❌ Fetch error for ${urlStr}:`, err);
-                throw err;
-              });
-            }
-            return originalFetch(url, options);
-          };
         }).catch(err => {
           this.setState({ message: `❌ Layer error: ${err.message}` });
           console.error("❌ Layer hatası:", err);
