@@ -98,7 +98,7 @@ export default class Widget extends React.PureComponent<any, State> {
         container: this.mapDiv,
         map: map,
         center: [32, 39],
-        zoom: 6,
+        zoom: 7,  // ✅ 6'dan 7'ye çıkardık - API'nin 7z tile'ı var!
         constraints: {
           snapToZoom: false,  // ✅ Smooth zoom
           minZoom: 3,
@@ -109,6 +109,7 @@ export default class Widget extends React.PureComponent<any, State> {
       // Zoom tracking
       this.mapView.watch('zoom', (newZoom) => {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
+        console.log(`🔍 Current zoom: ${newZoom}, Closest API zoom: ${this.getClosestApiZoom(newZoom)}`);
       });
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
@@ -165,6 +166,27 @@ export default class Widget extends React.PureComponent<any, State> {
           console.log(`   Min/Max Zoom:`, source.minzoom, '/', source.maxzoom);
         });
 
+        // ✅✅✅ KRİTİK: SOURCE ZOOM RANGE'LERİNİ GENİŞLET
+        // API sadece belirli zoom'larda tile üretiyor ama ArcGIS'e daha geniş range söylemeliyiz
+        if (styleJson.sources.coverage_3z) {
+          styleJson.sources.coverage_3z.minzoom = 0;
+          styleJson.sources.coverage_3z.maxzoom = 7;
+        }
+        if (styleJson.sources.coverage_7z) {
+          styleJson.sources.coverage_7z.minzoom = 7;
+          styleJson.sources.coverage_7z.maxzoom = 11;
+        }
+        if (styleJson.sources.coverage_11z) {
+          styleJson.sources.coverage_11z.minzoom = 11;
+          styleJson.sources.coverage_11z.maxzoom = 15;
+        }
+        if (styleJson.sources.coverage_15z) {
+          styleJson.sources.coverage_15z.minzoom = 15;
+          styleJson.sources.coverage_15z.maxzoom = 24;
+        }
+
+        console.log("📝 Modified source zoom ranges");
+
         // ✅ OPTİMİZASYON 1: Line layer'ları kaldır (siyah çizgileri önler)
         styleJson = {
           ...styleJson,
@@ -186,11 +208,16 @@ export default class Widget extends React.PureComponent<any, State> {
         // VectorTileLayer oluştur
         const mvtLayer = new VectorTileLayer({
           style: styleJson,
-          opacity: 1
+          opacity: 1,
+          visible: true  // ✅ Explicit visible
         });
 
         mvtLayer.when(() => {
           this.setState({ message: "✅ MVT Layer yüklendi!" });
+          console.log("✅ Layer loaded successfully");
+          console.log("   Layer visible:", mvtLayer.visible);
+          console.log("   Layer opacity:", mvtLayer.opacity);
+          console.log("   Layer in map:", map.layers.includes(mvtLayer));
         }).catch(err => {
           this.setState({ message: `❌ Layer error: ${err.message}` });
           console.error("❌ Layer hatası:", err);
@@ -208,6 +235,14 @@ export default class Widget extends React.PureComponent<any, State> {
       this.setState({ message: `❌ Loader error: ${err?.message || err}` });
       console.error('❌ AMD require error:', err);
     });
+  };
+
+  // Zoom level'ı scale'e çevir (ArcGIS için)
+  getClosestApiZoom = (zoom: number): number => {
+    const apiZooms = [3, 7, 11, 15];
+    return apiZooms.reduce((prev, curr) => 
+      Math.abs(curr - zoom) < Math.abs(prev - zoom) ? curr : prev
+    );
   };
 
   render() {
