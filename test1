@@ -8,18 +8,20 @@ const ARCGIS_API_VERSION = "4.32";
 interface State {
   message: string;
   currentZoom: number;
+  testMode: number; // 0: static, 1: case, 2: step
 }
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
-  private originalFetch = window.fetch;
+  private currentLayer: any;
 
   constructor(props) {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
-      currentZoom: 15
+      currentZoom: 15,
+      testMode: 0 // Başlangıçta statik renk
     };
   }
 
@@ -110,7 +112,6 @@ export default class Widget extends React.PureComponent<any, State> {
         }
       });
 
-      // Mouse wheel zoom control
       this.mapView.when(() => {
         const container = this.mapView.container as HTMLElement;
         
@@ -136,17 +137,11 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // Fetch override for authorization
+      // Fetch override
       const originalFetch = window.fetch;
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
         if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
-          if (zxyMatch) {
-            const [, z] = zxyMatch;
-            console.log(`🔍 Tile request: zoom ${z}`);
-          }
-          
           return originalFetch(url, {
             ...options,
             headers: {
@@ -158,122 +153,183 @@ export default class Widget extends React.PureComponent<any, State> {
         return originalFetch(url, options);
       };
 
-      // ✅ Style JSON al ve renkleri RGBA array formatına çevir
+      // Style JSON fetch
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı, renkler ekleniyor..." });
         const originalStyle = response.data;
-
-        // 🎨 HEX → RGBA çevirme fonksiyonu
-        const hexToRgba = (hex: string, opacity: number = 1): number[] => {
-          const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-          return result ? [
-            parseInt(result[1], 16),
-            parseInt(result[2], 16),
-            parseInt(result[3], 16),
-            opacity * 255
-          ] : [128, 128, 128, opacity * 255];
-        };
-
-        // 🎨 Renk skalası - Style JSON'dan
-        const colorStops = [
-          { value: -135, color: "#313695" },
-          { value: -126, color: "#4575B4" },
-          { value: -118, color: "#74ADD1" },
-          { value: -109, color: "#ABD9E9" },
-          { value: -100, color: "#E0F3F8" },
-          { value: -92, color: "#FFFFBF" },
-          { value: -83, color: "#FEE090" },
-          { value: -75, color: "#FDAE61" },
-          { value: -66, color: "#F46D43" },
-          { value: -57, color: "#D73027" },
-          { value: -49, color: "#A50026" },
-          { value: 0, color: "#ccccff" },
-          { value: 1, color: "#cc66ff" },
-          { value: 2, color: "#f5f5f0" }
-        ];
-
-        // 🔄 interpolate expression'ı case expression'a çevir (ArcGIS daha iyi destekler)
-        const createCaseExpression = (stops, opacity: number = 0.5) => {
-          const caseExpr = ["case"];
-          
-          for (let i = 0; i < stops.length - 1; i++) {
-            caseExpr.push(
-              ["<", ["get", "rsrp_dbm"], stops[i + 1].value],
-              hexToRgba(stops[i].color, opacity)
-            );
-          }
-          
-          // Default (son renk)
-          caseExpr.push(hexToRgba(stops[stops.length - 1].color, opacity));
-          
-          return caseExpr;
-        };
-
-        // 🎨 Style JSON'u düzenle - case expression ile
-        const fixedStyle = {
-          version: 8,
-          sources: originalStyle.sources,
-          layers: originalStyle.layers.map(layer => {
-            if (layer.type === 'fill') {
-              return {
-                ...layer,
-                paint: {
-                  'fill-color': createCaseExpression(colorStops, 1),
-                  'fill-opacity': 0.7
-                }
-              };
-            }
-            if (layer.type === 'line') {
-              return {
-                ...layer,
-                paint: {
-                  'line-color': createCaseExpression(colorStops, 1),
-                  'line-opacity': 0.9,
-                  'line-width': 1
-                }
-              };
-            }
-            return layer;
-          })
-        };
-
-        console.log("✅ Fixed style with RGBA colors:", fixedStyle);
-
-        // ✅ Tek layer - tüm zoom level'ları kapsıyor
-        const vectorLayer = new VectorTileLayer({
-          style: fixedStyle,
-          minScale: 0,
-          maxScale: 0,
-          title: "Coverage Layer"
-        });
-
-        vectorLayer.when(() => {
-          console.log("✅ VectorTileLayer loaded with colors!");
-          this.setState({ message: "✅ Renkli MVT layer yüklendi!" });
-        }).catch(err => {
-          console.error("❌ Layer error:", err);
-          this.setState({ message: `❌ Layer error: ${err.message}` });
-        });
-
-        map.add(vectorLayer);
+        
+        // İlk yükleme - statik renkle
+        this.loadLayerWithMode(0, originalStyle, VectorTileLayer, map);
         
       }).catch(err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
         console.error("FETCH HATASI:", err);
       });
-    }, (err) => {
-      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
-      console.error('AMD require error:', err);
     });
   };
 
+  loadLayerWithMode = (mode: number, originalStyle: any, VectorTileLayer: any, map: any) => {
+    // Eski layer'ı kaldır
+    if (this.currentLayer) {
+      map.remove(this.currentLayer);
+    }
+
+    let fixedStyle;
+    
+    if (mode === 0) {
+      // MODE 0: STATİK RENKLER - Her layer farklı sabit renk
+      this.setState({ message: "🎨 TEST 1: Statik renkler" });
+      fixedStyle = {
+        version: 8,
+        sources: originalStyle.sources,
+        layers: [
+          {
+            id: "fill_15z",
+            type: "fill",
+            source: "coverage_15z",
+            "source-layer": "data",
+            minzoom: 15,
+            maxzoom: 24,
+            paint: {
+              "fill-color": "#FF0000", // Kırmızı
+              "fill-opacity": 0.7
+            }
+          },
+          {
+            id: "fill_11z",
+            type: "fill",
+            source: "coverage_11z",
+            "source-layer": "data",
+            minzoom: 11,
+            maxzoom: 15,
+            paint: {
+              "fill-color": "#00FF00", // Yeşil
+              "fill-opacity": 0.7
+            }
+          },
+          {
+            id: "fill_7z",
+            type: "fill",
+            source: "coverage_7z",
+            "source-layer": "data",
+            minzoom: 7,
+            maxzoom: 11,
+            paint: {
+              "fill-color": "#0000FF", // Mavi
+              "fill-opacity": 0.7
+            }
+          },
+          {
+            id: "fill_3z",
+            type: "fill",
+            source: "coverage_3z",
+            "source-layer": "data",
+            minzoom: 3,
+            maxzoom: 7,
+            paint: {
+              "fill-color": "#FFFF00", // Sarı
+              "fill-opacity": 0.7
+            }
+          }
+        ]
+      };
+      console.log("🔴 Static colors: Red(15z), Green(11z), Blue(7z), Yellow(3z)");
+      
+    } else if (mode === 1) {
+      // MODE 1: CASE EXPRESSION
+      this.setState({ message: "🎨 TEST 2: Case expression" });
+      fixedStyle = {
+        version: 8,
+        sources: originalStyle.sources,
+        layers: originalStyle.layers.map(layer => {
+          if (layer.type === 'fill') {
+            return {
+              ...layer,
+              paint: {
+                "fill-color": [
+                  "case",
+                  ["<", ["get", "rsrp_dbm"], -100], "#313695",
+                  ["<", ["get", "rsrp_dbm"], -75], "#FDAE61",
+                  "#D73027"
+                ],
+                "fill-opacity": 0.7
+              }
+            };
+          }
+          return layer;
+        })
+      };
+      console.log("🟠 Case expression: Blue(<-100), Orange(<-75), Red(default)");
+      
+    } else {
+      // MODE 2: STEP EXPRESSION
+      this.setState({ message: "🎨 TEST 3: Step expression" });
+      fixedStyle = {
+        version: 8,
+        sources: originalStyle.sources,
+        layers: originalStyle.layers.map(layer => {
+          if (layer.type === 'fill') {
+            return {
+              ...layer,
+              paint: {
+                "fill-color": [
+                  "step",
+                  ["get", "rsrp_dbm"],
+                  "#313695", // default
+                  -100, "#FDAE61",
+                  -75, "#D73027"
+                ],
+                "fill-opacity": 0.7
+              }
+            };
+          }
+          return layer;
+        })
+      };
+      console.log("🟢 Step expression: Blue(default), Orange(-100+), Red(-75+)");
+    }
+
+    console.log("Generated style:", fixedStyle);
+
+    const layer = new VectorTileLayer({
+      style: fixedStyle,
+      title: `Test Mode ${mode}`
+    });
+
+    layer.when(() => {
+      console.log(`✅ Mode ${mode} layer loaded`);
+    }).catch(err => {
+      console.error(`❌ Mode ${mode} error:`, err);
+    });
+
+    map.add(layer);
+    this.currentLayer = layer;
+  };
+
+  switchTestMode = (newMode: number) => {
+    this.setState({ testMode: newMode });
+    
+    if (this.mapView) {
+      (window as any).require([
+        'esri/layers/VectorTileLayer',
+        'esri/request'
+      ], (VectorTileLayer, esriRequest) => {
+        esriRequest(MVT_STYLE_URL, {
+          headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+          responseType: 'json'
+        }).then(response => {
+          this.loadLayerWithMode(newMode, response.data, VectorTileLayer, this.mapView.map);
+        });
+      });
+    }
+  };
+
   render() {
-    const { message, currentZoom } = this.state;
+    const { message, currentZoom, testMode } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -282,7 +338,7 @@ export default class Widget extends React.PureComponent<any, State> {
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Zoom Control Panel */}
+        {/* Test Mode Switcher */}
         <div style={{
           position: "absolute",
           top: "10px",
@@ -293,71 +349,83 @@ export default class Widget extends React.PureComponent<any, State> {
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "14px",
-          minWidth: "200px"
+          fontSize: "12px",
+          minWidth: "250px"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
-            🎮 COLORIZED MVT
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FFD700" }}>
+            🧪 COLOR TEST
           </div>
           
           <div style={{ 
             background: "rgba(255,255,255,0.1)", 
-            padding: "15px", 
+            padding: "10px", 
             borderRadius: "5px",
             marginBottom: "15px",
             textAlign: "center"
           }}>
-            <div style={{ fontSize: "12px", color: "#aaa", marginBottom: "5px" }}>
+            <div style={{ fontSize: "10px", color: "#aaa", marginBottom: "5px" }}>
               Zoom Level
             </div>
-            <div style={{ fontSize: "32px", fontWeight: "bold", color: "#FFD700" }}>
+            <div style={{ fontSize: "24px", fontWeight: "bold", color: "#FFD700" }}>
               {currentZoom}
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+          <div style={{ marginBottom: "15px" }}>
+            <div style={{ fontSize: "11px", color: "#aaa", marginBottom: "8px" }}>Select Test:</div>
             <button
-              onClick={() => {
-                if (this.mapView) {
-                  const newZoom = this.mapView.zoom - 0.1;
-                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
-                }
-              }}
+              onClick={() => this.switchTestMode(0)}
               style={{
-                flex: 1,
-                padding: "15px",
-                fontSize: "20px",
-                background: "#f44336",
+                width: "100%",
+                padding: "10px",
+                marginBottom: "5px",
+                background: testMode === 0 ? "#4CAF50" : "#555",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
                 cursor: "pointer",
-                fontWeight: "bold"
+                fontSize: "11px"
               }}
             >
-              -
+              TEST 1: Static Colors
             </button>
             <button
-              onClick={() => {
-                if (this.mapView) {
-                  const newZoom = this.mapView.zoom + 0.1;
-                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
-                }
-              }}
+              onClick={() => this.switchTestMode(1)}
               style={{
-                flex: 1,
-                padding: "15px",
-                fontSize: "20px",
-                background: "#4CAF50",
+                width: "100%",
+                padding: "10px",
+                marginBottom: "5px",
+                background: testMode === 1 ? "#4CAF50" : "#555",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
                 cursor: "pointer",
-                fontWeight: "bold"
+                fontSize: "11px"
               }}
             >
-              +
+              TEST 2: Case Expression
             </button>
+            <button
+              onClick={() => this.switchTestMode(2)}
+              style={{
+                width: "100%",
+                padding: "10px",
+                background: testMode === 2 ? "#4CAF50" : "#555",
+                color: "white",
+                border: "none",
+                borderRadius: "5px",
+                cursor: "pointer",
+                fontSize: "11px"
+              }}
+            >
+              TEST 3: Step Expression
+            </button>
+          </div>
+
+          <div style={{ fontSize: "10px", color: "#888", marginTop: "10px", lineHeight: "1.4" }}>
+            <strong>Expected:</strong><br/>
+            Test 1: Red/Green/Blue/Yellow<br/>
+            Test 2-3: Data-driven colors
           </div>
         </div>
 
@@ -374,13 +442,13 @@ export default class Widget extends React.PureComponent<any, State> {
           fontFamily: "monospace",
           fontSize: "12px"
         }}>
-          <strong>🎨 RGBA Case Expression:</strong>
-          <div style={{ marginTop: "10px" }}>{message}</div>
-          <div style={{ marginTop: "5px", fontSize: "11px" }}>
-            Expected: {
-              currentZoom < 7 ? "10km (3z)" :
-              currentZoom < 11 ? "1km (7z)" :
-              currentZoom < 15 ? "100m (11z)" : "10m (15z)"
+          <strong>🎨 Active Test:</strong>
+          <div style={{ marginTop: "10px", color: "#FFD700" }}>{message}</div>
+          <div style={{ marginTop: "10px", fontSize: "10px", color: "#888" }}>
+            Zoom: {
+              currentZoom < 7 ? "Yellow (3z)" :
+              currentZoom < 11 ? "Blue (7z)" :
+              currentZoom < 15 ? "Green (11z)" : "Red (15z)"
             }
           </div>
         </div>
