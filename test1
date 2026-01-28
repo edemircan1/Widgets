@@ -10,9 +10,8 @@ interface State {
   currentZoom: number;
 }
 
-// Exponential interpolation helper (Maplibre style)
+// ESRI-optimized exponential interpolation
 function interpolateRadius(zoom: number, stops: number[][], base: number = 2): number {
-  // stops format: [[zoom1, radius1], [zoom2, radius2]]
   if (stops.length < 2) return stops[0]?.[1] || 1;
   
   // Find the two stops we're between
@@ -34,12 +33,20 @@ function interpolateRadius(zoom: number, stops: number[][], base: number = 2): n
   if (zoom <= z1) return r1;
   if (zoom >= z2) return r2;
   
-  // Exponential interpolation: r = r1 * base^((zoom - z1) / (z2 - z1) * log_base(r2/r1))
+  // Exponential interpolation matching Maplibre's algorithm
   const t = (zoom - z1) / (z2 - z1);
-  const ratio = r2 / r1;
-  const exponent = t * Math.log(ratio) / Math.log(base);
+  const progress = Math.pow(base, t) - 1;
+  const range = Math.pow(base, 1) - 1;
+  const normalizedProgress = progress / range;
   
-  return r1 * Math.pow(base, exponent);
+  return r1 + (r2 - r1) * normalizedProgress;
+}
+
+// Convert Maplibre pixel radius to ESRI points (accounting for screen density)
+function pixelsToPoints(pixels: number): number {
+  // ESRI uses points, Maplibre uses pixels
+  // Typically 1 point = 1.33 pixels on standard displays
+  return pixels * 0.75; // Adjustment factor for better visual match
 }
 
 export default class Widget extends React.PureComponent<any, State> {
@@ -47,6 +54,7 @@ export default class Widget extends React.PureComponent<any, State> {
   private mapView: any;
   private layers: any[] = [];
   private originalFetch = window.fetch;
+  private zoomUpdateTimeout: any = null;
 
   constructor(props) {
     super(props);
@@ -105,38 +113,52 @@ export default class Widget extends React.PureComponent<any, State> {
   updateLayerSizes = (zoom: number) => {
     // Her layer için circle radius'u güncelle
     const radiusConfigs = {
-      'Coverage 15z': { stops: [[15, 2.5], [22, 250]], base: 2 },
-      'Coverage 11z': { stops: [[11, 2], [15, 20]], base: 2 },
-      'Coverage 7z': { stops: [[7, 1], [11, 13]], base: 2 },
-      'Coverage 3z': { stops: [[3, 1], [7, 10]], base: 2 }
+      'Coverage 15z': { stops: [[15, 2.5], [22, 250]], base: 2, minZoom: 15, maxZoom: 24 },
+      'Coverage 11z': { stops: [[11, 2], [15, 20]], base: 2, minZoom: 11, maxZoom: 15 },
+      'Coverage 7z': { stops: [[7, 1], [11, 13]], base: 2, minZoom: 7, maxZoom: 11 },
+      'Coverage 3z': { stops: [[3, 1], [7, 10]], base: 2, minZoom: 3, maxZoom: 7 }
     };
 
     this.layers.forEach(layer => {
       const config = radiusConfigs[layer.title];
-      if (config) {
-        const newRadius = interpolateRadius(zoom, config.stops, config.base);
-        
-        // Style'ı güncelle
-        const currentStyle = layer.style;
-        if (currentStyle && currentStyle.layers) {
-          const updatedLayers = currentStyle.layers.map(styleLayer => {
-            if (styleLayer.type === 'circle' && styleLayer.paint) {
-              return {
-                ...styleLayer,
-                paint: {
-                  ...styleLayer.paint,
-                  'circle-radius': newRadius
-                }
-              };
-            }
-            return styleLayer;
-          });
+      if (!config) return;
+      
+      // Sadece bu layer'ın zoom aralığındaysak güncelle
+      if (zoom < config.minZoom || zoom > config.maxZoom) {
+        return;
+      }
+      
+      const rawRadius = interpolateRadius(zoom, config.stops, config.base);
+      const adjustedRadius = pixelsToPoints(rawRadius);
+      
+      console.log(`📐 ${layer.title} @ z${zoom.toFixed(1)}: ${rawRadius.toFixed(2)}px → ${adjustedRadius.toFixed(2)}pt`);
+      
+      // Style'ı güncelle
+      const currentStyle = layer.style;
+      if (currentStyle && currentStyle.layers) {
+        const updatedLayers = currentStyle.layers.map(styleLayer => {
+          if (styleLayer.type === 'circle' && styleLayer.paint) {
+            return {
+              ...styleLayer,
+              paint: {
+                ...styleLayer.paint,
+                'circle-radius': adjustedRadius,
+                'circle-pitch-alignment': 'map', // ESRI için önemli
+                'circle-pitch-scale': 'map' // ESRI için önemli
+              }
+            };
+          }
+          return styleLayer;
+        });
 
-          layer.style = {
-            ...currentStyle,
-            layers: updatedLayers
-          };
-        }
+        // Deep clone to trigger ESRI update
+        layer.style = JSON.parse(JSON.stringify({
+          ...currentStyle,
+          layers: updatedLayers
+        }));
+        
+        // Force layer refresh
+        layer.refresh();
       }
     });
   };
@@ -202,10 +224,18 @@ export default class Widget extends React.PureComponent<any, State> {
         }, { passive: false });
       });
 
-      // ✅ ZOOM DEĞİŞİNCE CIRCLE RADIUS'U GÜNCELLE
+      // ✅ ZOOM DEĞİŞİNCE CIRCLE RADIUS'U GÜNCELLE (debounced)
       this.mapView.watch('zoom', (newZoom) => {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
-        this.updateLayerSizes(newZoom);
+        
+        // Debounce: Çok hızlı zoom değişimlerinde her seferinde güncelleme yapma
+        if (this.zoomUpdateTimeout) {
+          clearTimeout(this.zoomUpdateTimeout);
+        }
+        
+        this.zoomUpdateTimeout = setTimeout(() => {
+          this.updateLayerSizes(newZoom);
+        }, 50); // 50ms delay
       });
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
@@ -251,7 +281,8 @@ export default class Widget extends React.PureComponent<any, State> {
 
         zoomConfigs.forEach(config => {
           const currentZoom = this.mapView.zoom;
-          const initialRadius = interpolateRadius(currentZoom, config.stops, config.base);
+          const rawRadius = interpolateRadius(currentZoom, config.stops, config.base);
+          const initialRadius = pixelsToPoints(rawRadius);
 
           // Bu zoom level için özel style JSON
           const customStyle = {
@@ -261,24 +292,31 @@ export default class Widget extends React.PureComponent<any, State> {
             },
             layers: originalStyle.layers.filter(layer => 
               layer.source === config.source
-            ).map(layer => ({
-              ...layer,
-              minzoom: config.minZoom,
-              maxzoom: config.maxZoom,
-              paint: {
+            ).map(layer => {
+              const updatedPaint = {
                 ...layer.paint,
-                'circle-radius': initialRadius // Başlangıç değeri
-              }
-            }))
+                'circle-radius': initialRadius,
+                'circle-pitch-alignment': 'map',
+                'circle-pitch-scale': 'map'
+              };
+              
+              return {
+                ...layer,
+                minzoom: config.minZoom,
+                maxzoom: config.maxZoom,
+                paint: updatedPaint
+              };
+            })
           };
 
-          console.log(`Creating layer ${config.name} with initial radius:`, initialRadius);
+          console.log(`🎨 Creating layer ${config.name}: z${currentZoom.toFixed(1)} → ${rawRadius.toFixed(2)}px (${initialRadius.toFixed(2)}pt)`);
 
           const layer = new VectorTileLayer({
             style: customStyle,
             minScale: 0,
             maxScale: 0,
-            title: `Coverage ${config.name}`
+            title: `Coverage ${config.name}`,
+            opacity: 0.85 // Biraz transparanlık ekle, overlap daha iyi görünsün
           });
 
           layer.when(() => {
