@@ -13,6 +13,7 @@ interface State {
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
+  private originalFetch = window.fetch;
 
   constructor(props) {
     super(props);
@@ -109,6 +110,7 @@ export default class Widget extends React.PureComponent<any, State> {
         }
       });
 
+      // Mouse wheel zoom control
       this.mapView.when(() => {
         const container = this.mapView.container as HTMLElement;
         
@@ -134,12 +136,18 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // Fetch override
+      // Fetch override for authorization - SADECE abc.com için
       const originalFetch = window.fetch;
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
-        // ABC.com domain'inden gelen tüm isteklere auth ekle
-        if (urlStr.includes('abc.com') || urlStr.includes('/styles/') || urlStr.includes('.pbf')) {
+        // SADECE abc.com domain'i için auth ekle
+        if (urlStr.includes('abc.com')) {
+          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+          if (zxyMatch) {
+            const [, z] = zxyMatch;
+            console.log(`🔍 Tile request: zoom ${z}`);
+          }
+          
           return originalFetch(url, {
             ...options,
             headers: {
@@ -151,20 +159,21 @@ export default class Widget extends React.PureComponent<any, State> {
         return originalFetch(url, options);
       };
 
+      // Style JSON fetch
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı, tam renk skalası uygulanıyor..." });
+        this.setState({ message: "📄 Style JSON alındı, layer'lar oluşturuluyor..." });
         const originalStyle = response.data;
 
-        // 🎨 TAM RENK SKALASI - Style JSON'dan
+        // 🎨 TAM RENK SKALASI
         const fullColorRamp = [
           "step",
           ["get", "rsrp_dbm"],
-          "#313695",    // Default: En kötü sinyal (< -135)
+          "#313695",    // Default
           -126, "#4575B4",
           -118, "#74ADD1",
           -109, "#ABD9E9",
@@ -174,63 +183,79 @@ export default class Widget extends React.PureComponent<any, State> {
           -75, "#FDAE61",
           -66, "#F46D43",
           -57, "#D73027",
-          -49, "#A50026",  // En iyi sinyal
-          0, "#ccccff",    // Özel değerler
-          1, "#cc66ff",
-          2, "#f5f5f0"
+          -49, "#A50026"
         ];
 
-        console.log("🎨 Full color ramp applied:", fullColorRamp);
+        // Her zoom level için AYRI layer oluştur (orijinal kodun mantığı)
+        const zoomConfigs = [
+          { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
+          { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
+          { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
+          { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
+        ];
 
-        // Style JSON'u düzenle - TÜM layer'lara tam renk skalası
-        const fixedStyle = {
-          version: 8,
-          sources: originalStyle.sources,
-          layers: originalStyle.layers.map(layer => {
-            if (layer.type === 'fill') {
-              return {
-                ...layer,
-                paint: {
-                  "fill-color": fullColorRamp,
-                  "fill-opacity": 0.6
+        zoomConfigs.forEach(config => {
+          // Bu zoom level için style JSON
+          const customStyle = {
+            version: 8,
+            sources: {
+              [config.source]: originalStyle.sources[config.source]
+            },
+            layers: originalStyle.layers
+              .filter(layer => layer.source === config.source)
+              .map(layer => {
+                const newLayer = {
+                  ...layer,
+                  minzoom: config.minZoom,
+                  maxzoom: config.maxZoom
+                };
+                
+                // 🎨 Paint'i değiştir
+                if (layer.type === 'fill') {
+                  newLayer.paint = {
+                    "fill-color": fullColorRamp,
+                    "fill-opacity": 0.6
+                  };
                 }
-              };
-            }
-            if (layer.type === 'line') {
-              return {
-                ...layer,
-                paint: {
-                  "line-color": fullColorRamp,
-                  "line-opacity": 0.8,
-                  "line-width": 1
+                if (layer.type === 'line') {
+                  newLayer.paint = {
+                    "line-color": fullColorRamp,
+                    "line-opacity": 0.8,
+                    "line-width": 1
+                  };
                 }
-              };
-            }
-            return layer;
-          })
-        };
+                
+                return newLayer;
+              })
+          };
 
-        console.log("✅ Fixed style with full color ramp");
+          console.log(`Creating layer ${config.name} with full colors`);
 
-        const layer = new VectorTileLayer({
-          style: fixedStyle,
-          title: "Coverage Layer - Full Colors"
+          const layer = new VectorTileLayer({
+            style: customStyle,
+            minScale: 0,
+            maxScale: 0,
+            title: `Coverage ${config.name}`
+          });
+
+          layer.when(() => {
+            console.log(`✅ Layer ${config.name} loaded with colors`);
+          }).catch(err => {
+            console.error(`❌ Layer ${config.name} error:`, err);
+          });
+
+          map.add(layer);
         });
 
-        layer.when(() => {
-          console.log("✅ VectorTileLayer loaded with FULL color ramp!");
-          this.setState({ message: "✅ Tam renk skalası uygulandı!" });
-        }).catch(err => {
-          console.error("❌ Layer error:", err);
-          this.setState({ message: `❌ Layer error: ${err.message}` });
-        });
-
-        map.add(layer);
+        this.setState({ message: "✅ Tüm layer'lar renklerle oluşturuldu!" });
         
       }).catch(err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
         console.error("FETCH HATASI:", err);
       });
+    }, (err) => {
+      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
+      console.error('AMD require error:', err);
     });
   };
 
@@ -259,7 +284,7 @@ export default class Widget extends React.PureComponent<any, State> {
           minWidth: "200px"
         }}>
           <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
-            🌈 FULL COLOR RAMP
+            🎮 ZOOM TEST
           </div>
           
           <div style={{ 
@@ -321,35 +346,6 @@ export default class Widget extends React.PureComponent<any, State> {
               +
             </button>
           </div>
-
-          {/* Color Legend */}
-          <div style={{ fontSize: "10px", marginTop: "15px", borderTop: "1px solid rgba(255,255,255,0.2)", paddingTop: "10px" }}>
-            <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#FFD700" }}>RSRP Legend:</div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "3px" }}>
-              <div style={{ width: "15px", height: "15px", background: "#313695", marginRight: "8px" }}></div>
-              <span>{"< -126 dBm"}</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "3px" }}>
-              <div style={{ width: "15px", height: "15px", background: "#74ADD1", marginRight: "8px" }}></div>
-              <span>-118 to -109</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "3px" }}>
-              <div style={{ width: "15px", height: "15px", background: "#FFFFBF", marginRight: "8px" }}></div>
-              <span>-92 dBm</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "3px" }}>
-              <div style={{ width: "15px", height: "15px", background: "#FDAE61", marginRight: "8px" }}></div>
-              <span>-75 dBm</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: "3px" }}>
-              <div style={{ width: "15px", height: "15px", background: "#D73027", marginRight: "8px" }}></div>
-              <span>-57 dBm</span>
-            </div>
-            <div style={{ display: "flex", alignItems: "center" }}>
-              <div style={{ width: "15px", height: "15px", background: "#A50026", marginRight: "8px" }}></div>
-              <span>{"> -49 dBm"}</span>
-            </div>
-          </div>
         </div>
 
         {/* Status Panel */}
@@ -365,10 +361,10 @@ export default class Widget extends React.PureComponent<any, State> {
           fontFamily: "monospace",
           fontSize: "12px"
         }}>
-          <strong>🌈 14 Color Steps:</strong>
+          <strong>MVT Multi-Layer:</strong>
           <div style={{ marginTop: "10px" }}>{message}</div>
           <div style={{ marginTop: "5px", fontSize: "11px" }}>
-            Grid: {
+            Expected: {
               currentZoom < 7 ? "10km (3z)" :
               currentZoom < 11 ? "1km (7z)" :
               currentZoom < 15 ? "100m (11z)" : "10m (15z)"
