@@ -3,8 +3,6 @@ import { React, jsx } from "jimu-core";
 
 const MVT_STYLE_URL = "/styles/all/style.json?coverageLayer=rsrp_dbm";
 const MANUAL_BEARER = "token";
-const ARCGIS_API_VERSION = "4.32";
-const MAPLIBRE_VERSION = "3.6.2";
 
 interface State {
   message: string;
@@ -13,8 +11,6 @@ interface State {
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
-  private maplibreDiv: HTMLDivElement;
-  private mapView: any;
   private maplibreMap: any;
 
   constructor(props) {
@@ -27,140 +23,74 @@ export default class Widget extends React.PureComponent<any, State> {
 
   componentDidMount() {
     this.loadMapLibre();
-    this.loadArcGISAPI();
   }
 
   componentWillUnmount() {
-    if (this.mapView) {
-      this.mapView.destroy();
-    }
     if (this.maplibreMap) {
       this.maplibreMap.remove();
     }
   }
 
   loadMapLibre = () => {
+    this.setState({ message: "📦 MapLibre yükleniyor..." });
+
     // MapLibre CSS
-    const cssLink = document.createElement("link");
-    cssLink.rel = "stylesheet";
-    cssLink.href = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.css`;
-    document.head.appendChild(cssLink);
+    if (!document.querySelector('link[href*="maplibre-gl.css"]')) {
+      const cssLink = document.createElement("link");
+      cssLink.rel = "stylesheet";
+      cssLink.href = "https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css";
+      document.head.appendChild(cssLink);
+    }
 
     // MapLibre JS
-    const script = document.createElement("script");
-    script.src = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.js`;
-    script.onload = () => {
-      console.log("✅ MapLibre GL JS loaded");
-    };
-    document.head.appendChild(script);
-  };
-
-  loadArcGISAPI = () => {
-    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
-
-    if ((window as any).require) {
-      this.setState({ message: "✅ ArcGIS API yüklendi" });
+    if ((window as any).maplibregl) {
+      this.setState({ message: "✅ MapLibre zaten yüklü" });
       this.createMap();
       return;
     }
 
-    const cssLink = document.createElement("link");
-    cssLink.rel = "stylesheet";
-    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
-    document.head.appendChild(cssLink);
-
-    const existing = document.querySelector(`script[data-arcgis-api="${ARCGIS_API_VERSION}"]`) as HTMLScriptElement | null;
+    const existing = document.querySelector('script[src*="maplibre-gl.js"]');
     if (existing) {
       existing.addEventListener('load', () => {
-        this.setState({ message: "✅ ArcGIS API yüklendi" });
+        this.setState({ message: "✅ MapLibre yüklendi" });
         this.createMap();
       });
       return;
     }
 
     const script = document.createElement("script");
-    script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
-    script.setAttribute('data-arcgis-api', ARCGIS_API_VERSION);
+    script.src = "https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js";
     script.onload = () => {
-      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.setState({ message: "✅ MapLibre yüklendi" });
       this.createMap();
     };
     script.onerror = () => {
-      this.setState({ message: "❌ ArcGIS API yüklenemedi" });
+      this.setState({ message: "❌ MapLibre yüklenemedi" });
     };
     document.head.appendChild(script);
   };
 
   createMap = () => {
+    if (!this.mapDiv) {
+      setTimeout(() => this.createMap(), 100);
+      return;
+    }
+
+    if (!(window as any).maplibregl) {
+      setTimeout(() => this.createMap(), 100);
+      return;
+    }
+
     this.setState({ message: "🗺️ Map oluşturuluyor..." });
 
-    if (!this.mapDiv || !this.maplibreDiv) {
-      setTimeout(() => this.createMap(), 50);
-      return;
-    }
+    const maplibregl = (window as any).maplibregl;
 
-    if (!(window as any).require) {
-      this.setState({ message: "❌ ArcGIS API loader bulunamadı" });
-      return;
-    }
-
-    (window as any).require([
-      'esri/Map',
-      'esri/views/MapView'
-    ], (Map, MapView) => {
-      
-      const map = new Map({
-        basemap: 'dark-gray-vector'
-      });
-
-      this.mapView = new MapView({
-        container: this.mapDiv,
-        map: map,
-        center: [32, 39],
-        zoom: 15,
-        constraints: {
-          snapToZoom: false,
-          minZoom: 3,
-          maxZoom: 22,
-          rotationEnabled: false
-        }
-      });
-
-      this.mapView.when(() => {
-        this.setState({ message: "✅ ArcGIS Map hazır, MapLibre yükleniyor..." });
-        this.createMapLibreOverlay();
-        
-        // Sync MapLibre with ArcGIS
-        this.mapView.watch(['center', 'zoom', 'rotation'], () => {
-          if (this.maplibreMap && !this.maplibreMap.isMoving()) {
-            const center = this.mapView.center;
-            this.maplibreMap.setCenter([center.longitude, center.latitude]);
-            this.maplibreMap.setZoom(this.mapView.zoom);
-            this.maplibreMap.setBearing(-this.mapView.rotation);
-          }
-        });
-
-        this.mapView.watch('zoom', (newZoom) => {
-          this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
-        });
-      });
-    });
-  };
-
-  createMapLibreOverlay = () => {
-    if (!(window as any).maplibregl) {
-      setTimeout(() => this.createMapLibreOverlay(), 100);
-      return;
-    }
-
-    this.setState({ message: "🎨 MapLibre overlay oluşturuluyor..." });
-
-    // Fetch override for authorization
+    // Fetch override ÖNCE
     const originalFetch = window.fetch;
     window.fetch = (url, options = {}) => {
       const urlStr = url.toString();
-      if (urlStr.includes('abc.com')) {
-        console.log(`🔍 MapLibre tile request: ${urlStr}`);
+      if (urlStr.includes('abc.com') || urlStr.includes('/styles/')) {
+        console.log(`🔍 Fetch with auth: ${urlStr}`);
         return originalFetch(url, {
           ...options,
           headers: {
@@ -172,57 +102,72 @@ export default class Widget extends React.PureComponent<any, State> {
       return originalFetch(url, options);
     };
 
-    // Fetch style JSON
+    // Style JSON'u fetch et
+    this.setState({ message: "📄 Style JSON alınıyor..." });
+    
     fetch(MVT_STYLE_URL, {
       headers: {
         'Authorization': `Bearer ${MANUAL_BEARER}`
       }
     })
-    .then(res => res.json())
+    .then(res => {
+      console.log("📥 Style response status:", res.status);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      return res.json();
+    })
     .then(styleJson => {
-      console.log("📋 Style JSON received:", styleJson);
+      console.log("✅ Style JSON received:", styleJson);
+      this.setState({ message: "📋 Style JSON alındı, map oluşturuluyor..." });
 
-      const maplibregl = (window as any).maplibregl;
-      
-      // MapLibre harita oluştur (transparent basemap)
+      // MapLibre map oluştur
       this.maplibreMap = new maplibregl.Map({
-        container: this.maplibreDiv,
-        style: {
-          version: 8,
-          sources: styleJson.sources,
-          layers: styleJson.layers,
-          glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf"
-        },
+        container: this.mapDiv,
+        style: styleJson,
         center: [32, 39],
         zoom: 15,
-        interactive: false, // ArcGIS handle etsin
         attributionControl: false
       });
 
       this.maplibreMap.on('load', () => {
-        console.log("✅ MapLibre map loaded with colored MVT!");
-        this.setState({ message: "✅ Renkli MVT layer yüklendi!" });
-
-        // Debug: Layer'ları listele
-        const layers = this.maplibreMap.getStyle().layers;
-        console.log("📊 MapLibre layers:", layers.map(l => l.id));
+        console.log("✅ MapLibre map loaded!");
+        
+        // Layers'ı listele
+        const style = this.maplibreMap.getStyle();
+        console.log("📊 Map style:", style);
+        console.log("📊 Layers:", style.layers.map(l => `${l.id} (${l.type})`));
+        console.log("📊 Sources:", Object.keys(style.sources));
+        
+        this.setState({ message: "✅ MapLibre map yüklendi!" });
       });
 
       this.maplibreMap.on('error', (e) => {
         console.error("❌ MapLibre error:", e);
+        this.setState({ message: `❌ MapLibre error: ${e.error?.message || 'unknown'}` });
       });
 
-      // MapLibre'ı ArcGIS ile sync et
-      this.mapView.watch(['center', 'zoom'], () => {
-        const center = this.mapView.center;
-        this.maplibreMap.setCenter([center.longitude, center.latitude]);
-        this.maplibreMap.setZoom(this.mapView.zoom);
+      this.maplibreMap.on('data', (e) => {
+        if (e.dataType === 'source' && e.isSourceLoaded) {
+          console.log(`📦 Source loaded: ${e.sourceId}`);
+        }
+      });
+
+      this.maplibreMap.on('zoom', () => {
+        const zoom = this.maplibreMap.getZoom();
+        this.setState({ currentZoom: Math.round(zoom * 10) / 10 });
+      });
+
+      this.maplibreMap.on('sourcedata', (e) => {
+        if (e.isSourceLoaded && e.tile) {
+          console.log(`🔍 Tile loaded: ${e.sourceId} - ${e.tile.tileID.canonical.z}/${e.tile.tileID.canonical.x}/${e.tile.tileID.canonical.y}`);
+        }
       });
 
     })
     .catch(err => {
-      console.error("❌ Style fetch error:", err);
-      this.setState({ message: `❌ Style fetch error: ${err.message}` });
+      console.error("❌ Fetch error:", err);
+      this.setState({ message: `❌ Fetch error: ${err.message}` });
     });
   };
 
@@ -231,24 +176,10 @@ export default class Widget extends React.PureComponent<any, State> {
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
-        {/* ArcGIS Basemap (alttta) */}
+        {/* MapLibre Container */}
         <div 
           ref={el => this.mapDiv = el}
-          style={{ width: "100%", height: "100%", position: "absolute", top: 0, left: 0 }}
-        />
-
-        {/* MapLibre Overlay (üstte, pointer-events: none) */}
-        <div 
-          ref={el => this.maplibreDiv = el}
-          style={{ 
-            width: "100%", 
-            height: "100%", 
-            position: "absolute", 
-            top: 0, 
-            left: 0,
-            pointerEvents: "none", // ArcGIS map'e tıklamaları geçir
-            zIndex: 1
-          }}
+          style={{ width: "100%", height: "100%", background: "#1a1a1a" }}
         />
 
         {/* Zoom Control Panel */}
@@ -265,8 +196,8 @@ export default class Widget extends React.PureComponent<any, State> {
           fontSize: "14px",
           minWidth: "200px"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
-            🎮 HYBRID MODE
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FF6B6B" }}>
+            🧪 PURE MAPLIBRE TEST
           </div>
           
           <div style={{ 
@@ -287,9 +218,9 @@ export default class Widget extends React.PureComponent<any, State> {
           <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
             <button
               onClick={() => {
-                if (this.mapView) {
-                  const newZoom = this.mapView.zoom - 0.1;
-                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
+                if (this.maplibreMap) {
+                  const newZoom = this.maplibreMap.getZoom() - 0.5;
+                  this.maplibreMap.setZoom(newZoom);
                 }
               }}
               style={{
@@ -308,9 +239,9 @@ export default class Widget extends React.PureComponent<any, State> {
             </button>
             <button
               onClick={() => {
-                if (this.mapView) {
-                  const newZoom = this.mapView.zoom + 0.1;
-                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
+                if (this.maplibreMap) {
+                  const newZoom = this.maplibreMap.getZoom() + 0.5;
+                  this.maplibreMap.setZoom(newZoom);
                 }
               }}
               style={{
@@ -330,7 +261,7 @@ export default class Widget extends React.PureComponent<any, State> {
           </div>
 
           <div style={{ fontSize: "10px", color: "#FFD700", textAlign: "center" }}>
-            🎨 MapLibre + ArcGIS
+            Open Console (F12)
           </div>
         </div>
 
@@ -339,26 +270,28 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           left: "10px",
-          background: "rgba(0,0,0,0.8)",
+          background: "rgba(0,0,0,0.85)",
           color: "white",
           padding: "15px",
           borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px"
+          fontSize: "12px",
+          maxWidth: "300px"
         }}>
-          <strong>🚀 Hybrid Render:</strong>
-          <div style={{ marginTop: "10px" }}>{message}</div>
-          <div style={{ marginTop: "5px", fontSize: "11px", color: "#4CAF50" }}>
-            Grid: {
+          <strong style={{ color: "#FF6B6B" }}>🧪 DEBUG MODE:</strong>
+          <div style={{ marginTop: "10px", color: "#FFD700" }}>{message}</div>
+          <div style={{ marginTop: "10px", fontSize: "10px", color: "#888", borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: "10px" }}>
+            <div>• Check console for logs</div>
+            <div>• Look for tile requests</div>
+            <div>• Check for errors</div>
+          </div>
+          <div style={{ marginTop: "10px", fontSize: "11px", color: "#4CAF50" }}>
+            Expected Grid: {
               currentZoom < 7 ? "10km (3z)" :
               currentZoom < 11 ? "1km (7z)" :
               currentZoom < 15 ? "100m (11z)" : "10m (15z)"
             }
-          </div>
-          <div style={{ marginTop: "10px", fontSize: "10px", color: "#888" }}>
-            Basemap: ArcGIS<br/>
-            MVT: MapLibre GL
           </div>
         </div>
       </div>
