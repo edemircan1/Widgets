@@ -138,7 +138,8 @@ export default class Widget extends React.PureComponent<any, State> {
       const originalFetch = window.fetch;
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
-        if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+        // ABC.com domain'inden gelen tüm isteklere auth ekle
+        if (urlStr.includes('abc.com') || urlStr.includes('/styles/') || urlStr.includes('.pbf')) {
           return originalFetch(url, {
             ...options,
             headers: {
