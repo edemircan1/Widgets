@@ -1,588 +1,400 @@
-/** @jsx jsx */
-import { React, jsx } from "jimu-core";
-
-const MVT_STYLE_URL = "/styles/all/style.json?coverageLayer=rsrp_dbm";
-const MANUAL_BEARER = "token";
-const ARCGIS_API_VERSION = "4.32";
-
-interface State {
-  message: string;
-  currentZoom: number;
-  calculatedRadius: string;
-  debugInfo: string;
-}
-
-// Maplibre exponential interpolation (exact algorithm)
-function interpolateExponential(
-  zoom: number,
-  stops: [number, number][],
-  base: number = 2
-): number {
-  if (stops.length < 2) return stops[0]?.[1] || 1;
-
-  let lower = stops[0];
-  let upper = stops[stops.length - 1];
-
-  for (let i = 0; i < stops.length - 1; i++) {
-    if (zoom >= stops[i][0] && zoom <= stops[i + 1][0]) {
-      lower = stops[i];
-      upper = stops[i + 1];
-      break;
+{
+  "version": 8,
+  "name": "PROJE Coverage RSRP",
+  "metadata": {
+    "openmaptiles:version": "3.15.0"
+  },
+  "sources": {
+    "coverage_15z": {
+      "type": "vector",
+      "tiles": [
+        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
+      ],
+      "minzoom": 15,
+      "maxzoom": 15
+    },
+    "coverage_11z": {
+      "type": "vector",
+      "tiles": [
+        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
+      ],
+      "minzoom": 11,
+      "maxzoom": 11
+    },
+    "coverage_7z": {
+      "type": "vector",
+      "tiles": [
+        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
+      ],
+      "minzoom": 7,
+      "maxzoom": 7
+    },
+    "coverage_3z": {
+      "type": "vector",
+      "tiles": [
+        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
+      ],
+      "minzoom": 3,
+      "maxzoom": 3
     }
-  }
-
-  const [z1, v1] = lower;
-  const [z2, v2] = upper;
-
-  if (zoom <= z1) return v1;
-  if (zoom >= z2) return v2;
-
-  const t = (zoom - z1) / (z2 - z1);
-  const difference = v2 - v1;
-  const progress = (Math.pow(base, t) - 1) / (Math.pow(base, 1) - 1);
-
-  return v1 + difference * progress;
-}
-
-export default class Widget extends React.PureComponent<any, State> {
-  private mapDiv: HTMLDivElement;
-  private mapView: any;
-  private currentLayer: any = null;
-  private styleJson: any = null;
-  private VectorTileLayer: any = null;
-  private updateTimeout: any = null;
-  
-  // 🔍 TEST: Farklı scaling faktörleri
-  private scalingFactor: number = 1.0;
-
-  constructor(props) {
-    super(props);
-    this.state = {
-      message: "Widget yükleniyor...",
-      currentZoom: 15,
-      calculatedRadius: "...",
-      debugInfo: "..."
-    };
-  }
-
-  componentDidMount() {
-    this.loadArcGISAPI();
-  }
-
-  componentWillUnmount() {
-    if (this.mapView) {
-      this.mapView.destroy();
+  },
+  "layers": [
+    {
+      "id": "vis_mvt_15z",
+      "type": "fill",
+      "source": "coverage_15z",
+      "minzoom": 15,
+      "maxzoom": 24,
+      "layout": {"visibility": "visible"},
+      "source-layer": "data",
+      "paint": {
+        "fill-opacity": 0.5,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_11z",
+      "type": "fill",
+      "source": "coverage_11z",
+      "minzoom":11,
+      "maxzoom":15,
+      "layout": {"visibility": "visible"},
+      "source-layer": "data",
+      "paint": {
+        "fill-opacity": 0.5,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_7z",
+      "type": "fill",
+      "source": "coverage_7z",
+      "minzoom": 7,
+      "maxzoom":11,
+      "layout": {"visibility": "visible"},
+      "source-layer": "data",
+      "paint": {
+        "fill-opacity": 0.5,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_3z",
+      "type": "fill",
+      "source": "coverage_3z",
+      "minzoom": 3,
+      "maxzoom":7,
+      "layout": {"visibility": "visible"},
+      "source-layer": "data",
+      "paint": {
+        "fill-opacity": 0.5,
+        "fill-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_15z_line",
+      "type": "line",
+      "source": "coverage_15z",
+      "minzoom": 15,
+      "maxzoom": 24,
+      "source-layer": "data",
+      "paint": {
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_11z_line",
+      "type": "line",
+      "source": "coverage_11z",
+      "minzoom": 11,
+      "maxzoom": 15,
+      "source-layer": "data",
+      "paint": {
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_7z_line",
+      "type": "line",
+      "source": "coverage_7z",
+      "minzoom": 7,
+      "maxzoom": 11,
+      "source-layer": "data",
+      "paint": {
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
+    },
+    {
+      "id": "vis_mvt_3z_line",
+      "type": "line",
+      "source": "coverage_3z",
+      "minzoom": 3,
+      "maxzoom": 7,
+      "source-layer": "data",
+      "paint": {
+        "line-opacity": 0.9,
+        "line-color": [
+          "interpolate",
+          ["linear"],
+          ["get", "rsrp_dbm"],
+          -135,
+          "#313695",
+          -126,
+          "#4575B4",
+          -118,
+          "#74ADD1",
+          -109,
+          "#ABD9E9",
+          -100,
+          "#E0F3F8",
+          -92,
+          "#FFFFBF",
+          -83,
+          "#FEE090",
+          -75,
+          "#FDAE61",
+          -66,
+          "#F46D43",
+          -57,
+          "#D73027",
+          -49,
+          "#A50026",
+          0,
+          "#ccccff",
+          1,
+          "#cc66ff",
+          2,
+          "#f5f5f0"
+        ]
+      }
     }
-    if (this.updateTimeout) {
-      clearTimeout(this.updateTimeout);
-    }
-  }
-
-  loadArcGISAPI = () => {
-    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
-
-    if ((window as any).require) {
-      this.setState({ message: "✅ ArcGIS API yüklendi" });
-      this.createMap();
-      return;
-    }
-
-    const cssLink = document.createElement("link");
-    cssLink.rel = "stylesheet";
-    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
-    document.head.appendChild(cssLink);
-
-    const existing = document.querySelector(`script[data-arcgis-api="${ARCGIS_API_VERSION}"]`) as HTMLScriptElement | null;
-    if (existing) {
-      existing.addEventListener('load', () => {
-        this.setState({ message: "✅ ArcGIS API yüklendi" });
-        this.createMap();
-      });
-      return;
-    }
-
-    const script = document.createElement("script");
-    script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
-    script.setAttribute('data-arcgis-api', ARCGIS_API_VERSION);
-    script.onload = () => {
-      this.setState({ message: "✅ ArcGIS API yüklendi" });
-      this.createMap();
-    };
-    script.onerror = () => {
-      this.setState({ message: "❌ ArcGIS API yüklenemedi" });
-    };
-    document.head.appendChild(script);
-  };
-
-  calculateRadiusForZoom = (zoom: number): { radius: number; activeLayer: string; rawRadius: number } => {
-    const configs = {
-      'vis_mvt_3z': { stops: [[3, 1], [7, 10]] as [number, number][], base: 2, range: [3, 7] },
-      'vis_mvt_7z': { stops: [[7, 1], [11, 13]] as [number, number][], base: 2, range: [7, 11] },
-      'vis_mvt_11z': { stops: [[11, 2], [15, 20]] as [number, number][], base: 2, range: [11, 15] },
-      'vis_mvt_15z': { stops: [[15, 2.5], [22, 250]] as [number, number][], base: 2, range: [15, 22] }
-    };
-
-    let activeLayer = 'vis_mvt_3z';
-    let config = configs['vis_mvt_3z'];
-
-    if (zoom >= 15) {
-      activeLayer = 'vis_mvt_15z';
-      config = configs['vis_mvt_15z'];
-    } else if (zoom >= 11) {
-      activeLayer = 'vis_mvt_11z';
-      config = configs['vis_mvt_11z'];
-    } else if (zoom >= 7) {
-      activeLayer = 'vis_mvt_7z';
-      config = configs['vis_mvt_7z'];
-    }
-
-    const rawRadius = interpolateExponential(zoom, config.stops, config.base);
-    
-    // 🔥 SCALING FACTOR UYGULA
-    const radius = rawRadius * this.scalingFactor;
-    
-    return { radius, activeLayer, rawRadius };
-  };
-
-  updateLayerForZoom = (zoom: number) => {
-    if (!this.styleJson || !this.VectorTileLayer || !this.mapView) return;
-
-    const { radius, activeLayer, rawRadius } = this.calculateRadiusForZoom(zoom);
-    
-    // Zoom'a göre hangi source kullanılacak?
-    let sourceToUse = 'coverage_3z';
-    if (zoom >= 15) {
-      sourceToUse = 'coverage_15z';
-    } else if (zoom >= 11) {
-      sourceToUse = 'coverage_11z';
-    } else if (zoom >= 7) {
-      sourceToUse = 'coverage_7z';
-    }
-    
-    console.log(`🎯 z${zoom.toFixed(2)} → ${activeLayer} | Source: ${sourceToUse} | raw=${rawRadius.toFixed(2)}px, scaled=${radius.toFixed(2)}px (×${this.scalingFactor})`);
-
-    this.setState({ 
-      calculatedRadius: `${radius.toFixed(1)}px`,
-      debugInfo: `Source: ${sourceToUse} | Raw: ${rawRadius.toFixed(1)}px | Scaled: ${radius.toFixed(1)}px | Factor: ${this.scalingFactor}x`
-    });
-
-    if (this.currentLayer) {
-      this.mapView.map.remove(this.currentLayer);
-      this.currentLayer.destroy();
-    }
-
-    // ✅ SADECE AKTİF SOURCE VE LAYER'I KULLAN
-    const activeStyleLayer = this.styleJson.layers.find(l => l.id === activeLayer);
-    
-    if (!activeStyleLayer) {
-      console.error(`❌ Layer ${activeLayer} bulunamadı!`);
-      return;
-    }
-
-    // Sadece bu zoom range için style oluştur
-    const modifiedStyle = {
-      version: 8,
-      sources: {
-        [sourceToUse]: this.styleJson.sources[sourceToUse]
-      },
-      layers: [{
-        ...activeStyleLayer,
-        source: sourceToUse, // Doğru source'u kullan
-        paint: {
-          ...activeStyleLayer.paint,
-          'circle-radius': radius,
-          'circle-pitch-alignment': 'viewport',
-          'circle-pitch-scale': 'viewport'
-        }
-      }]
-    };
-
-    console.log(`📦 Creating layer with source ${sourceToUse}:`, modifiedStyle);
-
-    this.currentLayer = new this.VectorTileLayer({
-      style: modifiedStyle,
-      title: `Coverage Layer (${sourceToUse})`
-    });
-
-    this.currentLayer.when(() => {
-      console.log(`✅ Layer created: ${sourceToUse} with radius ${radius.toFixed(2)}px`);
-    }).catch(err => {
-      console.error("❌ Layer error:", err);
-    });
-
-    this.mapView.map.add(this.currentLayer);
-  };
-
-  createMap = () => {
-    this.setState({ message: "🗺️ Map oluşturuluyor..." });
-
-    if (!this.mapDiv) {
-      setTimeout(() => this.createMap(), 50);
-      return;
-    }
-
-    if (!(window as any).require) {
-      this.setState({ message: "❌ ArcGIS API loader bulunamadı" });
-      return;
-    }
-
-    (window as any).require([
-      'esri/Map',
-      'esri/views/MapView',
-      'esri/layers/VectorTileLayer',
-      'esri/request'
-    ], (Map, MapView, VectorTileLayer, esriRequest) => {
-      
-      this.VectorTileLayer = VectorTileLayer;
-
-      const map = new Map({
-        basemap: 'dark-gray-vector'
-      });
-
-      this.mapView = new MapView({
-        container: this.mapDiv,
-        map: map,
-        center: [32, 39],
-        zoom: 15,
-        constraints: {
-          snapToZoom: false,
-          minZoom: 3,
-          maxZoom: 22,
-          rotationEnabled: false
-        },
-        navigation: {
-          mouseWheelZoomEnabled: true,
-          browserTouchPanEnabled: true
-        }
-      });
-
-      this.mapView.when(() => {
-        const container = this.mapView.container as HTMLElement;
-        
-        container.addEventListener('wheel', (event: WheelEvent) => {
-          event.preventDefault();
-          
-          const currentZoom = this.mapView.zoom;
-          const delta = event.deltaY;
-          const zoomChange = delta > 0 ? -0.2 : 0.2;
-          const newZoom = Math.max(3, Math.min(22, currentZoom + zoomChange));
-          
-          this.mapView.goTo({
-            zoom: newZoom
-          }, {
-            duration: 100
-          });
-        }, { passive: false });
-      });
-
-      this.mapView.watch('zoom', (newZoom) => {
-        this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
-        
-        if (this.updateTimeout) {
-          clearTimeout(this.updateTimeout);
-        }
-        
-        this.updateTimeout = setTimeout(() => {
-          this.updateLayerForZoom(newZoom);
-        }, 150);
-      });
-
-      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
-
-      const originalFetch = window.fetch;
-      window.fetch = (url, options = {}) => {
-        const urlStr = url.toString();
-        if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-          return originalFetch(url, {
-            ...options,
-            headers: {
-              ...(options['headers'] || {}),
-              'Authorization': `Bearer ${MANUAL_BEARER}`
-            }
-          });
-        }
-        return originalFetch(url, options);
-      };
-
-      esriRequest(MVT_STYLE_URL, {
-        headers: {
-          'Authorization': `Bearer ${MANUAL_BEARER}`
-        },
-        responseType: 'json'
-      }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı..." });
-        this.styleJson = response.data;
-
-        console.log("🎨 Full Maplibre Style JSON:", JSON.stringify(this.styleJson, null, 2));
-
-        this.updateLayerForZoom(this.mapView.zoom);
-        this.setState({ message: "✅ Layer yüklendi! Test edin." });
-        
-      }).catch(err => {
-        this.setState({ message: `❌ Fetch error: ${err.message}` });
-        console.error("FETCH HATASI:", err);
-      });
-    }, (err) => {
-      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
-      console.error('AMD require error:', err);
-    });
-  };
-
-  adjustScalingFactor = (delta: number) => {
-    this.scalingFactor = Math.max(0.1, Math.min(10, this.scalingFactor + delta));
-    console.log(`🎚️ Scaling factor: ${this.scalingFactor}x`);
-    this.updateLayerForZoom(this.mapView.zoom);
-  };
-
-  render() {
-    const { message, currentZoom, calculatedRadius, debugInfo } = this.state;
-
-    return (
-      <div style={{ width: "100%", height: "100%", position: "relative" }}>
-        <div 
-          ref={el => this.mapDiv = el}
-          style={{ width: "100%", height: "100%" }}
-        />
-
-        {/* Zoom Control Panel */}
-        <div style={{
-          position: "absolute",
-          top: "10px",
-          right: "10px",
-          background: "rgba(0,0,0,0.95)",
-          color: "white",
-          padding: "20px",
-          borderRadius: "8px",
-          zIndex: 9999,
-          fontFamily: "monospace",
-          fontSize: "14px",
-          minWidth: "300px",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
-        }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FF5722", fontSize: "16px" }}>
-            🔬 DEBUG MODE
-          </div>
-          
-          <div style={{ 
-            background: "rgba(76, 175, 80, 0.15)", 
-            padding: "15px", 
-            borderRadius: "5px",
-            marginBottom: "15px",
-            border: "1px solid rgba(76, 175, 80, 0.3)"
-          }}>
-            <div style={{ fontSize: "11px", color: "#aaa", marginBottom: "5px" }}>
-              Zoom Level
-            </div>
-            <div style={{ fontSize: "32px", fontWeight: "bold", color: "#FFD700", textAlign: "center" }}>
-              {currentZoom}
-            </div>
-          </div>
-
-          <div style={{ 
-            background: "rgba(255, 87, 34, 0.15)", 
-            padding: "12px", 
-            borderRadius: "5px",
-            marginBottom: "15px",
-            border: "1px solid rgba(255, 87, 34, 0.3)"
-          }}>
-            <div style={{ fontSize: "10px", color: "#aaa", marginBottom: "5px" }}>
-              Circle Radius
-            </div>
-            <div style={{ fontSize: "16px", fontWeight: "bold", color: "#FF5722", textAlign: "center" }}>
-              {calculatedRadius}
-            </div>
-            <div style={{ fontSize: "9px", color: "#888", marginTop: "5px", textAlign: "center" }}>
-              {debugInfo}
-            </div>
-          </div>
-
-          {/* Zoom Buttons */}
-          <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
-            <button
-              onClick={() => {
-                if (this.mapView) {
-                  const newZoom = this.mapView.zoom - 0.5;
-                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
-                }
-              }}
-              style={{
-                flex: 1,
-                padding: "12px",
-                fontSize: "18px",
-                background: "#f44336",
-                color: "white",
-                border: "none",
-                borderRadius: "5px",
-                cursor: "pointer",
-                fontWeight: "bold"
-              }}
-            >
-              Z-
-            </button>
-            <button
-              onClick={() => {
-                if (this.mapView) {
-                  const newZoom = this.mapView.zoom + 0.5;
-                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
-                }
-              }}
-              style={{
-                flex: 1,
-                padding: "12px",
-                fontSize: "18px",
-                background: "#4CAF50",
-                color: "white",
-                border: "none",
-                borderRadius: "5px",
-                cursor: "pointer",
-                fontWeight: "bold"
-              }}
-            >
-              Z+
-            </button>
-          </div>
-
-          {/* 🔥 SCALING FACTOR CONTROLS */}
-          <div style={{
-            background: "rgba(255, 152, 0, 0.15)",
-            padding: "12px",
-            borderRadius: "5px",
-            border: "1px solid rgba(255, 152, 0, 0.3)",
-            marginBottom: "10px"
-          }}>
-            <div style={{ fontSize: "11px", color: "#FF9800", fontWeight: "bold", marginBottom: "8px", textAlign: "center" }}>
-              🎚️ SCALING FACTOR
-            </div>
-            <div style={{ display: "flex", gap: "8px" }}>
-              <button
-                onClick={() => this.adjustScalingFactor(-0.5)}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  fontSize: "16px",
-                  background: "#FF9800",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontWeight: "bold"
-                }}
-              >
-                -0.5×
-              </button>
-              <button
-                onClick={() => this.adjustScalingFactor(-0.1)}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  fontSize: "16px",
-                  background: "#FFA726",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontWeight: "bold"
-                }}
-              >
-                -0.1×
-              </button>
-              <button
-                onClick={() => { this.scalingFactor = 1.0; this.updateLayerForZoom(this.mapView.zoom); }}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  fontSize: "14px",
-                  background: "#666",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontWeight: "bold"
-                }}
-              >
-                1×
-              </button>
-              <button
-                onClick={() => this.adjustScalingFactor(0.1)}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  fontSize: "16px",
-                  background: "#FFA726",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontWeight: "bold"
-                }}
-              >
-                +0.1×
-              </button>
-              <button
-                onClick={() => this.adjustScalingFactor(0.5)}
-                style={{
-                  flex: 1,
-                  padding: "10px",
-                  fontSize: "16px",
-                  background: "#FF9800",
-                  color: "white",
-                  border: "none",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontWeight: "bold"
-                }}
-              >
-                +0.5×
-              </button>
-            </div>
-            <div style={{ fontSize: "10px", color: "#FF9800", marginTop: "8px", textAlign: "center" }}>
-              Current: {this.scalingFactor.toFixed(1)}×
-            </div>
-          </div>
-
-          <div style={{ 
-            fontSize: "9px", 
-            color: "#666", 
-            padding: "8px",
-            background: "rgba(255,255,255,0.03)",
-            borderRadius: "3px",
-            lineHeight: "1.4"
-          }}>
-            Scaling factor ile circle boyutlarını ayarlayın ve Maplibre ile karşılaştırın!
-          </div>
-        </div>
-
-        {/* Status Panel */}
-        <div style={{
-          position: "absolute",
-          top: "10px",
-          left: "10px",
-          background: "rgba(0,0,0,0.9)",
-          color: "white",
-          padding: "15px",
-          borderRadius: "5px",
-          zIndex: 9999,
-          fontFamily: "monospace",
-          fontSize: "12px",
-          maxWidth: "350px",
-          boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
-        }}>
-          <div style={{ fontWeight: "bold", color: "#FF5722", marginBottom: "8px" }}>
-            🔬 DEBUG & CALIBRATION MODE
-          </div>
-          <div style={{ fontSize: "11px", lineHeight: "1.5" }}>{message}</div>
-          <div style={{ 
-            marginTop: "10px", 
-            fontSize: "9px", 
-            color: "#666", 
-            borderTop: "1px solid #333", 
-            paddingTop: "8px",
-            lineHeight: "1.5"
-          }}>
-            Use scaling factor controls to match Maplibre's exact circle sizes. Check console for detailed logs.
-          </div>
-        </div>
-      </div>
-    );
-  }
+  ],
+  "id": "PROJE_coverage_style"
 }
