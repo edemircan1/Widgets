@@ -13,7 +13,6 @@ interface State {
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
-  private originalFetch = window.fetch;
 
   constructor(props) {
     super(props);
@@ -110,7 +109,6 @@ export default class Widget extends React.PureComponent<any, State> {
         }
       });
 
-      // Mouse wheel zoom control
       this.mapView.when(() => {
         const container = this.mapView.container as HTMLElement;
         
@@ -136,17 +134,10 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // ✅ ORİJİNAL FETCH OVERRIDE (İLK KODUNDAN AYNEN)
       const originalFetch = window.fetch;
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
         if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
-          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
-          if (zxyMatch) {
-            const [, z] = zxyMatch;
-            console.log(`🔍 Tile request: zoom ${z}`);
-          }
-          
           return originalFetch(url, {
             ...options,
             headers: {
@@ -158,101 +149,96 @@ export default class Widget extends React.PureComponent<any, State> {
         return originalFetch(url, options);
       };
 
-      // ✅ ORİJİNAL STYLE FETCH
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı, layer'lar oluşturuluyor..." });
+        this.setState({ message: "📄 Style JSON alındı, çok katmanlı renk sistemi oluşturuluyor..." });
         const originalStyle = response.data;
 
-        // ✅ ORİJİNAL LAYER YAPILANDIRMASI
+        // 🎨 Her RSRP aralığı için statik renk - EXPRESSION YOK!
+        const rsrpRanges = [
+          { min: null, max: -126, color: "#313695", label: "< -126" },
+          { min: -126, max: -118, color: "#4575B4", label: "-126 to -118" },
+          { min: -118, max: -109, color: "#74ADD1", label: "-118 to -109" },
+          { min: -109, max: -100, color: "#ABD9E9", label: "-109 to -100" },
+          { min: -100, max: -92, color: "#E0F3F8", label: "-100 to -92" },
+          { min: -92, max: -83, color: "#FFFFBF", label: "-92 to -83" },
+          { min: -83, max: -75, color: "#FEE090", label: "-83 to -75" },
+          { min: -75, max: -66, color: "#FDAE61", label: "-75 to -66" },
+          { min: -66, max: -57, color: "#F46D43", label: "-66 to -57" },
+          { min: -57, max: -49, color: "#D73027", label: "-57 to -49" },
+          { min: -49, max: null, color: "#A50026", label: "> -49" }
+        ];
+
         const zoomConfigs = [
-          { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
-          { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
-          { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
           { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
         ];
 
+        // Her zoom level için
         zoomConfigs.forEach(config => {
-          // 🎨 interpolate → step çevirme fonksiyonu
-          const convertToStep = (paintValue) => {
-            if (Array.isArray(paintValue) && paintValue[0] === 'interpolate') {
-              // interpolate array'ini step'e çevir
-              const stepArray = ['step', paintValue[2]]; // ['step', ['get', 'rsrp_dbm']]
-              
-              // İlk renk (default)
-              stepArray.push(paintValue[4]); // "#313695"
-              
-              // Diğer threshold'lar
-              for (let i = 5; i < paintValue.length; i += 2) {
-                if (i + 1 < paintValue.length) {
-                  stepArray.push(paintValue[i]);     // threshold değeri
-                  stepArray.push(paintValue[i + 1]); // renk
-                }
-              }
-              
-              console.log(`🔄 Converted interpolate to step:`, stepArray);
-              return stepArray;
+          
+          // Her RSRP range için AYRI bir layer
+          rsrpRanges.forEach((range, idx) => {
+            
+            // Filter expression oluştur
+            let filterExpr;
+            if (range.min === null) {
+              filterExpr = ["<", ["get", "rsrp_dbm"], range.max];
+            } else if (range.max === null) {
+              filterExpr = [">=", ["get", "rsrp_dbm"], range.min];
+            } else {
+              filterExpr = ["all",
+                [">=", ["get", "rsrp_dbm"], range.min],
+                ["<", ["get", "rsrp_dbm"], range.max]
+              ];
             }
-            return paintValue;
-          };
 
-          const customStyle = {
-            version: 8,
-            sources: {
-              [config.source]: originalStyle.sources[config.source]
-            },
-            layers: originalStyle.layers.filter(layer => 
-              layer.source === config.source
-            ).map(layer => {
-              const newLayer = {
-                ...layer,
+            const customStyle = {
+              version: 8,
+              sources: {
+                [config.source]: originalStyle.sources[config.source]
+              },
+              layers: [{
+                id: `${config.name}_range_${idx}`,
+                type: "fill",
+                source: config.source,
+                "source-layer": "data",
                 minzoom: config.minZoom,
-                maxzoom: config.maxZoom
-              };
-              
-              // Paint'i düzelt
-              if (layer.paint) {
-                newLayer.paint = {};
-                for (const key in layer.paint) {
-                  newLayer.paint[key] = convertToStep(layer.paint[key]);
+                maxzoom: config.maxZoom,
+                filter: filterExpr,
+                paint: {
+                  "fill-color": range.color,  // STATİK RENK!
+                  "fill-opacity": 0.7
                 }
-              }
-              
-              return newLayer;
-            })
-          };
+              }]
+            };
 
-          console.log(`Creating layer ${config.name}:`, customStyle);
+            console.log(`Creating ${config.name} range ${range.label}:`, range.color);
 
-          const layer = new VectorTileLayer({
-            style: customStyle,
-            minScale: 0,
-            maxScale: 0,
-            title: `Coverage ${config.name}`
+            const layer = new VectorTileLayer({
+              style: customStyle,
+              title: `${config.name} ${range.label}`
+            });
+
+            layer.when(() => {
+              console.log(`✅ Layer ${config.name} range ${range.label} loaded`);
+            }).catch(err => {
+              console.error(`❌ Layer error:`, err);
+            });
+
+            map.add(layer);
           });
-
-          layer.when(() => {
-            console.log(`✅ Layer ${config.name} loaded`);
-          }).catch(err => {
-            console.error(`❌ Layer ${config.name} error:`, err);
-          });
-
-          map.add(layer);
         });
 
-        this.setState({ message: "✅ Tüm layer'lar oluşturuldu!" });
+        this.setState({ message: "✅ 11 ayrı renk katmanı oluşturuldu!" });
         
-      }).catch(err => {
+      }).catch (err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
         console.error("FETCH HATASI:", err);
       });
-    }, (err) => {
-      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
-      console.error('AMD require error:', err);
     });
   };
 
@@ -266,7 +252,6 @@ export default class Widget extends React.PureComponent<any, State> {
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Zoom Control Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
@@ -280,8 +265,8 @@ export default class Widget extends React.PureComponent<any, State> {
           fontSize: "14px",
           minWidth: "200px"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
-            🎮 ORIGINAL CODE
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FF00FF" }}>
+            🎨 MULTI-LAYER APPROACH
           </div>
           
           <div style={{ 
@@ -344,13 +329,13 @@ export default class Widget extends React.PureComponent<any, State> {
             </button>
           </div>
 
-          <div style={{ fontSize: "10px", color: "#FFD700", textAlign: "center" }}>
-            ⚠️ This is YOUR original code<br/>
-            Should show white/gray MVT
+          <div style={{ fontSize: "10px", color: "#FFD700" }}>
+            ⚠️ 11 separate layers<br/>
+            Each RSRP range = 1 layer<br/>
+            NO expressions, static colors
           </div>
         </div>
 
-        {/* Status Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
@@ -363,14 +348,10 @@ export default class Widget extends React.PureComponent<any, State> {
           fontFamily: "monospace",
           fontSize: "12px"
         }}>
-          <strong>MVT Multi-Layer (Original):</strong>
+          <strong>🎨 Multi-Layer Strategy:</strong>
           <div style={{ marginTop: "10px" }}>{message}</div>
-          <div style={{ marginTop: "5px", fontSize: "11px" }}>
-            Expected: {
-              currentZoom < 7 ? "10km (3z)" :
-              currentZoom < 11 ? "1km (7z)" :
-              currentZoom < 15 ? "100m (11z)" : "10m (15z)"
-            }
+          <div style={{ marginTop: "10px", fontSize: "10px", color: "#888" }}>
+            Zoom 15+ only (for testing)
           </div>
         </div>
       </div>
