@@ -1,220 +1,280 @@
-/** @jsx jsx */
-import { React, AllWidgetSettingProps, jsx, Immutable } from "jimu-core";
-import { MapWidgetSelector, SettingSection, SettingRow } from "jimu-ui/advanced/setting-components";
-import { TextInput, NumericInput, Switch, Label } from "jimu-ui";
-
-export default class Setting extends React.PureComponent<AllWidgetSettingProps<any>> {
-  
-  onMapWidgetSelected = (useMapWidgetIds: string[]) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      useMapWidgetIds: useMapWidgetIds
-    });
-  };
-
-  onTileEndpointChange = (value: string) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('tileEndpoint', value)
-    });
-  };
-
-  onBearerTokenChange = (value: string) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('bearerToken', value)
-    });
-  };
-
-  onCoverageLayerChange = (value: string) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('coverageLayer', value)
-    });
-  };
-
-  onMinZoomChange = (value: number) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('minZoom', value)
-    });
-  };
-
-  onMaxZoomChange = (value: number) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('maxZoom', value)
-    });
-  };
-
-  onFillOpacityChange = (value: number) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('fillOpacity', value)
-    });
-  };
-
-  onOutlineWidthChange = (value: number) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('outlineWidth', value)
-    });
-  };
-
-  onEnableCacheChange = (checked: boolean) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('enableCache', checked)
-    });
-  };
-
-  onMaxCacheSizeChange = (value: number) => {
-    this.props.onSettingChange({
-      id: this.props.id,
-      config: this.props.config.set('maxCacheSize', value)
-    });
-  };
-
-  render() {
-    const { config } = this.props;
-
-    return (
-      <div className="widget-setting-mvt-renderer" style={{ padding: "20px" }}>
-        
-        {/* Map Widget Selection */}
-        <SettingSection title="Map Configuration">
-          <SettingRow>
-            <Label>Select Map Widget</Label>
-          </SettingRow>
-          <SettingRow>
-            <MapWidgetSelector
-              onSelect={this.onMapWidgetSelected}
-              useMapWidgetIds={this.props.useMapWidgetIds}
-            />
-          </SettingRow>
-        </SettingSection>
-
-        {/* API Configuration */}
-        <SettingSection title="API Configuration">
-          <SettingRow label="Tile Endpoint">
-            <TextInput
-              className="w-100"
-              value={config?.tileEndpoint || ''}
-              onChange={(e) => this.onTileEndpointChange(e.target.value)}
-              placeholder="https://api.example.com/tile/polygons/zxy/all"
-            />
-          </SettingRow>
-
-          <SettingRow label="Bearer Token">
-            <TextInput
-              className="w-100"
-              type="password"
-              value={config?.bearerToken || ''}
-              onChange={(e) => this.onBearerTokenChange(e.target.value)}
-              placeholder="Enter your bearer token"
-            />
-          </SettingRow>
-
-          <SettingRow label="Coverage Layer">
-            <TextInput
-              className="w-100"
-              value={config?.coverageLayer || 'rsrp_dbm_poly'}
-              onChange={(e) => this.onCoverageLayerChange(e.target.value)}
-              placeholder="rsrp_dbm_poly"
-            />
-          </SettingRow>
-        </SettingSection>
-
-        {/* Zoom Configuration */}
-        <SettingSection title="Zoom Configuration">
-          <SettingRow label="Minimum Zoom">
-            <NumericInput
-              className="w-100"
-              value={config?.minZoom || 15}
-              min={0}
-              max={22}
-              onChange={this.onMinZoomChange}
-            />
-          </SettingRow>
-
-          <SettingRow label="Maximum Zoom">
-            <NumericInput
-              className="w-100"
-              value={config?.maxZoom || 22}
-              min={0}
-              max={22}
-              onChange={this.onMaxZoomChange}
-            />
-          </SettingRow>
-        </SettingSection>
-
-        {/* Visual Configuration */}
-        <SettingSection title="Visual Settings">
-          <SettingRow label="Fill Opacity (0-1)">
-            <NumericInput
-              className="w-100"
-              value={config?.fillOpacity || 0.5}
-              min={0}
-              max={1}
-              step={0.1}
-              onChange={this.onFillOpacityChange}
-            />
-          </SettingRow>
-
-          <SettingRow label="Outline Width">
-            <NumericInput
-              className="w-100"
-              value={config?.outlineWidth || 0.5}
-              min={0}
-              max={5}
-              step={0.5}
-              onChange={this.onOutlineWidthChange}
-            />
-          </SettingRow>
-        </SettingSection>
-
-        {/* Cache Configuration */}
-        <SettingSection title="Performance">
-          <SettingRow label="Enable Tile Cache">
-            <Switch
-              checked={config?.enableCache !== false}
-              onChange={(e) => this.onEnableCacheChange(e.target.checked)}
-            />
-          </SettingRow>
-
-          {config?.enableCache !== false && (
-            <SettingRow label="Max Cache Size (tiles)">
-              <NumericInput
-                className="w-100"
-                value={config?.maxCacheSize || 100}
-                min={10}
-                max={1000}
-                onChange={this.onMaxCacheSizeChange}
-              />
-            </SettingRow>
-          )}
-        </SettingSection>
-
-        {/* Info Section */}
-        <SettingSection>
-          <div style={{ 
-            padding: "15px", 
-            background: "rgba(0,0,0,0.05)", 
-            borderRadius: "5px",
-            fontSize: "12px"
-          }}>
-            <strong>ℹ️ Widget Info:</strong>
-            <ul style={{ marginTop: "10px", paddingLeft: "20px" }}>
-              <li>Fetches MVT tiles from configured endpoint</li>
-              <li>Decodes protobuf and converts to GeoJSON</li>
-              <li>Renders with RSRP-based color mapping</li>
-              <li>Only works at zoom levels {config?.minZoom || 15} and above</li>
-              <li>Uses tile caching for better performance</li>
-            </ul>
-          </div>
-        </SettingSection>
-
-      </div>
-    );
-  }
+{
+   "version": 8,
+   "name": "Rhea Coverage RSRP Bins",
+   "metadata": {"openmaptiles:version": "3.15.0"},
+   "bearing": 0,
+   "pitch": 0,
+   "sources":    {
+      "coverage_15z":       {
+         "type": "vector",
+         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
+         "minzoom": 15,
+         "maxzoom": 15
+      },
+      "coverage_11z":       {
+         "type": "vector",
+         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
+         "minzoom": 11,
+         "maxzoom": 11
+      },
+      "coverage_7z":       {
+         "type": "vector",
+         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
+         "minzoom": 7,
+         "maxzoom": 7
+      },
+      "coverage_3z":       {
+         "type": "vector",
+         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
+         "minzoom": 3,
+         "maxzoom": 3
+      }
+   },
+   "layers":    [
+            {
+         "id": "vis_mvt_15z",
+         "type": "circle",
+         "source": "coverage_15z",
+         "minzoom": 15,
+         "maxzoom": 24,
+         "layout": {"visibility": "visible"},
+         "source-layer": "points",
+         "paint":          {
+            "circle-color":             [
+               "interpolate",
+               ["linear"],
+                              [
+                  "get",
+                  "rsrp_dbm"
+               ],
+               -135,
+               "#313695",
+               -126,
+               "#4575B4",
+               -118,
+               "#74ADD1",
+               -109,
+               "#ABD9E9",
+               -100,
+               "#E0F3F8",
+               -92,
+               "#FFFFBF",
+               -83,
+               "#FEE090",
+               -75,
+               "#FDAE61",
+               -66,
+               "#F46D43",
+               -57,
+               "#D73027",
+               -49,
+               "#A50026",
+               0,
+               "#ccccff",
+               1,
+               "#cc66ff",
+               2,
+               "#f5f5f0"
+            ],
+            "circle-pitch-scale": "map",
+            "circle-radius":             {
+               "base": 2,
+               "stops":                [
+                                    [
+                     15,
+                     2.5
+                  ],
+                                    [
+                     22,
+                     250
+                  ]
+               ]
+            }
+         }
+      },
+            {
+         "id": "vis_mvt_11z",
+         "type": "circle",
+         "source": "coverage_11z",
+         "minzoom": 11,
+         "maxzoom": 15,
+         "layout": {"visibility": "visible"},
+         "source-layer": "points",
+         "paint":          {
+            "circle-color":             [
+               "interpolate",
+               ["linear"],
+                              [
+                  "get",
+                  "rsrp_dbm"
+               ],
+               -135,
+               "#313695",
+               -126,
+               "#4575B4",
+               -118,
+               "#74ADD1",
+               -109,
+               "#ABD9E9",
+               -100,
+               "#E0F3F8",
+               -92,
+               "#FFFFBF",
+               -83,
+               "#FEE090",
+               -75,
+               "#FDAE61",
+               -66,
+               "#F46D43",
+               -57,
+               "#D73027",
+               -49,
+               "#A50026",
+               0,
+               "#ccccff",
+               1,
+               "#cc66ff",
+               2,
+               "#f5f5f0"
+            ],
+            "circle-pitch-scale": "map",
+            "circle-radius":             {
+               "base": 2,
+               "stops":                [
+                                    [
+                     11,
+                     2
+                  ],
+                                    [
+                     15,
+                     20
+                  ]
+               ]
+            }
+         }
+      },
+            {
+         "id": "vis_mvt_7z",
+         "type": "circle",
+         "source": "coverage_7z",
+         "minzoom": 7,
+         "maxzoom": 11,
+         "layout": {"visibility": "visible"},
+         "source-layer": "points",
+         "paint":          {
+            "circle-color":             [
+               "interpolate",
+               ["linear"],
+                              [
+                  "get",
+                  "rsrp_dbm"
+               ],
+               -135,
+               "#313695",
+               -126,
+               "#4575B4",
+               -118,
+               "#74ADD1",
+               -109,
+               "#ABD9E9",
+               -100,
+               "#E0F3F8",
+               -92,
+               "#FFFFBF",
+               -83,
+               "#FEE090",
+               -75,
+               "#FDAE61",
+               -66,
+               "#F46D43",
+               -57,
+               "#D73027",
+               -49,
+               "#A50026",
+               0,
+               "#ccccff",
+               1,
+               "#cc66ff",
+               2,
+               "#f5f5f0"
+            ],
+            "circle-pitch-scale": "map",
+            "circle-radius":             {
+               "base": 2,
+               "stops":                [
+                                    [
+                     7,
+                     1
+                  ],
+                                    [
+                     11,
+                     13
+                  ]
+               ]
+            }
+         }
+      },
+            {
+         "id": "vis_mvt_3z",
+         "type": "circle",
+         "source": "coverage_3z",
+         "minzoom": 3,
+         "maxzoom": 7,
+         "layout": {"visibility": "visible"},
+         "source-layer": "points",
+         "paint":          {
+            "circle-color":             [
+               "interpolate",
+               ["linear"],
+                              [
+                  "get",
+                  "rsrp_dbm"
+               ],
+               -135,
+               "#313695",
+               -126,
+               "#4575B4",
+               -118,
+               "#74ADD1",
+               -109,
+               "#ABD9E9",
+               -100,
+               "#E0F3F8",
+               -92,
+               "#FFFFBF",
+               -83,
+               "#FEE090",
+               -75,
+               "#FDAE61",
+               -66,
+               "#F46D43",
+               -57,
+               "#D73027",
+               -49,
+               "#A50026",
+               0,
+               "#ccccff",
+               1,
+               "#cc66ff",
+               2,
+               "#f5f5f0"
+            ],
+            "circle-pitch-scale": "map",
+            "circle-radius":             {
+               "base": 2,
+               "stops":                [
+                                    [
+                     3,
+                     1
+                  ],
+                                    [
+                     7,
+                     10
+                  ]
+               ]
+            }
+         }
+      }
+   ],
+   "id": "rhea_coverage_style"
 }
