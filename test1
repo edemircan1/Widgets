@@ -8,22 +8,28 @@ const ARCGIS_API_VERSION = "4.32";
 interface State {
   message: string;
   currentZoom: number;
-  debugInfo: string;
+  logs: string[];
 }
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
-  private vectorLayer: any;
 
   constructor(props) {
     super(props);
     this.state = {
-      message: "Widget yükleniyor...",
+      message: "Başlatılıyor...",
       currentZoom: 15,
-      debugInfo: ""
+      logs: []
     };
   }
+
+  addLog = (msg: string) => {
+    console.log(msg);
+    this.setState(prev => ({
+      logs: [...prev.logs, `${new Date().toLocaleTimeString()}: ${msg}`].slice(-10)
+    }));
+  };
 
   componentDidMount() {
     this.loadArcGISAPI();
@@ -36,10 +42,10 @@ export default class Widget extends React.PureComponent<any, State> {
   }
 
   loadArcGISAPI = () => {
-    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
+    this.addLog("📦 ArcGIS API yükleniyor...");
 
     if ((window as any).require) {
-      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.addLog("✅ ArcGIS API zaten yüklü");
       this.createMap();
       return;
     }
@@ -49,38 +55,23 @@ export default class Widget extends React.PureComponent<any, State> {
     cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
     document.head.appendChild(cssLink);
 
-    const existing = document.querySelector(`script[data-arcgis-api="${ARCGIS_API_VERSION}"]`) as HTMLScriptElement | null;
-    if (existing) {
-      existing.addEventListener('load', () => {
-        this.setState({ message: "✅ ArcGIS API yüklendi" });
-        this.createMap();
-      });
-      return;
-    }
-
     const script = document.createElement("script");
     script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
-    script.setAttribute('data-arcgis-api', ARCGIS_API_VERSION);
     script.onload = () => {
-      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.addLog("✅ ArcGIS API yüklendi");
       this.createMap();
     };
     script.onerror = () => {
-      this.setState({ message: "❌ ArcGIS API yüklenemedi" });
+      this.addLog("❌ ArcGIS API yüklenemedi");
     };
     document.head.appendChild(script);
   };
 
   createMap = () => {
-    this.setState({ message: "🗺️ Map oluşturuluyor..." });
+    this.addLog("🗺️ Map oluşturuluyor...");
 
     if (!this.mapDiv) {
       setTimeout(() => this.createMap(), 50);
-      return;
-    }
-
-    if (!(window as any).require) {
-      this.setState({ message: "❌ ArcGIS API loader bulunamadı" });
       return;
     }
 
@@ -91,6 +82,8 @@ export default class Widget extends React.PureComponent<any, State> {
       'esri/request'
     ], (Map, MapView, VectorTileLayer, esriRequest) => {
       
+      this.addLog("✅ ArcGIS modules loaded");
+
       const map = new Map({
         basemap: 'dark-gray-vector'
       });
@@ -99,44 +92,39 @@ export default class Widget extends React.PureComponent<any, State> {
         container: this.mapDiv,
         map: map,
         center: [32, 39],
-        zoom: 15,
-        constraints: {
-          snapToZoom: false,
-          minZoom: 3,
-          maxZoom: 22,
-          rotationEnabled: false
-        }
+        zoom: 15
       });
 
       this.mapView.when(() => {
-        const container = this.mapView.container as HTMLElement;
-        
-        container.addEventListener('wheel', (event: WheelEvent) => {
-          event.preventDefault();
-          
-          const currentZoom = this.mapView.zoom;
-          const delta = event.deltaY;
-          const zoomChange = delta > 0 ? -0.2 : 0.2;
-          const newZoom = Math.max(3, Math.min(22, currentZoom + zoomChange));
-          
-          this.mapView.goTo({
-            zoom: newZoom
-          }, {
-            duration: 100
-          });
-        }, { passive: false });
+        this.addLog("✅ MapView ready");
       });
 
       this.mapView.watch('zoom', (newZoom) => {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
       });
 
-      this.setState({ message: "✅ Map hazır! Style JSON test ediliyor..." });
-
-      // Fetch override
+      // Network monitoring
       const originalFetch = window.fetch;
+      let tileCount = 0;
+      
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
+        
+        // Style JSON request
+        if (urlStr.includes('/styles/')) {
+          this.addLog(`🔍 Fetching style JSON...`);
+        }
+        
+        // Tile requests
+        if (urlStr.includes('.pbf')) {
+          tileCount++;
+          const match = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+          if (match) {
+            this.addLog(`📦 Tile #${tileCount}: ${match[1]}/${match[2]}/${match[3]}`);
+          }
+        }
+        
+        // Add auth header
         if (urlStr.includes('abc.com') || urlStr.includes('/styles/')) {
           return originalFetch(url, {
             ...options,
@@ -146,196 +134,159 @@ export default class Widget extends React.PureComponent<any, State> {
             }
           });
         }
+        
         return originalFetch(url, options);
       };
 
-      // 🔍 HARDCORE DEBUG: Style JSON'u birden fazla yöntemle test et
+      // Fetch style JSON
+      this.addLog("📥 Requesting style JSON...");
+      
       esriRequest(MVT_STYLE_URL, {
-        headers: {
-          'Authorization': `Bearer ${MANUAL_BEARER}`
-        },
+        headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
         responseType: 'json'
       }).then(response => {
-        const originalStyle = response.data;
+        this.addLog("✅ Style JSON received");
+        this.addLog(`   Sources: ${Object.keys(response.data.sources).join(', ')}`);
+        this.addLog(`   Layers: ${response.data.layers.length} layers`);
+
+        // Basit style - sadece kırmızı dolgu
+        const testStyle = {
+          version: 8,
+          sources: response.data.sources,
+          layers: [
+            {
+              id: "test_fill_15z",
+              type: "fill",
+              source: "coverage_15z",
+              "source-layer": "data",
+              minzoom: 0,
+              maxzoom: 24,
+              paint: {
+                "fill-color": "#FF0000",
+                "fill-opacity": 0.8
+              }
+            }
+          ]
+        };
+
+        this.addLog("🎨 Creating VectorTileLayer...");
         
-        console.log("=" .repeat(80));
-        console.log("🔍 STYLE JSON DEBUG");
-        console.log("=" .repeat(80));
-        console.log("Original Style:", JSON.stringify(originalStyle, null, 2));
-        
-        // Test 1: Orijinal style
-        console.log("\n📋 TEST 1: Original Style (as-is)");
-        this.testStyle(originalStyle, "Original", VectorTileLayer, map);
-        
-        // Test 2: Basit renkler (expression yok)
-        console.log("\n📋 TEST 2: Simple Static Colors");
-        const simpleStyle = this.createSimpleStyle(originalStyle);
-        this.testStyle(simpleStyle, "Simple", VectorTileLayer, map);
-        
-        // Test 3: Tek layer test
-        console.log("\n📋 TEST 3: Single Layer Test");
-        const singleLayerStyle = this.createSingleLayerStyle(originalStyle);
-        this.testStyle(singleLayerStyle, "Single", VectorTileLayer, map);
-        
-        this.setState({ 
-          message: "🔍 3 farklı style test ediliyor...",
-          debugInfo: "Check console for detailed logs"
+        const layer = new VectorTileLayer({
+          style: testStyle,
+          title: "Test MVT"
         });
-        
+
+        layer.when(() => {
+          this.addLog("✅ VectorTileLayer.when() fired");
+          this.addLog(`   Loaded: ${layer.loaded}`);
+          this.addLog(`   Visible: ${layer.visible}`);
+          this.addLog(`   Opacity: ${layer.opacity}`);
+        }).catch(err => {
+          this.addLog(`❌ Layer error: ${err.message}`);
+        });
+
+        map.add(layer);
+        this.addLog("➕ Layer added to map");
+
+        // Layer listesini kontrol et
+        setTimeout(() => {
+          this.addLog(`📊 Map layers: ${map.layers.length}`);
+          map.layers.forEach((l, i) => {
+            this.addLog(`   [${i}] ${l.title || l.type}`);
+          });
+        }, 2000);
+
       }).catch(err => {
-        console.error("❌ Fetch error:", err);
-        this.setState({ message: `❌ Fetch error: ${err.message}` });
+        this.addLog(`❌ Style fetch error: ${err.message}`);
       });
     });
   };
 
-  // Test 1 yardımcısı: Orijinal style'ı test et
-  testStyle = (styleJson: any, label: string, VectorTileLayer: any, map: any) => {
-    const layer = new VectorTileLayer({
-      style: styleJson,
-      title: `Test: ${label}`,
-      opacity: 0.8
-    });
-
-    layer.when(() => {
-      console.log(`✅ ${label} layer loaded`);
-      console.log(`  - Style:`, layer.style);
-      console.log(`  - CurrentStyleInfo:`, layer.currentStyleInfo);
-      console.log(`  - Visible:`, layer.visible);
-      console.log(`  - Loaded:`, layer.loaded);
-    }).catch(err => {
-      console.error(`❌ ${label} layer error:`, err);
-    });
-
-    map.add(layer);
-    
-    if (label === "Original") {
-      this.vectorLayer = layer;
-    }
-  };
-
-  // Test 2: Basit statik renkler
-  createSimpleStyle = (originalStyle: any) => {
-    return {
-      version: 8,
-      sources: originalStyle.sources,
-      layers: [
-        {
-          id: "simple_fill",
-          type: "fill",
-          source: "coverage_15z",
-          "source-layer": "data",
-          minzoom: 0,
-          maxzoom: 24,
-          paint: {
-            "fill-color": "#FF0000", // Kırmızı - expression yok
-            "fill-opacity": 0.7
-          }
-        }
-      ]
-    };
-  };
-
-  // Test 3: Tek layer, basit case expression
-  createSingleLayerStyle = (originalStyle: any) => {
-    return {
-      version: 8,
-      sources: { coverage_15z: originalStyle.sources.coverage_15z },
-      layers: [
-        {
-          id: "single_case_fill",
-          type: "fill",
-          source: "coverage_15z",
-          "source-layer": "data",
-          minzoom: 0,
-          maxzoom: 24,
-          paint: {
-            "fill-color": [
-              "case",
-              ["<", ["get", "rsrp_dbm"], -100], "#313695", // Mavi
-              ["<", ["get", "rsrp_dbm"], -80], "#FDAE61",  // Turuncu
-              "#D73027" // Kırmızı (default)
-            ],
-            "fill-opacity": 0.7
-          }
-        }
-      ]
-    };
-  };
-
   render() {
-    const { message, currentZoom, debugInfo } = this.state;
+    const { message, currentZoom, logs } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
         <div 
           ref={el => this.mapDiv = el}
-          style={{ width: "100%", height: "100%" }}
+          style={{ width: "100%", height: "100%", background: "#1a1a1a" }}
         />
 
-        {/* Control Panel */}
+        {/* Log Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
           right: "10px",
           background: "rgba(0,0,0,0.95)",
           color: "white",
-          padding: "20px",
+          padding: "15px",
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px",
-          minWidth: "300px",
-          maxWidth: "400px"
+          fontSize: "11px",
+          width: "400px",
+          maxHeight: "80vh",
+          overflow: "auto"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FF6B6B", fontSize: "14px" }}>
-            🔍 HARDCORE DEBUG MODE
-          </div>
-          
           <div style={{ 
-            background: "rgba(255,255,255,0.1)", 
-            padding: "10px", 
-            borderRadius: "5px",
-            marginBottom: "10px"
+            marginBottom: "15px", 
+            textAlign: "center", 
+            fontWeight: "bold", 
+            color: "#FF6B6B",
+            fontSize: "14px",
+            borderBottom: "1px solid rgba(255,255,255,0.2)",
+            paddingBottom: "10px"
           }}>
-            <div style={{ fontSize: "10px", color: "#aaa", marginBottom: "5px" }}>
-              Current Zoom
-            </div>
+            🔍 MVT DIAGNOSTIC
+          </div>
+
+          <div style={{ marginBottom: "15px" }}>
+            <div style={{ fontSize: "10px", color: "#aaa" }}>Current Zoom</div>
             <div style={{ fontSize: "24px", fontWeight: "bold", color: "#FFD700" }}>
               {currentZoom}
             </div>
           </div>
 
-          <div style={{ fontSize: "11px", marginBottom: "10px", lineHeight: "1.5" }}>
-            <strong style={{ color: "#4CAF50" }}>Testing 3 Approaches:</strong>
-            <div style={{ marginTop: "5px", paddingLeft: "10px" }}>
-              1. Original Style JSON<br/>
-              2. Simple Static Colors<br/>
-              3. Case Expression Colors
+          <div style={{ 
+            background: "rgba(255,255,255,0.05)", 
+            padding: "10px", 
+            borderRadius: "5px",
+            marginBottom: "10px",
+            maxHeight: "400px",
+            overflow: "auto"
+          }}>
+            <div style={{ fontSize: "10px", color: "#4CAF50", marginBottom: "5px", fontWeight: "bold" }}>
+              EVENT LOG:
             </div>
+            {logs.map((log, i) => (
+              <div key={i} style={{ fontSize: "10px", marginBottom: "3px", color: "#ccc" }}>
+                {log}
+              </div>
+            ))}
           </div>
 
-          <div style={{ fontSize: "10px", color: "#FFD700", marginTop: "10px", padding: "10px", background: "rgba(255,215,0,0.1)", borderRadius: "4px" }}>
-            ⚠️ Open Console (F12)<br/>
-            Check layer load status & errors
+          <div style={{ fontSize: "9px", color: "#888", textAlign: "center", marginTop: "10px" }}>
+            ⚠️ Beklenen: Kırmızı MVT poligonları<br/>
+            📊 Tile istekleri console'da da görünür
           </div>
 
           <div style={{ display: "flex", gap: "10px", marginTop: "15px" }}>
             <button
               onClick={() => {
                 if (this.mapView) {
-                  this.mapView.goTo({ zoom: this.mapView.zoom - 0.5 }, { duration: 200 });
+                  this.mapView.goTo({ zoom: this.mapView.zoom - 1 });
+                  this.addLog("🔽 Zoom out");
                 }
               }}
               style={{
                 flex: 1,
                 padding: "10px",
-                fontSize: "16px",
                 background: "#f44336",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
-                cursor: "pointer"
+                cursor: "pointer",
+                fontSize: "14px"
               }}
             >
               -
@@ -343,58 +294,23 @@ export default class Widget extends React.PureComponent<any, State> {
             <button
               onClick={() => {
                 if (this.mapView) {
-                  this.mapView.goTo({ zoom: this.mapView.zoom + 0.5 }, { duration: 200 });
+                  this.mapView.goTo({ zoom: this.mapView.zoom + 1 });
+                  this.addLog("🔼 Zoom in");
                 }
               }}
               style={{
                 flex: 1,
                 padding: "10px",
-                fontSize: "16px",
                 background: "#4CAF50",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
-                cursor: "pointer"
+                cursor: "pointer",
+                fontSize: "14px"
               }}
             >
               +
             </button>
-          </div>
-        </div>
-
-        {/* Status Panel */}
-        <div style={{
-          position: "absolute",
-          top: "10px",
-          left: "10px",
-          background: "rgba(0,0,0,0.9)",
-          color: "white",
-          padding: "15px",
-          borderRadius: "5px",
-          zIndex: 9999,
-          fontFamily: "monospace",
-          fontSize: "11px",
-          maxWidth: "300px"
-        }}>
-          <strong style={{ color: "#FF6B6B" }}>🔧 DEBUG STATUS:</strong>
-          <div style={{ marginTop: "10px", color: "#FFD700" }}>{message}</div>
-          {debugInfo && (
-            <div style={{ marginTop: "10px", fontSize: "10px", color: "#888" }}>
-              {debugInfo}
-            </div>
-          )}
-          <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: "1px solid rgba(255,255,255,0.2)", fontSize: "10px" }}>
-            <div style={{ color: "#4CAF50" }}>
-              Expected Grid: {
-                currentZoom < 7 ? "10km (3z)" :
-                currentZoom < 11 ? "1km (7z)" :
-                currentZoom < 15 ? "100m (11z)" : "10m (15z)"
-              }
-            </div>
-            <div style={{ marginTop: "5px", color: "#888" }}>
-              If you see RED/ORANGE/BLUE polygons,<br/>
-              colors are working!
-            </div>
           </div>
         </div>
       </div>
