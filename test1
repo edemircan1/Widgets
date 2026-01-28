@@ -68,6 +68,61 @@ export default class Widget extends React.PureComponent<any, State> {
     document.head.appendChild(script);
   };
 
+  // 🎨 MapLibre style'ı ArcGIS renderer'a çevir
+  parseMapLibreStyle = (layer) => {
+    const fillColor = layer.paint['fill-color'];
+    const lineColor = layer.paint?.['line-color'];
+    
+    // Interpolate array'i parse et: ["interpolate", ["linear"], ["get", "rsrp_dbm"], -135, "#313695", -126, "#4575B4", ...]
+    if (Array.isArray(fillColor) && fillColor[0] === 'interpolate') {
+      const stops = [];
+      for (let i = 3; i < fillColor.length; i += 2) {
+        if (i + 1 < fillColor.length) {
+          stops.push({
+            value: fillColor[i],
+            color: fillColor[i + 1]
+          });
+        }
+      }
+      return stops;
+    }
+    return [];
+  };
+
+  createArcGISRenderer = (stops, layerType = 'fill') => {
+    // ClassBreaksRenderer oluştur
+    const classBreaks = stops.map((stop, idx) => {
+      const nextStop = stops[idx + 1];
+      return {
+        minValue: stop.value,
+        maxValue: nextStop ? nextStop.value : 999,
+        symbol: layerType === 'fill' ? {
+          type: "simple-fill",
+          color: stop.color,
+          outline: {
+            color: [255, 255, 255, 0.3],
+            width: 0.5
+          }
+        } : {
+          type: "simple-line",
+          color: stop.color,
+          width: 1
+        },
+        label: `${stop.value} dBm`
+      };
+    });
+
+    return {
+      type: "class-breaks",
+      field: "rsrp_dbm",
+      defaultSymbol: {
+        type: layerType === 'fill' ? "simple-fill" : "simple-line",
+        color: [200, 200, 200, 0.3]
+      },
+      classBreakInfos: classBreaks
+    };
+  };
+
   createMap = () => {
     this.setState({ message: "🗺️ Map oluşturuluyor..." });
 
@@ -84,9 +139,9 @@ export default class Widget extends React.PureComponent<any, State> {
     (window as any).require([
       'esri/Map',
       'esri/views/MapView',
-      'esri/layers/VectorTileLayer',
+      'esri/layers/FeatureLayer',
       'esri/request'
-    ], (Map, MapView, VectorTileLayer, esriRequest) => {
+    ], (Map, MapView, FeatureLayer, esriRequest) => {
       
       const map = new Map({
         basemap: 'dark-gray-vector'
@@ -102,14 +157,9 @@ export default class Widget extends React.PureComponent<any, State> {
           minZoom: 3,
           maxZoom: 22,
           rotationEnabled: false
-        },
-        navigation: {
-          mouseWheelZoomEnabled: true,
-          browserTouchPanEnabled: true
         }
       });
 
-      // Mouse wheel zoom control
       this.mapView.when(() => {
         const container = this.mapView.container as HTMLElement;
         
@@ -133,19 +183,13 @@ export default class Widget extends React.PureComponent<any, State> {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
       });
 
-      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
+      this.setState({ message: "✅ Map oluşturuldu! Style JSON parse ediliyor..." });
 
-      // 🔥 ÇÖZÜM 1: Fetch override for authorization
+      // Fetch override
       const originalFetch = window.fetch;
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
-        if (urlStr.includes('abc.com') || urlStr.includes(new URL(MVT_STYLE_URL, window.location.href).hostname)) {
-          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
-          if (zxyMatch) {
-            const [, z] = zxyMatch;
-            console.log(`🔍 Tile request: zoom ${z}`);
-          }
-          
+        if (urlStr.includes('abc.com')) {
           return originalFetch(url, {
             ...options,
             headers: {
@@ -157,45 +201,64 @@ export default class Widget extends React.PureComponent<any, State> {
         return originalFetch(url, options);
       };
 
-      // 🎨 ÇÖZÜM 2: Orijinal style JSON'u OLDUĞU GİBİ kullan
+      // 🎨 PLAN B: FeatureLayer + Manuel Renderer
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı, VectorTileLayer oluşturuluyor..." });
         const styleJson = response.data;
+        console.log("📋 Style JSON:", styleJson);
 
-        console.log("📋 Original Style JSON:", styleJson);
-
-        // ✅ TEK BİR LAYER - Orijinal style JSON'u olduğu gibi ver
-        const vectorTileLayer = new VectorTileLayer({
-          style: styleJson,  // 🎯 MapLibre style spec - ArcGIS 4.x bunu destekliyor
-          minScale: 0,
-          maxScale: 0,
-          title: "Coverage Layer"
-        });
-
-        vectorTileLayer.when(() => {
-          console.log("✅ VectorTileLayer loaded successfully!");
-          console.log("Layer info:", vectorTileLayer);
-          this.setState({ message: "✅ MVT Layer yüklendi! Renkler aktif." });
-        }).catch(err => {
-          console.error("❌ VectorTileLayer error:", err);
-          this.setState({ message: `❌ Layer error: ${err.message}` });
-        });
-
-        map.add(vectorTileLayer);
+        // İlk fill layer'dan color stops'u çıkar
+        const fillLayer = styleJson.layers.find(l => l.type === 'fill');
+        const colorStops = this.parseMapLibreStyle(fillLayer);
         
+        console.log("🎨 Parsed color stops:", colorStops);
+
+        // Her zoom level için FeatureLayer oluştur
+        const configs = [
+          { source: 'coverage_3z', minZoom: 3, maxZoom: 7, url: styleJson.sources.coverage_3z.tiles[0] },
+          { source: 'coverage_7z', minZoom: 7, maxZoom: 11, url: styleJson.sources.coverage_7z.tiles[0] },
+          { source: 'coverage_11z', minZoom: 11, maxZoom: 15, url: styleJson.sources.coverage_11z.tiles[0] },
+          { source: 'coverage_15z', minZoom: 15, maxZoom: 24, url: styleJson.sources.coverage_15z.tiles[0] }
+        ];
+
+        configs.forEach(config => {
+          // MVT URL'yi template format'a çevir
+          const tileUrl = config.url.replace('{z}', '{level}').replace('{x}', '{col}').replace('{y}', '{row}');
+          
+          const layer = new FeatureLayer({
+            url: tileUrl,
+            minScale: this.zoomToScale(config.maxZoom),
+            maxScale: this.zoomToScale(config.minZoom),
+            renderer: this.createArcGISRenderer(colorStops, 'fill'),
+            opacity: 0.5,
+            title: `Coverage ${config.source}`
+          });
+
+          layer.when(() => {
+            console.log(`✅ FeatureLayer ${config.source} loaded`);
+          }).catch(err => {
+            console.error(`❌ FeatureLayer ${config.source} error:`, err);
+          });
+
+          map.add(layer);
+        });
+
+        this.setState({ message: "✅ Renkli layer'lar yüklendi!" });
+
       }).catch(err => {
-        this.setState({ message: `❌ Fetch error: ${err.message}` });
-        console.error("FETCH HATASI:", err);
+        this.setState({ message: `❌ Error: ${err.message}` });
+        console.error("HATA:", err);
       });
-    }, (err) => {
-      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
-      console.error('AMD require error:', err);
     });
+  };
+
+  // Zoom level'ı scale'e çevir
+  zoomToScale = (zoom: number): number => {
+    return 591657527.591555 / Math.pow(2, zoom);
   };
 
   render() {
@@ -300,7 +363,7 @@ export default class Widget extends React.PureComponent<any, State> {
           fontFamily: "monospace",
           fontSize: "12px"
         }}>
-          <strong>MVT Single Layer:</strong>
+          <strong>MVT with Renderer:</strong>
           <div style={{ marginTop: "10px" }}>{message}</div>
           <div style={{ marginTop: "5px", fontSize: "11px" }}>
             Grid: {
