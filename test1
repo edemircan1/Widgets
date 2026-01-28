@@ -136,42 +136,39 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // Style JSON fetch (AUTH ZATEN İLK KODUNDA VARDI, DOKUNMUYORUM)
+      // ✅ ORİJİNAL FETCH OVERRIDE (İLK KODUNDAN AYNEN)
+      const originalFetch = window.fetch;
+      window.fetch = (url, options = {}) => {
+        const urlStr = url.toString();
+        if (urlStr.includes(new URL(MVT_STYLE_URL).hostname)) {
+          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+          if (zxyMatch) {
+            const [, z] = zxyMatch;
+            console.log(`🔍 Tile request: zoom ${z}`);
+          }
+          
+          return originalFetch(url, {
+            ...options,
+            headers: {
+              ...(options['headers'] || {}),
+              'Authorization': `Bearer ${MANUAL_BEARER}`
+            }
+          });
+        }
+        return originalFetch(url, options);
+      };
+
+      // ✅ ORİJİNAL STYLE FETCH
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı..." });
+        this.setState({ message: "📄 Style JSON alındı, layer'lar oluşturuluyor..." });
         const originalStyle = response.data;
 
-        console.log("🔍 Original style layers:", originalStyle.layers.map(l => l.id));
-
-        // 🎨 GENİŞ RENK ARALII - Daha düşük değerlerden başlayarak
-        // Eğer veri -30 dBm gibi çok iyi değerlerdeyse, görünür olsun
-        const expandedColorRamp = [
-          "step",
-          ["get", "rsrp_dbm"],
-          "#313695",    // < -140 (çok kötü)
-          -130, "#4575B4",
-          -120, "#74ADD1",
-          -110, "#ABD9E9",
-          -100, "#E0F3F8",
-          -90, "#FFFFBF",   // Orta
-          -80, "#FEE090",
-          -70, "#FDAE61",
-          -60, "#F46D43",
-          -50, "#D73027",
-          -40, "#A50026",   // İyi sinyal
-          -30, "#FF00FF",   // Çok iyi (mor) - Debug için
-          -20, "#00FFFF",   // Mükemmel (cyan) - Debug için
-          0, "#FFFFFF"      // Placeholder
-        ];
-
-        console.log("🎨 Expanded color ramp with debug colors");
-
-        // Her zoom level için AYRI layer
+        // ✅ ORİJİNAL LAYER YAPILANDIRMASI
         const zoomConfigs = [
           { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
           { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
@@ -180,38 +177,22 @@ export default class Widget extends React.PureComponent<any, State> {
         ];
 
         zoomConfigs.forEach(config => {
+          // ✅ ORİJİNAL STYLE OLUŞTURMA - HİÇBİR DEĞİŞİKLİK YOK
           const customStyle = {
             version: 8,
             sources: {
               [config.source]: originalStyle.sources[config.source]
             },
-            layers: originalStyle.layers
-              .filter(layer => layer.source === config.source)
-              .map(layer => {
-                const newLayer = {
-                  ...layer,
-                  minzoom: config.minZoom,
-                  maxzoom: config.maxZoom
-                };
-                
-                // Paint değiştir
-                if (layer.type === 'fill') {
-                  newLayer.paint = {
-                    "fill-color": expandedColorRamp,
-                    "fill-opacity": 0.7
-                  };
-                }
-                if (layer.type === 'line') {
-                  newLayer.paint = {
-                    "line-color": expandedColorRamp,
-                    "line-opacity": 0.9,
-                    "line-width": 1
-                  };
-                }
-                
-                return newLayer;
-              })
+            layers: originalStyle.layers.filter(layer => 
+              layer.source === config.source
+            ).map(layer => ({
+              ...layer,
+              minzoom: config.minZoom,
+              maxzoom: config.maxZoom
+            }))
           };
+
+          console.log(`Creating layer ${config.name}:`, customStyle);
 
           const layer = new VectorTileLayer({
             style: customStyle,
@@ -229,7 +210,7 @@ export default class Widget extends React.PureComponent<any, State> {
           map.add(layer);
         });
 
-        this.setState({ message: "✅ Genişletilmiş renk skalası uygulandı!" });
+        this.setState({ message: "✅ Tüm layer'lar oluşturuldu!" });
         
       }).catch(err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
@@ -263,10 +244,10 @@ export default class Widget extends React.PureComponent<any, State> {
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "14px",
-          minWidth: "250px"
+          minWidth: "200px"
         }}>
           <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
-            🎮 EXPANDED RANGE
+            🎮 ORIGINAL CODE
           </div>
           
           <div style={{ 
@@ -329,34 +310,9 @@ export default class Widget extends React.PureComponent<any, State> {
             </button>
           </div>
 
-          {/* Extended Legend */}
-          <div style={{ fontSize: "10px", borderTop: "1px solid rgba(255,255,255,0.2)", paddingTop: "10px" }}>
-            <div style={{ fontWeight: "bold", marginBottom: "8px", color: "#FFD700" }}>Extended Range:</div>
-            <div style={{ display: "grid", gridTemplateColumns: "20px 1fr", gap: "4px", alignItems: "center" }}>
-              <div style={{ width: "15px", height: "15px", background: "#313695" }}></div>
-              <span>{"< -130 dBm"}</span>
-              
-              <div style={{ width: "15px", height: "15px", background: "#ABD9E9" }}></div>
-              <span>-110 dBm</span>
-              
-              <div style={{ width: "15px", height: "15px", background: "#FFFFBF" }}></div>
-              <span>-90 dBm</span>
-              
-              <div style={{ width: "15px", height: "15px", background: "#FDAE61" }}></div>
-              <span>-70 dBm</span>
-              
-              <div style={{ width: "15px", height: "15px", background: "#D73027" }}></div>
-              <span>-50 dBm</span>
-              
-              <div style={{ width: "15px", height: "15px", background: "#A50026" }}></div>
-              <span>-40 dBm</span>
-              
-              <div style={{ width: "15px", height: "15px", background: "#FF00FF" }}></div>
-              <span style={{ color: "#FF00FF" }}>-30 dBm (DEBUG)</span>
-              
-              <div style={{ width: "15px", height: "15px", background: "#00FFFF" }}></div>
-              <span style={{ color: "#00FFFF" }}>-20 dBm (DEBUG)</span>
-            </div>
+          <div style={{ fontSize: "10px", color: "#FFD700", textAlign: "center" }}>
+            ⚠️ This is YOUR original code<br/>
+            Should show white/gray MVT
           </div>
         </div>
 
@@ -373,18 +329,14 @@ export default class Widget extends React.PureComponent<any, State> {
           fontFamily: "monospace",
           fontSize: "12px"
         }}>
-          <strong>🌈 Expanded Color Range:</strong>
+          <strong>MVT Multi-Layer (Original):</strong>
           <div style={{ marginTop: "10px" }}>{message}</div>
           <div style={{ marginTop: "5px", fontSize: "11px" }}>
-            Grid: {
+            Expected: {
               currentZoom < 7 ? "10km (3z)" :
               currentZoom < 11 ? "1km (7z)" :
               currentZoom < 15 ? "100m (11z)" : "10m (15z)"
             }
-          </div>
-          <div style={{ marginTop: "10px", fontSize: "10px", color: "#FFD700" }}>
-            ⚠️ If still red: data is {">"} -40 dBm<br/>
-            Look for MAGENTA or CYAN!
           </div>
         </div>
       </div>
