@@ -8,17 +8,57 @@ const ARCGIS_API_VERSION = "4.32";
 interface State {
   message: string;
   currentZoom: number;
+  calculatedRadius: string;
+}
+
+// Maplibre exponential interpolation (exact algorithm)
+function interpolateExponential(
+  zoom: number,
+  stops: [number, number][],
+  base: number = 2
+): number {
+  if (stops.length < 2) return stops[0]?.[1] || 1;
+
+  // Find the bracketing stops
+  let lower = stops[0];
+  let upper = stops[stops.length - 1];
+
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (zoom >= stops[i][0] && zoom <= stops[i + 1][0]) {
+      lower = stops[i];
+      upper = stops[i + 1];
+      break;
+    }
+  }
+
+  const [z1, v1] = lower;
+  const [z2, v2] = upper;
+
+  if (zoom <= z1) return v1;
+  if (zoom >= z2) return v2;
+
+  // Exponential interpolation formula from Mapbox GL JS spec
+  const t = (zoom - z1) / (z2 - z1);
+  const difference = v2 - v1;
+  const progress = (Math.pow(base, t) - 1) / (Math.pow(base, 1) - 1);
+
+  return v1 + difference * progress;
 }
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
+  private currentLayer: any = null;
+  private styleJson: any = null;
+  private VectorTileLayer: any = null;
+  private updateTimeout: any = null;
 
   constructor(props) {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
-      currentZoom: 15
+      currentZoom: 15,
+      calculatedRadius: "..."
     };
   }
 
@@ -29,6 +69,9 @@ export default class Widget extends React.PureComponent<any, State> {
   componentWillUnmount() {
     if (this.mapView) {
       this.mapView.destroy();
+    }
+    if (this.updateTimeout) {
+      clearTimeout(this.updateTimeout);
     }
   }
 
@@ -68,6 +111,81 @@ export default class Widget extends React.PureComponent<any, State> {
     document.head.appendChild(script);
   };
 
+  calculateRadiusForZoom = (zoom: number): { radius: number; activeLayer: string } => {
+    // Style JSON'daki layer config'leri
+    const configs = {
+      'vis_mvt_3z': { stops: [[3, 1], [7, 10]] as [number, number][], base: 2, range: [3, 7] },
+      'vis_mvt_7z': { stops: [[7, 1], [11, 13]] as [number, number][], base: 2, range: [7, 11] },
+      'vis_mvt_11z': { stops: [[11, 2], [15, 20]] as [number, number][], base: 2, range: [11, 15] },
+      'vis_mvt_15z': { stops: [[15, 2.5], [22, 250]] as [number, number][], base: 2, range: [15, 22] }
+    };
+
+    // Hangi layer aktif olmalı?
+    let activeLayer = 'vis_mvt_3z';
+    let config = configs['vis_mvt_3z'];
+
+    if (zoom >= 15) {
+      activeLayer = 'vis_mvt_15z';
+      config = configs['vis_mvt_15z'];
+    } else if (zoom >= 11) {
+      activeLayer = 'vis_mvt_11z';
+      config = configs['vis_mvt_11z'];
+    } else if (zoom >= 7) {
+      activeLayer = 'vis_mvt_7z';
+      config = configs['vis_mvt_7z'];
+    }
+
+    const radius = interpolateExponential(zoom, config.stops, config.base);
+    
+    return { radius, activeLayer };
+  };
+
+  updateLayerForZoom = (zoom: number) => {
+    if (!this.styleJson || !this.VectorTileLayer || !this.mapView) return;
+
+    const { radius, activeLayer } = this.calculateRadiusForZoom(zoom);
+    
+    console.log(`🎯 Zoom ${zoom.toFixed(2)} → Active: ${activeLayer}, Radius: ${radius.toFixed(2)}px`);
+
+    this.setState({ calculatedRadius: `${radius.toFixed(1)}px (${activeLayer})` });
+
+    // Eski layer'ı kaldır
+    if (this.currentLayer) {
+      this.mapView.map.remove(this.currentLayer);
+      this.currentLayer.destroy();
+    }
+
+    // Yeni style JSON oluştur - sadece circle-radius'u güncelle
+    const modifiedStyle = JSON.parse(JSON.stringify(this.styleJson));
+    
+    modifiedStyle.layers = modifiedStyle.layers.map(layer => {
+      if (layer.type === 'circle' && layer.paint && layer.paint['circle-radius']) {
+        return {
+          ...layer,
+          paint: {
+            ...layer.paint,
+            'circle-radius': radius // Fixed value, exponentially calculated
+          }
+        };
+      }
+      return layer;
+    });
+
+    // Yeni layer oluştur
+    this.currentLayer = new this.VectorTileLayer({
+      style: modifiedStyle,
+      title: "Coverage Layer"
+    });
+
+    this.currentLayer.when(() => {
+      console.log(`✅ Layer updated with radius ${radius.toFixed(2)}px`);
+    }).catch(err => {
+      console.error("❌ Layer update error:", err);
+    });
+
+    this.mapView.map.add(this.currentLayer);
+  };
+
   createMap = () => {
     this.setState({ message: "🗺️ Map oluşturuluyor..." });
 
@@ -88,6 +206,8 @@ export default class Widget extends React.PureComponent<any, State> {
       'esri/request'
     ], (Map, MapView, VectorTileLayer, esriRequest) => {
       
+      this.VectorTileLayer = VectorTileLayer;
+
       const map = new Map({
         basemap: 'dark-gray-vector'
       });
@@ -100,7 +220,7 @@ export default class Widget extends React.PureComponent<any, State> {
         constraints: {
           snapToZoom: false,
           minZoom: 3,
-          maxzoom: 22,
+          maxZoom: 22,
           rotationEnabled: false
         },
         navigation: {
@@ -129,8 +249,18 @@ export default class Widget extends React.PureComponent<any, State> {
         }, { passive: false });
       });
 
+      // Debounced zoom watcher
       this.mapView.watch('zoom', (newZoom) => {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
+        
+        if (this.updateTimeout) {
+          clearTimeout(this.updateTimeout);
+        }
+        
+        // Debounce 150ms
+        this.updateTimeout = setTimeout(() => {
+          this.updateLayerForZoom(newZoom);
+        }, 150);
       });
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
@@ -157,26 +287,15 @@ export default class Widget extends React.PureComponent<any, State> {
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı..." });
-        const fullStyleJson = response.data;
+        this.setState({ message: "📄 Style JSON alındı, layer oluşturuluyor..." });
+        this.styleJson = response.data;
 
-        console.log("🎨 Full Maplibre Style JSON:", JSON.stringify(fullStyleJson, null, 2));
+        console.log("🎨 Original Maplibre Style JSON:", this.styleJson);
 
-        // ✅ SIFIR MANUEL MÜDAHALEcomplete original style'ı ver!
-        const layer = new VectorTileLayer({
-          style: fullStyleJson, // Hiçbir değişiklik yapmadan OLDUĞU GİBİ
-          title: "Coverage Layer"
-        });
+        // İlk layer'ı oluştur
+        this.updateLayerForZoom(this.mapView.zoom);
 
-        layer.when(() => {
-          console.log("✅ Layer loaded with full Maplibre style");
-          this.setState({ message: "✅ Layer yüklendi (Full Maplibre Style)" });
-        }).catch(err => {
-          console.error("❌ Layer error:", err);
-          this.setState({ message: `❌ Layer error: ${err.message}` });
-        });
-
-        map.add(layer);
+        this.setState({ message: "✅ Layer yüklendi! Zoom yaparak test edin." });
         
       }).catch(err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
@@ -189,7 +308,7 @@ export default class Widget extends React.PureComponent<any, State> {
   };
 
   render() {
-    const { message, currentZoom } = this.state;
+    const { message, currentZoom, calculatedRadius } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -203,31 +322,47 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           right: "10px",
-          background: "rgba(0,0,0,0.9)",
+          background: "rgba(0,0,0,0.95)",
           color: "white",
           padding: "20px",
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "14px",
-          minWidth: "250px"
+          minWidth: "280px",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
-            🎯 FULL MAPLIBRE STYLE
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50", fontSize: "16px" }}>
+            🎯 EXPONENTIAL INTERPOLATION
           </div>
           
           <div style={{ 
-            background: "rgba(255,255,255,0.1)", 
+            background: "rgba(76, 175, 80, 0.15)", 
             padding: "15px", 
             borderRadius: "5px",
             marginBottom: "15px",
-            textAlign: "center"
+            border: "1px solid rgba(76, 175, 80, 0.3)"
           }}>
-            <div style={{ fontSize: "12px", color: "#aaa", marginBottom: "5px" }}>
-              Current Zoom
+            <div style={{ fontSize: "11px", color: "#aaa", marginBottom: "5px" }}>
+              Current Zoom Level
             </div>
-            <div style={{ fontSize: "32px", fontWeight: "bold", color: "#FFD700" }}>
+            <div style={{ fontSize: "32px", fontWeight: "bold", color: "#FFD700", textAlign: "center" }}>
               {currentZoom}
+            </div>
+          </div>
+
+          <div style={{ 
+            background: "rgba(255, 215, 0, 0.1)", 
+            padding: "12px", 
+            borderRadius: "5px",
+            marginBottom: "15px",
+            border: "1px solid rgba(255, 215, 0, 0.2)"
+          }}>
+            <div style={{ fontSize: "10px", color: "#aaa", marginBottom: "5px" }}>
+              Calculated Circle Radius
+            </div>
+            <div style={{ fontSize: "16px", fontWeight: "bold", color: "#FFD700", textAlign: "center" }}>
+              {calculatedRadius}
             </div>
           </div>
 
@@ -235,7 +370,7 @@ export default class Widget extends React.PureComponent<any, State> {
             <button
               onClick={() => {
                 if (this.mapView) {
-                  const newZoom = this.mapView.zoom - 0.1;
+                  const newZoom = this.mapView.zoom - 0.5;
                   this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
                 }
               }}
@@ -248,15 +383,18 @@ export default class Widget extends React.PureComponent<any, State> {
                 border: "none",
                 borderRadius: "5px",
                 cursor: "pointer",
-                fontWeight: "bold"
+                fontWeight: "bold",
+                transition: "all 0.2s"
               }}
+              onMouseOver={(e) => e.currentTarget.style.background = "#d32f2f"}
+              onMouseOut={(e) => e.currentTarget.style.background = "#f44336"}
             >
               -
             </button>
             <button
               onClick={() => {
                 if (this.mapView) {
-                  const newZoom = this.mapView.zoom + 0.1;
+                  const newZoom = this.mapView.zoom + 0.5;
                   this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
                 }
               }}
@@ -269,27 +407,28 @@ export default class Widget extends React.PureComponent<any, State> {
                 border: "none",
                 borderRadius: "5px",
                 cursor: "pointer",
-                fontWeight: "bold"
+                fontWeight: "bold",
+                transition: "all 0.2s"
               }}
+              onMouseOver={(e) => e.currentTarget.style.background = "#388E3C"}
+              onMouseOut={(e) => e.currentTarget.style.background = "#4CAF50"}
             >
               +
             </button>
           </div>
 
           <div style={{ 
-            fontSize: "10px", 
-            color: "#888", 
-            padding: "10px",
-            background: "rgba(255,255,255,0.05)",
-            borderRadius: "3px"
+            fontSize: "9px", 
+            color: "#666", 
+            padding: "8px",
+            background: "rgba(255,255,255,0.03)",
+            borderRadius: "3px",
+            lineHeight: "1.4"
           }}>
-            <strong>Expected circle radius:</strong>
-            <div style={{ marginTop: "5px", color: "#FFD700" }}>
-              {currentZoom >= 3 && currentZoom < 7 && `z3-7: ${((currentZoom - 3) / 4 * 9 + 1).toFixed(1)}px`}
-              {currentZoom >= 7 && currentZoom < 11 && `z7-11: ${((currentZoom - 7) / 4 * 12 + 1).toFixed(1)}px`}
-              {currentZoom >= 11 && currentZoom < 15 && `z11-15: ${((currentZoom - 11) / 4 * 18 + 2).toFixed(1)}px`}
-              {currentZoom >= 15 && currentZoom <= 22 && `z15-22: ${((currentZoom - 15) / 7 * 247.5 + 2.5).toFixed(1)}px`}
-            </div>
+            <strong style={{ color: "#888" }}>Maplibre Spec:</strong><br/>
+            z3-7: 1→10px | z7-11: 1→13px<br/>
+            z11-15: 2→20px | z15-22: 2.5→250px<br/>
+            <span style={{ color: "#4CAF50" }}>base: 2 (exponential)</span>
           </div>
         </div>
 
@@ -298,21 +437,29 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           left: "10px",
-          background: "rgba(0,0,0,0.85)",
+          background: "rgba(0,0,0,0.9)",
           color: "white",
           padding: "15px",
           borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "12px",
-          maxWidth: "300px"
+          maxWidth: "350px",
+          boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
         }}>
           <div style={{ fontWeight: "bold", color: "#4CAF50", marginBottom: "8px" }}>
-            ⚡ Zero Manual Override Mode
+            ⚡ Dynamic Layer Recreation
           </div>
-          <div style={{ fontSize: "11px" }}>{message}</div>
-          <div style={{ marginTop: "8px", fontSize: "10px", color: "#888", borderTop: "1px solid #444", paddingTop: "8px" }}>
-            Using complete original Maplibre style JSON without modifications. ESRI should handle circle-radius stops + base automatically.
+          <div style={{ fontSize: "11px", lineHeight: "1.5" }}>{message}</div>
+          <div style={{ 
+            marginTop: "10px", 
+            fontSize: "9px", 
+            color: "#666", 
+            borderTop: "1px solid #333", 
+            paddingTop: "8px",
+            lineHeight: "1.5"
+          }}>
+            Method: Layer destroyed & recreated on zoom change with pre-calculated exponential radius values matching Maplibre's interpolation algorithm (base 2).
           </div>
         </div>
       </div>
