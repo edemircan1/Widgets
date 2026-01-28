@@ -149,11 +149,21 @@ export default class Widget extends React.PureComponent<any, State> {
 
     const { radius, activeLayer, rawRadius } = this.calculateRadiusForZoom(zoom);
     
-    console.log(`🎯 z${zoom.toFixed(2)} → ${activeLayer}: raw=${rawRadius.toFixed(2)}px, scaled=${radius.toFixed(2)}px (×${this.scalingFactor})`);
+    // Zoom'a göre hangi source kullanılacak?
+    let sourceToUse = 'coverage_3z';
+    if (zoom >= 15) {
+      sourceToUse = 'coverage_15z';
+    } else if (zoom >= 11) {
+      sourceToUse = 'coverage_11z';
+    } else if (zoom >= 7) {
+      sourceToUse = 'coverage_7z';
+    }
+    
+    console.log(`🎯 z${zoom.toFixed(2)} → ${activeLayer} | Source: ${sourceToUse} | raw=${rawRadius.toFixed(2)}px, scaled=${radius.toFixed(2)}px (×${this.scalingFactor})`);
 
     this.setState({ 
       calculatedRadius: `${radius.toFixed(1)}px`,
-      debugInfo: `Raw: ${rawRadius.toFixed(1)}px | Scaled: ${radius.toFixed(1)}px | Factor: ${this.scalingFactor}x`
+      debugInfo: `Source: ${sourceToUse} | Raw: ${rawRadius.toFixed(1)}px | Scaled: ${radius.toFixed(1)}px | Factor: ${this.scalingFactor}x`
     });
 
     if (this.currentLayer) {
@@ -161,35 +171,41 @@ export default class Widget extends React.PureComponent<any, State> {
       this.currentLayer.destroy();
     }
 
-    const modifiedStyle = JSON.parse(JSON.stringify(this.styleJson));
+    // ✅ SADECE AKTİF SOURCE VE LAYER'I KULLAN
+    const activeStyleLayer = this.styleJson.layers.find(l => l.id === activeLayer);
     
-    modifiedStyle.layers = modifiedStyle.layers.map(layer => {
-      if (layer.type === 'circle' && layer.paint && layer.paint['circle-radius']) {
-        
-        // 🔍 DEBUG: Original paint properties'i log'la
-        console.log(`Original paint for ${layer.id}:`, layer.paint);
-        
-        return {
-          ...layer,
-          paint: {
-            ...layer.paint,
-            'circle-radius': radius,
-            // ESRI-specific ayarlar test et
-            'circle-pitch-alignment': 'viewport', // 'map' yerine 'viewport' test
-            'circle-pitch-scale': 'viewport' // 'map' yerine 'viewport' test
-          }
-        };
-      }
-      return layer;
-    });
+    if (!activeStyleLayer) {
+      console.error(`❌ Layer ${activeLayer} bulunamadı!`);
+      return;
+    }
+
+    // Sadece bu zoom range için style oluştur
+    const modifiedStyle = {
+      version: 8,
+      sources: {
+        [sourceToUse]: this.styleJson.sources[sourceToUse]
+      },
+      layers: [{
+        ...activeStyleLayer,
+        source: sourceToUse, // Doğru source'u kullan
+        paint: {
+          ...activeStyleLayer.paint,
+          'circle-radius': radius,
+          'circle-pitch-alignment': 'viewport',
+          'circle-pitch-scale': 'viewport'
+        }
+      }]
+    };
+
+    console.log(`📦 Creating layer with source ${sourceToUse}:`, modifiedStyle);
 
     this.currentLayer = new this.VectorTileLayer({
       style: modifiedStyle,
-      title: "Coverage Layer"
+      title: `Coverage Layer (${sourceToUse})`
     });
 
     this.currentLayer.when(() => {
-      console.log(`✅ Layer updated: ${radius.toFixed(2)}px`);
+      console.log(`✅ Layer created: ${sourceToUse} with radius ${radius.toFixed(2)}px`);
     }).catch(err => {
       console.error("❌ Layer error:", err);
     });
