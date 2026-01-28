@@ -1,4 +1,3 @@
-
 /** @jsx jsx */
 import { React, jsx } from "jimu-core";
 
@@ -11,9 +10,42 @@ interface State {
   currentZoom: number;
 }
 
+// Exponential interpolation helper (Maplibre style)
+function interpolateRadius(zoom: number, stops: number[][], base: number = 2): number {
+  // stops format: [[zoom1, radius1], [zoom2, radius2]]
+  if (stops.length < 2) return stops[0]?.[1] || 1;
+  
+  // Find the two stops we're between
+  let lowerStop = stops[0];
+  let upperStop = stops[stops.length - 1];
+  
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (zoom >= stops[i][0] && zoom <= stops[i + 1][0]) {
+      lowerStop = stops[i];
+      upperStop = stops[i + 1];
+      break;
+    }
+  }
+  
+  const [z1, r1] = lowerStop;
+  const [z2, r2] = upperStop;
+  
+  // Clamp to bounds
+  if (zoom <= z1) return r1;
+  if (zoom >= z2) return r2;
+  
+  // Exponential interpolation: r = r1 * base^((zoom - z1) / (z2 - z1) * log_base(r2/r1))
+  const t = (zoom - z1) / (z2 - z1);
+  const ratio = r2 / r1;
+  const exponent = t * Math.log(ratio) / Math.log(base);
+  
+  return r1 * Math.pow(base, exponent);
+}
+
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
+  private layers: any[] = [];
   private originalFetch = window.fetch;
 
   constructor(props) {
@@ -68,6 +100,45 @@ export default class Widget extends React.PureComponent<any, State> {
       this.setState({ message: "❌ ArcGIS API yüklenemedi" });
     };
     document.head.appendChild(script);
+  };
+
+  updateLayerSizes = (zoom: number) => {
+    // Her layer için circle radius'u güncelle
+    const radiusConfigs = {
+      'Coverage 15z': { stops: [[15, 2.5], [22, 250]], base: 2 },
+      'Coverage 11z': { stops: [[11, 2], [15, 20]], base: 2 },
+      'Coverage 7z': { stops: [[7, 1], [11, 13]], base: 2 },
+      'Coverage 3z': { stops: [[3, 1], [7, 10]], base: 2 }
+    };
+
+    this.layers.forEach(layer => {
+      const config = radiusConfigs[layer.title];
+      if (config) {
+        const newRadius = interpolateRadius(zoom, config.stops, config.base);
+        
+        // Style'ı güncelle
+        const currentStyle = layer.style;
+        if (currentStyle && currentStyle.layers) {
+          const updatedLayers = currentStyle.layers.map(styleLayer => {
+            if (styleLayer.type === 'circle' && styleLayer.paint) {
+              return {
+                ...styleLayer,
+                paint: {
+                  ...styleLayer.paint,
+                  'circle-radius': newRadius
+                }
+              };
+            }
+            return styleLayer;
+          });
+
+          layer.style = {
+            ...currentStyle,
+            layers: updatedLayers
+          };
+        }
+      }
+    });
   };
 
   createMap = () => {
@@ -131,8 +202,10 @@ export default class Widget extends React.PureComponent<any, State> {
         }, { passive: false });
       });
 
+      // ✅ ZOOM DEĞİŞİNCE CIRCLE RADIUS'U GÜNCELLE
       this.mapView.watch('zoom', (newZoom) => {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
+        this.updateLayerSizes(newZoom);
       });
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
@@ -159,7 +232,6 @@ export default class Widget extends React.PureComponent<any, State> {
         return originalFetch(url, options);
       };
 
-      // ✅✅✅ YENİ YAKLAŞIM: Her zoom level için AYRI layer oluştur
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
@@ -171,13 +243,16 @@ export default class Widget extends React.PureComponent<any, State> {
 
         // Her zoom level için ayrı style JSON oluştur
         const zoomConfigs = [
-          { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
-          { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
-          { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
-          { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
+          { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7, stops: [[3, 1], [7, 10]], base: 2 },
+          { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11, stops: [[7, 1], [11, 13]], base: 2 },
+          { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15, stops: [[11, 2], [15, 20]], base: 2 },
+          { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24, stops: [[15, 2.5], [22, 250]], base: 2 }
         ];
 
         zoomConfigs.forEach(config => {
+          const currentZoom = this.mapView.zoom;
+          const initialRadius = interpolateRadius(currentZoom, config.stops, config.base);
+
           // Bu zoom level için özel style JSON
           const customStyle = {
             version: 8,
@@ -189,11 +264,15 @@ export default class Widget extends React.PureComponent<any, State> {
             ).map(layer => ({
               ...layer,
               minzoom: config.minZoom,
-              maxzoom: config.maxZoom
+              maxzoom: config.maxZoom,
+              paint: {
+                ...layer.paint,
+                'circle-radius': initialRadius // Başlangıç değeri
+              }
             }))
           };
 
-          console.log(`Creating layer ${config.name}:`, customStyle);
+          console.log(`Creating layer ${config.name} with initial radius:`, initialRadius);
 
           const layer = new VectorTileLayer({
             style: customStyle,
@@ -209,9 +288,13 @@ export default class Widget extends React.PureComponent<any, State> {
           });
 
           map.add(layer);
+          this.layers.push(layer);
         });
 
         this.setState({ message: "✅ Tüm layer'lar oluşturuldu!" });
+        
+        // İlk zoom için radius'u ayarla
+        this.updateLayerSizes(this.mapView.zoom);
         
       }).catch(err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
