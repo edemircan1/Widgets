@@ -1,400 +1,316 @@
-{
-  "version": 8,
-  "name": "PROJE Coverage RSRP",
-  "metadata": {
-    "openmaptiles:version": "3.15.0"
-  },
-  "sources": {
-    "coverage_15z": {
-      "type": "vector",
-      "tiles": [
-        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
-      ],
-      "minzoom": 15,
-      "maxzoom": 15
-    },
-    "coverage_11z": {
-      "type": "vector",
-      "tiles": [
-        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
-      ],
-      "minzoom": 11,
-      "maxzoom": 11
-    },
-    "coverage_7z": {
-      "type": "vector",
-      "tiles": [
-        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
-      ],
-      "minzoom": 7,
-      "maxzoom": 7
-    },
-    "coverage_3z": {
-      "type": "vector",
-      "tiles": [
-        "https://abc.com/oauth21/api/vector/tile/polygons/zxy/all/{z}/{x}/{y}.pbf?coverageLayer=rsrp_dbm"
-      ],
-      "minzoom": 3,
-      "maxzoom": 3
+/** @jsx jsx */
+import { React, jsx } from "jimu-core";
+
+const MVT_STYLE_URL = "/styles/all/style.json?coverageLayer=rsrp_dbm";
+const MANUAL_BEARER = "token";
+const ARCGIS_API_VERSION = "4.32";
+
+interface State {
+  message: string;
+  currentZoom: number;
+}
+
+export default class Widget extends React.PureComponent<any, State> {
+  private mapDiv: HTMLDivElement;
+  private mapView: any;
+
+  constructor(props) {
+    super(props);
+    this.state = {
+      message: "Widget yükleniyor...",
+      currentZoom: 15
+    };
+  }
+
+  componentDidMount() {
+    this.loadArcGISAPI();
+  }
+
+  componentWillUnmount() {
+    if (this.mapView) {
+      this.mapView.destroy();
     }
-  },
-  "layers": [
-    {
-      "id": "vis_mvt_15z",
-      "type": "fill",
-      "source": "coverage_15z",
-      "minzoom": 15,
-      "maxzoom": 24,
-      "layout": {"visibility": "visible"},
-      "source-layer": "data",
-      "paint": {
-        "fill-opacity": 0.5,
-        "fill-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "rsrp_dbm"],
-          -135,
-          "#313695",
-          -126,
-          "#4575B4",
-          -118,
-          "#74ADD1",
-          -109,
-          "#ABD9E9",
-          -100,
-          "#E0F3F8",
-          -92,
-          "#FFFFBF",
-          -83,
-          "#FEE090",
-          -75,
-          "#FDAE61",
-          -66,
-          "#F46D43",
-          -57,
-          "#D73027",
-          -49,
-          "#A50026",
-          0,
-          "#ccccff",
-          1,
-          "#cc66ff",
-          2,
-          "#f5f5f0"
-        ]
-      }
-    },
-    {
-      "id": "vis_mvt_11z",
-      "type": "fill",
-      "source": "coverage_11z",
-      "minzoom":11,
-      "maxzoom":15,
-      "layout": {"visibility": "visible"},
-      "source-layer": "data",
-      "paint": {
-        "fill-opacity": 0.5,
-        "fill-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "rsrp_dbm"],
-          -135,
-          "#313695",
-          -126,
-          "#4575B4",
-          -118,
-          "#74ADD1",
-          -109,
-          "#ABD9E9",
-          -100,
-          "#E0F3F8",
-          -92,
-          "#FFFFBF",
-          -83,
-          "#FEE090",
-          -75,
-          "#FDAE61",
-          -66,
-          "#F46D43",
-          -57,
-          "#D73027",
-          -49,
-          "#A50026",
-          0,
-          "#ccccff",
-          1,
-          "#cc66ff",
-          2,
-          "#f5f5f0"
-        ]
-      }
-    },
-    {
-      "id": "vis_mvt_7z",
-      "type": "fill",
-      "source": "coverage_7z",
-      "minzoom": 7,
-      "maxzoom":11,
-      "layout": {"visibility": "visible"},
-      "source-layer": "data",
-      "paint": {
-        "fill-opacity": 0.5,
-        "fill-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "rsrp_dbm"],
-          -135,
-          "#313695",
-          -126,
-          "#4575B4",
-          -118,
-          "#74ADD1",
-          -109,
-          "#ABD9E9",
-          -100,
-          "#E0F3F8",
-          -92,
-          "#FFFFBF",
-          -83,
-          "#FEE090",
-          -75,
-          "#FDAE61",
-          -66,
-          "#F46D43",
-          -57,
-          "#D73027",
-          -49,
-          "#A50026",
-          0,
-          "#ccccff",
-          1,
-          "#cc66ff",
-          2,
-          "#f5f5f0"
-        ]
-      }
-    },
-    {
-      "id": "vis_mvt_3z",
-      "type": "fill",
-      "source": "coverage_3z",
-      "minzoom": 3,
-      "maxzoom":7,
-      "layout": {"visibility": "visible"},
-      "source-layer": "data",
-      "paint": {
-        "fill-opacity": 0.5,
-        "fill-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "rsrp_dbm"],
-          -135,
-          "#313695",
-          -126,
-          "#4575B4",
-          -118,
-          "#74ADD1",
-          -109,
-          "#ABD9E9",
-          -100,
-          "#E0F3F8",
-          -92,
-          "#FFFFBF",
-          -83,
-          "#FEE090",
-          -75,
-          "#FDAE61",
-          -66,
-          "#F46D43",
-          -57,
-          "#D73027",
-          -49,
-          "#A50026",
-          0,
-          "#ccccff",
-          1,
-          "#cc66ff",
-          2,
-          "#f5f5f0"
-        ]
-      }
-    },
-    {
-      "id": "vis_mvt_15z_line",
-      "type": "line",
-      "source": "coverage_15z",
-      "minzoom": 15,
-      "maxzoom": 24,
-      "source-layer": "data",
-      "paint": {
-        "line-opacity": 0.9,
-        "line-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "rsrp_dbm"],
-          -135,
-          "#313695",
-          -126,
-          "#4575B4",
-          -118,
-          "#74ADD1",
-          -109,
-          "#ABD9E9",
-          -100,
-          "#E0F3F8",
-          -92,
-          "#FFFFBF",
-          -83,
-          "#FEE090",
-          -75,
-          "#FDAE61",
-          -66,
-          "#F46D43",
-          -57,
-          "#D73027",
-          -49,
-          "#A50026",
-          0,
-          "#ccccff",
-          1,
-          "#cc66ff",
-          2,
-          "#f5f5f0"
-        ]
-      }
-    },
-    {
-      "id": "vis_mvt_11z_line",
-      "type": "line",
-      "source": "coverage_11z",
-      "minzoom": 11,
-      "maxzoom": 15,
-      "source-layer": "data",
-      "paint": {
-        "line-opacity": 0.9,
-        "line-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "rsrp_dbm"],
-          -135,
-          "#313695",
-          -126,
-          "#4575B4",
-          -118,
-          "#74ADD1",
-          -109,
-          "#ABD9E9",
-          -100,
-          "#E0F3F8",
-          -92,
-          "#FFFFBF",
-          -83,
-          "#FEE090",
-          -75,
-          "#FDAE61",
-          -66,
-          "#F46D43",
-          -57,
-          "#D73027",
-          -49,
-          "#A50026",
-          0,
-          "#ccccff",
-          1,
-          "#cc66ff",
-          2,
-          "#f5f5f0"
-        ]
-      }
-    },
-    {
-      "id": "vis_mvt_7z_line",
-      "type": "line",
-      "source": "coverage_7z",
-      "minzoom": 7,
-      "maxzoom": 11,
-      "source-layer": "data",
-      "paint": {
-        "line-opacity": 0.9,
-        "line-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "rsrp_dbm"],
-          -135,
-          "#313695",
-          -126,
-          "#4575B4",
-          -118,
-          "#74ADD1",
-          -109,
-          "#ABD9E9",
-          -100,
-          "#E0F3F8",
-          -92,
-          "#FFFFBF",
-          -83,
-          "#FEE090",
-          -75,
-          "#FDAE61",
-          -66,
-          "#F46D43",
-          -57,
-          "#D73027",
-          -49,
-          "#A50026",
-          0,
-          "#ccccff",
-          1,
-          "#cc66ff",
-          2,
-          "#f5f5f0"
-        ]
-      }
-    },
-    {
-      "id": "vis_mvt_3z_line",
-      "type": "line",
-      "source": "coverage_3z",
-      "minzoom": 3,
-      "maxzoom": 7,
-      "source-layer": "data",
-      "paint": {
-        "line-opacity": 0.9,
-        "line-color": [
-          "interpolate",
-          ["linear"],
-          ["get", "rsrp_dbm"],
-          -135,
-          "#313695",
-          -126,
-          "#4575B4",
-          -118,
-          "#74ADD1",
-          -109,
-          "#ABD9E9",
-          -100,
-          "#E0F3F8",
-          -92,
-          "#FFFFBF",
-          -83,
-          "#FEE090",
-          -75,
-          "#FDAE61",
-          -66,
-          "#F46D43",
-          -57,
-          "#D73027",
-          -49,
-          "#A50026",
-          0,
-          "#ccccff",
-          1,
-          "#cc66ff",
-          2,
-          "#f5f5f0"
-        ]
-      }
+  }
+
+  loadArcGISAPI = () => {
+    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
+
+    if ((window as any).require) {
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.createMap();
+      return;
     }
-  ],
-  "id": "PROJE_coverage_style"
+
+    const cssLink = document.createElement("link");
+    cssLink.rel = "stylesheet";
+    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
+    document.head.appendChild(cssLink);
+
+    const existing = document.querySelector(`script[data-arcgis-api="${ARCGIS_API_VERSION}"]`) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => {
+        this.setState({ message: "✅ ArcGIS API yüklendi" });
+        this.createMap();
+      });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
+    script.setAttribute('data-arcgis-api', ARCGIS_API_VERSION);
+    script.onload = () => {
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.createMap();
+    };
+    script.onerror = () => {
+      this.setState({ message: "❌ ArcGIS API yüklenemedi" });
+    };
+    document.head.appendChild(script);
+  };
+
+  createMap = () => {
+    this.setState({ message: "🗺️ Map oluşturuluyor..." });
+
+    if (!this.mapDiv) {
+      setTimeout(() => this.createMap(), 50);
+      return;
+    }
+
+    if (!(window as any).require) {
+      this.setState({ message: "❌ ArcGIS API loader bulunamadı" });
+      return;
+    }
+
+    (window as any).require([
+      'esri/Map',
+      'esri/views/MapView',
+      'esri/layers/VectorTileLayer',
+      'esri/request'
+    ], (Map, MapView, VectorTileLayer, esriRequest) => {
+      
+      const map = new Map({
+        basemap: 'dark-gray-vector'
+      });
+
+      this.mapView = new MapView({
+        container: this.mapDiv,
+        map: map,
+        center: [32, 39],
+        zoom: 15,
+        constraints: {
+          snapToZoom: false,
+          minZoom: 3,
+          maxZoom: 22,
+          rotationEnabled: false
+        },
+        navigation: {
+          mouseWheelZoomEnabled: true,
+          browserTouchPanEnabled: true
+        }
+      });
+
+      // Mouse wheel zoom control
+      this.mapView.when(() => {
+        const container = this.mapView.container as HTMLElement;
+        
+        container.addEventListener('wheel', (event: WheelEvent) => {
+          event.preventDefault();
+          
+          const currentZoom = this.mapView.zoom;
+          const delta = event.deltaY;
+          const zoomChange = delta > 0 ? -0.2 : 0.2;
+          const newZoom = Math.max(3, Math.min(22, currentZoom + zoomChange));
+          
+          this.mapView.goTo({
+            zoom: newZoom
+          }, {
+            duration: 100
+          });
+        }, { passive: false });
+      });
+
+      this.mapView.watch('zoom', (newZoom) => {
+        this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
+      });
+
+      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
+
+      // 🔥 ÇÖZÜM 1: Fetch override for authorization
+      const originalFetch = window.fetch;
+      window.fetch = (url, options = {}) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('abc.com') || urlStr.includes(new URL(MVT_STYLE_URL, window.location.href).hostname)) {
+          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+          if (zxyMatch) {
+            const [, z] = zxyMatch;
+            console.log(`🔍 Tile request: zoom ${z}`);
+          }
+          
+          return originalFetch(url, {
+            ...options,
+            headers: {
+              ...(options['headers'] || {}),
+              'Authorization': `Bearer ${MANUAL_BEARER}`
+            }
+          });
+        }
+        return originalFetch(url, options);
+      };
+
+      // 🎨 ÇÖZÜM 2: Orijinal style JSON'u OLDUĞU GİBİ kullan
+      esriRequest(MVT_STYLE_URL, {
+        headers: {
+          'Authorization': `Bearer ${MANUAL_BEARER}`
+        },
+        responseType: 'json'
+      }).then(response => {
+        this.setState({ message: "📄 Style JSON alındı, VectorTileLayer oluşturuluyor..." });
+        const styleJson = response.data;
+
+        console.log("📋 Original Style JSON:", styleJson);
+
+        // ✅ TEK BİR LAYER - Orijinal style JSON'u olduğu gibi ver
+        const vectorTileLayer = new VectorTileLayer({
+          style: styleJson,  // 🎯 MapLibre style spec - ArcGIS 4.x bunu destekliyor
+          minScale: 0,
+          maxScale: 0,
+          title: "Coverage Layer"
+        });
+
+        vectorTileLayer.when(() => {
+          console.log("✅ VectorTileLayer loaded successfully!");
+          console.log("Layer info:", vectorTileLayer);
+          this.setState({ message: "✅ MVT Layer yüklendi! Renkler aktif." });
+        }).catch(err => {
+          console.error("❌ VectorTileLayer error:", err);
+          this.setState({ message: `❌ Layer error: ${err.message}` });
+        });
+
+        map.add(vectorTileLayer);
+        
+      }).catch(err => {
+        this.setState({ message: `❌ Fetch error: ${err.message}` });
+        console.error("FETCH HATASI:", err);
+      });
+    }, (err) => {
+      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
+      console.error('AMD require error:', err);
+    });
+  };
+
+  render() {
+    const { message, currentZoom } = this.state;
+
+    return (
+      <div style={{ width: "100%", height: "100%", position: "relative" }}>
+        <div 
+          ref={el => this.mapDiv = el}
+          style={{ width: "100%", height: "100%" }}
+        />
+
+        {/* Zoom Control Panel */}
+        <div style={{
+          position: "absolute",
+          top: "10px",
+          right: "10px",
+          background: "rgba(0,0,0,0.9)",
+          color: "white",
+          padding: "20px",
+          borderRadius: "8px",
+          zIndex: 9999,
+          fontFamily: "monospace",
+          fontSize: "14px",
+          minWidth: "200px"
+        }}>
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
+            🎮 ZOOM TEST
+          </div>
+          
+          <div style={{ 
+            background: "rgba(255,255,255,0.1)", 
+            padding: "15px", 
+            borderRadius: "5px",
+            marginBottom: "15px",
+            textAlign: "center"
+          }}>
+            <div style={{ fontSize: "12px", color: "#aaa", marginBottom: "5px" }}>
+              Zoom Level
+            </div>
+            <div style={{ fontSize: "32px", fontWeight: "bold", color: "#FFD700" }}>
+              {currentZoom}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+            <button
+              onClick={() => {
+                if (this.mapView) {
+                  const newZoom = this.mapView.zoom - 0.1;
+                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: "15px",
+                fontSize: "20px",
+                background: "#f44336",
+                color: "white",
+                border: "none",
+                borderRadius: "5px",
+                cursor: "pointer",
+                fontWeight: "bold"
+              }}
+            >
+              -
+            </button>
+            <button
+              onClick={() => {
+                if (this.mapView) {
+                  const newZoom = this.mapView.zoom + 0.1;
+                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
+                }
+              }}
+              style={{
+                flex: 1,
+                padding: "15px",
+                fontSize: "20px",
+                background: "#4CAF50",
+                color: "white",
+                border: "none",
+                borderRadius: "5px",
+                cursor: "pointer",
+                fontWeight: "bold"
+              }}
+            >
+              +
+            </button>
+          </div>
+        </div>
+
+        {/* Status Panel */}
+        <div style={{
+          position: "absolute",
+          top: "10px",
+          left: "10px",
+          background: "rgba(0,0,0,0.8)",
+          color: "white",
+          padding: "15px",
+          borderRadius: "5px",
+          zIndex: 9999,
+          fontFamily: "monospace",
+          fontSize: "12px"
+        }}>
+          <strong>MVT Single Layer:</strong>
+          <div style={{ marginTop: "10px" }}>{message}</div>
+          <div style={{ marginTop: "5px", fontSize: "11px" }}>
+            Grid: {
+              currentZoom < 7 ? "10km (3z)" :
+              currentZoom < 11 ? "1km (7z)" :
+              currentZoom < 15 ? "100m (11z)" : "10m (15z)"
+            }
+          </div>
+        </div>
+      </div>
+    );
+  }
 }
