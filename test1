@@ -8,17 +8,20 @@ const ARCGIS_API_VERSION = "4.32";
 interface State {
   message: string;
   currentZoom: number;
+  debugInfo: string;
 }
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
+  private vectorLayer: any;
 
   constructor(props) {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
-      currentZoom: 15
+      currentZoom: 15,
+      debugInfo: ""
     };
   }
 
@@ -68,45 +71,6 @@ export default class Widget extends React.PureComponent<any, State> {
     document.head.appendChild(script);
   };
 
-  // 🎨 interpolate → step expression'a çevir
-  convertInterpolateToStep = (interpolateArray) => {
-    // interpolate formatı: ["interpolate", ["linear"], ["get", "rsrp_dbm"], -135, "#313695", -126, "#4575B4", ...]
-    // step formatı: ["step", ["get", "rsrp_dbm"], defaultColor, threshold1, color1, threshold2, color2, ...]
-    
-    if (!Array.isArray(interpolateArray) || interpolateArray[0] !== 'interpolate') {
-      return interpolateArray; // Zaten interpolate değilse olduğu gibi dön
-    }
-
-    const stops = [];
-    for (let i = 3; i < interpolateArray.length; i += 2) {
-      if (i + 1 < interpolateArray.length) {
-        stops.push({
-          value: interpolateArray[i],
-          color: interpolateArray[i + 1]
-        });
-      }
-    }
-
-    if (stops.length === 0) {
-      return interpolateArray;
-    }
-
-    // step expression oluştur
-    const stepExpression = [
-      "step",
-      ["get", "rsrp_dbm"],
-      stops[0].color // default color (ilk renk)
-    ];
-
-    // Diğer threshold'ları ekle
-    for (let i = 1; i < stops.length; i++) {
-      stepExpression.push(stops[i].value);
-      stepExpression.push(stops[i].color);
-    }
-
-    return stepExpression;
-  };
-
   createMap = () => {
     this.setState({ message: "🗺️ Map oluşturuluyor..." });
 
@@ -141,14 +105,9 @@ export default class Widget extends React.PureComponent<any, State> {
           minZoom: 3,
           maxZoom: 22,
           rotationEnabled: false
-        },
-        navigation: {
-          mouseWheelZoomEnabled: true,
-          browserTouchPanEnabled: true
         }
       });
 
-      // Mouse wheel zoom control
       this.mapView.when(() => {
         const container = this.mapView.container as HTMLElement;
         
@@ -172,19 +131,13 @@ export default class Widget extends React.PureComponent<any, State> {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
       });
 
-      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
+      this.setState({ message: "✅ Map hazır! Style JSON test ediliyor..." });
 
-      // Fetch override for authorization
+      // Fetch override
       const originalFetch = window.fetch;
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
-        if (urlStr.includes('abc.com') || urlStr.includes(new URL(MVT_STYLE_URL, window.location.href).hostname)) {
-          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
-          if (zxyMatch) {
-            const [, z, x, y] = zxyMatch;
-            console.log(`🔍 Tile request: Z=${z}, X=${x}, Y=${y}`);
-          }
-          
+        if (urlStr.includes('abc.com') || urlStr.includes('/styles/')) {
           return originalFetch(url, {
             ...options,
             headers: {
@@ -196,90 +149,122 @@ export default class Widget extends React.PureComponent<any, State> {
         return originalFetch(url, options);
       };
 
-      // 🎯 ÇÖZÜM: Style JSON'u al ve interpolate → step'e çevir
+      // 🔍 HARDCORE DEBUG: Style JSON'u birden fazla yöntemle test et
       esriRequest(MVT_STYLE_URL, {
         headers: {
           'Authorization': `Bearer ${MANUAL_BEARER}`
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı, düzenleniyor..." });
         const originalStyle = response.data;
         
-        console.log("📥 Original Style JSON:", originalStyle);
-
-        // 🎨 Her layer'ın paint bilgisini interpolate → step'e çevir
-        const fixedStyle = {
-          version: 8,
-          sources: originalStyle.sources,
-          layers: originalStyle.layers.map(layer => {
-            const newLayer = { ...layer };
-
-            if (layer.paint) {
-              const newPaint = { ...layer.paint };
-
-              // fill-color'u düzelt
-              if (newPaint['fill-color']) {
-                const converted = this.convertInterpolateToStep(newPaint['fill-color']);
-                console.log(`🎨 Converting ${layer.id} fill-color:`);
-                console.log("  Original:", newPaint['fill-color']);
-                console.log("  Converted:", converted);
-                newPaint['fill-color'] = converted;
-              }
-
-              // line-color'u düzelt
-              if (newPaint['line-color']) {
-                const converted = this.convertInterpolateToStep(newPaint['line-color']);
-                console.log(`🎨 Converting ${layer.id} line-color:`);
-                console.log("  Original:", newPaint['line-color']);
-                console.log("  Converted:", converted);
-                newPaint['line-color'] = converted;
-              }
-
-              newLayer.paint = newPaint;
-            }
-
-            return newLayer;
-          })
-        };
-
-        console.log("✅ Fixed Style JSON:", fixedStyle);
-
-        // VectorTileLayer oluştur
-        const vectorTileLayer = new VectorTileLayer({
-          style: fixedStyle,
-          title: "Coverage MVT (Step Colors)"
+        console.log("=" .repeat(80));
+        console.log("🔍 STYLE JSON DEBUG");
+        console.log("=" .repeat(80));
+        console.log("Original Style:", JSON.stringify(originalStyle, null, 2));
+        
+        // Test 1: Orijinal style
+        console.log("\n📋 TEST 1: Original Style (as-is)");
+        this.testStyle(originalStyle, "Original", VectorTileLayer, map);
+        
+        // Test 2: Basit renkler (expression yok)
+        console.log("\n📋 TEST 2: Simple Static Colors");
+        const simpleStyle = this.createSimpleStyle(originalStyle);
+        this.testStyle(simpleStyle, "Simple", VectorTileLayer, map);
+        
+        // Test 3: Tek layer test
+        console.log("\n📋 TEST 3: Single Layer Test");
+        const singleLayerStyle = this.createSingleLayerStyle(originalStyle);
+        this.testStyle(singleLayerStyle, "Single", VectorTileLayer, map);
+        
+        this.setState({ 
+          message: "🔍 3 farklı style test ediliyor...",
+          debugInfo: "Check console for detailed logs"
         });
-
-        // Layer debug
-        vectorTileLayer.when(() => {
-          console.log("✅ VectorTileLayer loaded!");
-          console.log("📊 Layer properties:");
-          console.log("  - loaded:", vectorTileLayer.loaded);
-          console.log("  - visible:", vectorTileLayer.visible);
-          console.log("  - style:", vectorTileLayer.style);
-          console.log("  - currentStyleInfo:", vectorTileLayer.currentStyleInfo);
-          
-          this.setState({ message: "✅ Renkli MVT layer yüklendi! (Step expression)" });
-        }).catch(err => {
-          console.error("❌ VectorTileLayer error:", err);
-          this.setState({ message: `❌ Layer error: ${err.message}` });
-        });
-
-        map.add(vectorTileLayer);
         
       }).catch(err => {
+        console.error("❌ Fetch error:", err);
         this.setState({ message: `❌ Fetch error: ${err.message}` });
-        console.error("FETCH HATASI:", err);
       });
-    }, (err) => {
-      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
-      console.error('AMD require error:', err);
     });
   };
 
+  // Test 1 yardımcısı: Orijinal style'ı test et
+  testStyle = (styleJson: any, label: string, VectorTileLayer: any, map: any) => {
+    const layer = new VectorTileLayer({
+      style: styleJson,
+      title: `Test: ${label}`,
+      opacity: 0.8
+    });
+
+    layer.when(() => {
+      console.log(`✅ ${label} layer loaded`);
+      console.log(`  - Style:`, layer.style);
+      console.log(`  - CurrentStyleInfo:`, layer.currentStyleInfo);
+      console.log(`  - Visible:`, layer.visible);
+      console.log(`  - Loaded:`, layer.loaded);
+    }).catch(err => {
+      console.error(`❌ ${label} layer error:`, err);
+    });
+
+    map.add(layer);
+    
+    if (label === "Original") {
+      this.vectorLayer = layer;
+    }
+  };
+
+  // Test 2: Basit statik renkler
+  createSimpleStyle = (originalStyle: any) => {
+    return {
+      version: 8,
+      sources: originalStyle.sources,
+      layers: [
+        {
+          id: "simple_fill",
+          type: "fill",
+          source: "coverage_15z",
+          "source-layer": "data",
+          minzoom: 0,
+          maxzoom: 24,
+          paint: {
+            "fill-color": "#FF0000", // Kırmızı - expression yok
+            "fill-opacity": 0.7
+          }
+        }
+      ]
+    };
+  };
+
+  // Test 3: Tek layer, basit case expression
+  createSingleLayerStyle = (originalStyle: any) => {
+    return {
+      version: 8,
+      sources: { coverage_15z: originalStyle.sources.coverage_15z },
+      layers: [
+        {
+          id: "single_case_fill",
+          type: "fill",
+          source: "coverage_15z",
+          "source-layer": "data",
+          minzoom: 0,
+          maxzoom: 24,
+          paint: {
+            "fill-color": [
+              "case",
+              ["<", ["get", "rsrp_dbm"], -100], "#313695", // Mavi
+              ["<", ["get", "rsrp_dbm"], -80], "#FDAE61",  // Turuncu
+              "#D73027" // Kırmızı (default)
+            ],
+            "fill-opacity": 0.7
+          }
+        }
+      ]
+    };
+  };
+
   render() {
-    const { message, currentZoom } = this.state;
+    const { message, currentZoom, debugInfo } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -288,57 +273,69 @@ export default class Widget extends React.PureComponent<any, State> {
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Zoom Control Panel */}
+        {/* Control Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
           right: "10px",
-          background: "rgba(0,0,0,0.9)",
+          background: "rgba(0,0,0,0.95)",
           color: "white",
           padding: "20px",
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "14px",
-          minWidth: "200px"
+          fontSize: "12px",
+          minWidth: "300px",
+          maxWidth: "400px"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
-            🎮 STEP EXPRESSION
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FF6B6B", fontSize: "14px" }}>
+            🔍 HARDCORE DEBUG MODE
           </div>
           
           <div style={{ 
             background: "rgba(255,255,255,0.1)", 
-            padding: "15px", 
+            padding: "10px", 
             borderRadius: "5px",
-            marginBottom: "15px",
-            textAlign: "center"
+            marginBottom: "10px"
           }}>
-            <div style={{ fontSize: "12px", color: "#aaa", marginBottom: "5px" }}>
-              Zoom Level
+            <div style={{ fontSize: "10px", color: "#aaa", marginBottom: "5px" }}>
+              Current Zoom
             </div>
-            <div style={{ fontSize: "32px", fontWeight: "bold", color: "#FFD700" }}>
+            <div style={{ fontSize: "24px", fontWeight: "bold", color: "#FFD700" }}>
               {currentZoom}
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
+          <div style={{ fontSize: "11px", marginBottom: "10px", lineHeight: "1.5" }}>
+            <strong style={{ color: "#4CAF50" }}>Testing 3 Approaches:</strong>
+            <div style={{ marginTop: "5px", paddingLeft: "10px" }}>
+              1. Original Style JSON<br/>
+              2. Simple Static Colors<br/>
+              3. Case Expression Colors
+            </div>
+          </div>
+
+          <div style={{ fontSize: "10px", color: "#FFD700", marginTop: "10px", padding: "10px", background: "rgba(255,215,0,0.1)", borderRadius: "4px" }}>
+            ⚠️ Open Console (F12)<br/>
+            Check layer load status & errors
+          </div>
+
+          <div style={{ display: "flex", gap: "10px", marginTop: "15px" }}>
             <button
               onClick={() => {
                 if (this.mapView) {
-                  const newZoom = this.mapView.zoom - 0.1;
-                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
+                  this.mapView.goTo({ zoom: this.mapView.zoom - 0.5 }, { duration: 200 });
                 }
               }}
               style={{
                 flex: 1,
-                padding: "15px",
-                fontSize: "20px",
+                padding: "10px",
+                fontSize: "16px",
                 background: "#f44336",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
-                cursor: "pointer",
-                fontWeight: "bold"
+                cursor: "pointer"
               }}
             >
               -
@@ -346,28 +343,22 @@ export default class Widget extends React.PureComponent<any, State> {
             <button
               onClick={() => {
                 if (this.mapView) {
-                  const newZoom = this.mapView.zoom + 0.1;
-                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
+                  this.mapView.goTo({ zoom: this.mapView.zoom + 0.5 }, { duration: 200 });
                 }
               }}
               style={{
                 flex: 1,
-                padding: "15px",
-                fontSize: "20px",
+                padding: "10px",
+                fontSize: "16px",
                 background: "#4CAF50",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
-                cursor: "pointer",
-                fontWeight: "bold"
+                cursor: "pointer"
               }}
             >
               +
             </button>
-          </div>
-
-          <div style={{ fontSize: "10px", color: "#888", textAlign: "center" }}>
-            Check console for conversion logs
           </div>
         </div>
 
@@ -376,25 +367,34 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           left: "10px",
-          background: "rgba(0,0,0,0.8)",
+          background: "rgba(0,0,0,0.9)",
           color: "white",
           padding: "15px",
           borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px"
+          fontSize: "11px",
+          maxWidth: "300px"
         }}>
-          <strong>🎨 Color Mode: STEP</strong>
-          <div style={{ marginTop: "10px" }}>{message}</div>
-          <div style={{ marginTop: "5px", fontSize: "11px", color: "#4CAF50" }}>
-            Grid: {
-              currentZoom < 7 ? "10km (3z)" :
-              currentZoom < 11 ? "1km (7z)" :
-              currentZoom < 15 ? "100m (11z)" : "10m (15z)"
-            }
-          </div>
-          <div style={{ marginTop: "10px", fontSize: "10px", color: "#888" }}>
-            interpolate → step conversion
+          <strong style={{ color: "#FF6B6B" }}>🔧 DEBUG STATUS:</strong>
+          <div style={{ marginTop: "10px", color: "#FFD700" }}>{message}</div>
+          {debugInfo && (
+            <div style={{ marginTop: "10px", fontSize: "10px", color: "#888" }}>
+              {debugInfo}
+            </div>
+          )}
+          <div style={{ marginTop: "10px", paddingTop: "10px", borderTop: "1px solid rgba(255,255,255,0.2)", fontSize: "10px" }}>
+            <div style={{ color: "#4CAF50" }}>
+              Expected Grid: {
+                currentZoom < 7 ? "10km (3z)" :
+                currentZoom < 11 ? "1km (7z)" :
+                currentZoom < 15 ? "100m (11z)" : "10m (15z)"
+              }
+            </div>
+            <div style={{ marginTop: "5px", color: "#888" }}>
+              If you see RED/ORANGE/BLUE polygons,<br/>
+              colors are working!
+            </div>
           </div>
         </div>
       </div>
