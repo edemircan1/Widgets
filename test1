@@ -9,6 +9,7 @@ interface State {
   message: string;
   currentZoom: number;
   calculatedRadius: string;
+  debugInfo: string;
 }
 
 // Maplibre exponential interpolation (exact algorithm)
@@ -19,7 +20,6 @@ function interpolateExponential(
 ): number {
   if (stops.length < 2) return stops[0]?.[1] || 1;
 
-  // Find the bracketing stops
   let lower = stops[0];
   let upper = stops[stops.length - 1];
 
@@ -37,7 +37,6 @@ function interpolateExponential(
   if (zoom <= z1) return v1;
   if (zoom >= z2) return v2;
 
-  // Exponential interpolation formula from Mapbox GL JS spec
   const t = (zoom - z1) / (z2 - z1);
   const difference = v2 - v1;
   const progress = (Math.pow(base, t) - 1) / (Math.pow(base, 1) - 1);
@@ -52,13 +51,17 @@ export default class Widget extends React.PureComponent<any, State> {
   private styleJson: any = null;
   private VectorTileLayer: any = null;
   private updateTimeout: any = null;
+  
+  // 🔍 TEST: Farklı scaling faktörleri
+  private scalingFactor: number = 1.0;
 
   constructor(props) {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
       currentZoom: 15,
-      calculatedRadius: "..."
+      calculatedRadius: "...",
+      debugInfo: "..."
     };
   }
 
@@ -111,8 +114,7 @@ export default class Widget extends React.PureComponent<any, State> {
     document.head.appendChild(script);
   };
 
-  calculateRadiusForZoom = (zoom: number): { radius: number; activeLayer: string } => {
-    // Style JSON'daki layer config'leri
+  calculateRadiusForZoom = (zoom: number): { radius: number; activeLayer: string; rawRadius: number } => {
     const configs = {
       'vis_mvt_3z': { stops: [[3, 1], [7, 10]] as [number, number][], base: 2, range: [3, 7] },
       'vis_mvt_7z': { stops: [[7, 1], [11, 13]] as [number, number][], base: 2, range: [7, 11] },
@@ -120,7 +122,6 @@ export default class Widget extends React.PureComponent<any, State> {
       'vis_mvt_15z': { stops: [[15, 2.5], [22, 250]] as [number, number][], base: 2, range: [15, 22] }
     };
 
-    // Hangi layer aktif olmalı?
     let activeLayer = 'vis_mvt_3z';
     let config = configs['vis_mvt_3z'];
 
@@ -135,52 +136,62 @@ export default class Widget extends React.PureComponent<any, State> {
       config = configs['vis_mvt_7z'];
     }
 
-    const radius = interpolateExponential(zoom, config.stops, config.base);
+    const rawRadius = interpolateExponential(zoom, config.stops, config.base);
     
-    return { radius, activeLayer };
+    // 🔥 SCALING FACTOR UYGULA
+    const radius = rawRadius * this.scalingFactor;
+    
+    return { radius, activeLayer, rawRadius };
   };
 
   updateLayerForZoom = (zoom: number) => {
     if (!this.styleJson || !this.VectorTileLayer || !this.mapView) return;
 
-    const { radius, activeLayer } = this.calculateRadiusForZoom(zoom);
+    const { radius, activeLayer, rawRadius } = this.calculateRadiusForZoom(zoom);
     
-    console.log(`🎯 Zoom ${zoom.toFixed(2)} → Active: ${activeLayer}, Radius: ${radius.toFixed(2)}px`);
+    console.log(`🎯 z${zoom.toFixed(2)} → ${activeLayer}: raw=${rawRadius.toFixed(2)}px, scaled=${radius.toFixed(2)}px (×${this.scalingFactor})`);
 
-    this.setState({ calculatedRadius: `${radius.toFixed(1)}px (${activeLayer})` });
+    this.setState({ 
+      calculatedRadius: `${radius.toFixed(1)}px`,
+      debugInfo: `Raw: ${rawRadius.toFixed(1)}px | Scaled: ${radius.toFixed(1)}px | Factor: ${this.scalingFactor}x`
+    });
 
-    // Eski layer'ı kaldır
     if (this.currentLayer) {
       this.mapView.map.remove(this.currentLayer);
       this.currentLayer.destroy();
     }
 
-    // Yeni style JSON oluştur - sadece circle-radius'u güncelle
     const modifiedStyle = JSON.parse(JSON.stringify(this.styleJson));
     
     modifiedStyle.layers = modifiedStyle.layers.map(layer => {
       if (layer.type === 'circle' && layer.paint && layer.paint['circle-radius']) {
+        
+        // 🔍 DEBUG: Original paint properties'i log'la
+        console.log(`Original paint for ${layer.id}:`, layer.paint);
+        
         return {
           ...layer,
           paint: {
             ...layer.paint,
-            'circle-radius': radius // Fixed value, exponentially calculated
+            'circle-radius': radius,
+            // ESRI-specific ayarlar test et
+            'circle-pitch-alignment': 'viewport', // 'map' yerine 'viewport' test
+            'circle-pitch-scale': 'viewport' // 'map' yerine 'viewport' test
           }
         };
       }
       return layer;
     });
 
-    // Yeni layer oluştur
     this.currentLayer = new this.VectorTileLayer({
       style: modifiedStyle,
       title: "Coverage Layer"
     });
 
     this.currentLayer.when(() => {
-      console.log(`✅ Layer updated with radius ${radius.toFixed(2)}px`);
+      console.log(`✅ Layer updated: ${radius.toFixed(2)}px`);
     }).catch(err => {
-      console.error("❌ Layer update error:", err);
+      console.error("❌ Layer error:", err);
     });
 
     this.mapView.map.add(this.currentLayer);
@@ -229,7 +240,6 @@ export default class Widget extends React.PureComponent<any, State> {
         }
       });
 
-      // Mouse wheel zoom control
       this.mapView.when(() => {
         const container = this.mapView.container as HTMLElement;
         
@@ -249,7 +259,6 @@ export default class Widget extends React.PureComponent<any, State> {
         }, { passive: false });
       });
 
-      // Debounced zoom watcher
       this.mapView.watch('zoom', (newZoom) => {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
         
@@ -257,7 +266,6 @@ export default class Widget extends React.PureComponent<any, State> {
           clearTimeout(this.updateTimeout);
         }
         
-        // Debounce 150ms
         this.updateTimeout = setTimeout(() => {
           this.updateLayerForZoom(newZoom);
         }, 150);
@@ -265,7 +273,6 @@ export default class Widget extends React.PureComponent<any, State> {
 
       this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
 
-      // Fetch override for authorization
       const originalFetch = window.fetch;
       window.fetch = (url, options = {}) => {
         const urlStr = url.toString();
@@ -287,15 +294,13 @@ export default class Widget extends React.PureComponent<any, State> {
         },
         responseType: 'json'
       }).then(response => {
-        this.setState({ message: "📄 Style JSON alındı, layer oluşturuluyor..." });
+        this.setState({ message: "📄 Style JSON alındı..." });
         this.styleJson = response.data;
 
-        console.log("🎨 Original Maplibre Style JSON:", this.styleJson);
+        console.log("🎨 Full Maplibre Style JSON:", JSON.stringify(this.styleJson, null, 2));
 
-        // İlk layer'ı oluştur
         this.updateLayerForZoom(this.mapView.zoom);
-
-        this.setState({ message: "✅ Layer yüklendi! Zoom yaparak test edin." });
+        this.setState({ message: "✅ Layer yüklendi! Test edin." });
         
       }).catch(err => {
         this.setState({ message: `❌ Fetch error: ${err.message}` });
@@ -307,8 +312,14 @@ export default class Widget extends React.PureComponent<any, State> {
     });
   };
 
+  adjustScalingFactor = (delta: number) => {
+    this.scalingFactor = Math.max(0.1, Math.min(10, this.scalingFactor + delta));
+    console.log(`🎚️ Scaling factor: ${this.scalingFactor}x`);
+    this.updateLayerForZoom(this.mapView.zoom);
+  };
+
   render() {
-    const { message, currentZoom, calculatedRadius } = this.state;
+    const { message, currentZoom, calculatedRadius, debugInfo } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -329,11 +340,11 @@ export default class Widget extends React.PureComponent<any, State> {
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "14px",
-          minWidth: "280px",
+          minWidth: "300px",
           boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50", fontSize: "16px" }}>
-            🎯 EXPONENTIAL INTERPOLATION
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FF5722", fontSize: "16px" }}>
+            🔬 DEBUG MODE
           </div>
           
           <div style={{ 
@@ -344,7 +355,7 @@ export default class Widget extends React.PureComponent<any, State> {
             border: "1px solid rgba(76, 175, 80, 0.3)"
           }}>
             <div style={{ fontSize: "11px", color: "#aaa", marginBottom: "5px" }}>
-              Current Zoom Level
+              Zoom Level
             </div>
             <div style={{ fontSize: "32px", fontWeight: "bold", color: "#FFD700", textAlign: "center" }}>
               {currentZoom}
@@ -352,20 +363,24 @@ export default class Widget extends React.PureComponent<any, State> {
           </div>
 
           <div style={{ 
-            background: "rgba(255, 215, 0, 0.1)", 
+            background: "rgba(255, 87, 34, 0.15)", 
             padding: "12px", 
             borderRadius: "5px",
             marginBottom: "15px",
-            border: "1px solid rgba(255, 215, 0, 0.2)"
+            border: "1px solid rgba(255, 87, 34, 0.3)"
           }}>
             <div style={{ fontSize: "10px", color: "#aaa", marginBottom: "5px" }}>
-              Calculated Circle Radius
+              Circle Radius
             </div>
-            <div style={{ fontSize: "16px", fontWeight: "bold", color: "#FFD700", textAlign: "center" }}>
+            <div style={{ fontSize: "16px", fontWeight: "bold", color: "#FF5722", textAlign: "center" }}>
               {calculatedRadius}
+            </div>
+            <div style={{ fontSize: "9px", color: "#888", marginTop: "5px", textAlign: "center" }}>
+              {debugInfo}
             </div>
           </div>
 
+          {/* Zoom Buttons */}
           <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
             <button
               onClick={() => {
@@ -376,20 +391,17 @@ export default class Widget extends React.PureComponent<any, State> {
               }}
               style={{
                 flex: 1,
-                padding: "15px",
-                fontSize: "20px",
+                padding: "12px",
+                fontSize: "18px",
                 background: "#f44336",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
                 cursor: "pointer",
-                fontWeight: "bold",
-                transition: "all 0.2s"
+                fontWeight: "bold"
               }}
-              onMouseOver={(e) => e.currentTarget.style.background = "#d32f2f"}
-              onMouseOut={(e) => e.currentTarget.style.background = "#f44336"}
             >
-              -
+              Z-
             </button>
             <button
               onClick={() => {
@@ -400,21 +412,116 @@ export default class Widget extends React.PureComponent<any, State> {
               }}
               style={{
                 flex: 1,
-                padding: "15px",
-                fontSize: "20px",
+                padding: "12px",
+                fontSize: "18px",
                 background: "#4CAF50",
                 color: "white",
                 border: "none",
                 borderRadius: "5px",
                 cursor: "pointer",
-                fontWeight: "bold",
-                transition: "all 0.2s"
+                fontWeight: "bold"
               }}
-              onMouseOver={(e) => e.currentTarget.style.background = "#388E3C"}
-              onMouseOut={(e) => e.currentTarget.style.background = "#4CAF50"}
             >
-              +
+              Z+
             </button>
+          </div>
+
+          {/* 🔥 SCALING FACTOR CONTROLS */}
+          <div style={{
+            background: "rgba(255, 152, 0, 0.15)",
+            padding: "12px",
+            borderRadius: "5px",
+            border: "1px solid rgba(255, 152, 0, 0.3)",
+            marginBottom: "10px"
+          }}>
+            <div style={{ fontSize: "11px", color: "#FF9800", fontWeight: "bold", marginBottom: "8px", textAlign: "center" }}>
+              🎚️ SCALING FACTOR
+            </div>
+            <div style={{ display: "flex", gap: "8px" }}>
+              <button
+                onClick={() => this.adjustScalingFactor(-0.5)}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  fontSize: "16px",
+                  background: "#FF9800",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: "bold"
+                }}
+              >
+                -0.5×
+              </button>
+              <button
+                onClick={() => this.adjustScalingFactor(-0.1)}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  fontSize: "16px",
+                  background: "#FFA726",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: "bold"
+                }}
+              >
+                -0.1×
+              </button>
+              <button
+                onClick={() => { this.scalingFactor = 1.0; this.updateLayerForZoom(this.mapView.zoom); }}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  fontSize: "14px",
+                  background: "#666",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: "bold"
+                }}
+              >
+                1×
+              </button>
+              <button
+                onClick={() => this.adjustScalingFactor(0.1)}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  fontSize: "16px",
+                  background: "#FFA726",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: "bold"
+                }}
+              >
+                +0.1×
+              </button>
+              <button
+                onClick={() => this.adjustScalingFactor(0.5)}
+                style={{
+                  flex: 1,
+                  padding: "10px",
+                  fontSize: "16px",
+                  background: "#FF9800",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontWeight: "bold"
+                }}
+              >
+                +0.5×
+              </button>
+            </div>
+            <div style={{ fontSize: "10px", color: "#FF9800", marginTop: "8px", textAlign: "center" }}>
+              Current: {this.scalingFactor.toFixed(1)}×
+            </div>
           </div>
 
           <div style={{ 
@@ -425,10 +532,7 @@ export default class Widget extends React.PureComponent<any, State> {
             borderRadius: "3px",
             lineHeight: "1.4"
           }}>
-            <strong style={{ color: "#888" }}>Maplibre Spec:</strong><br/>
-            z3-7: 1→10px | z7-11: 1→13px<br/>
-            z11-15: 2→20px | z15-22: 2.5→250px<br/>
-            <span style={{ color: "#4CAF50" }}>base: 2 (exponential)</span>
+            Scaling factor ile circle boyutlarını ayarlayın ve Maplibre ile karşılaştırın!
           </div>
         </div>
 
@@ -447,8 +551,8 @@ export default class Widget extends React.PureComponent<any, State> {
           maxWidth: "350px",
           boxShadow: "0 4px 12px rgba(0,0,0,0.5)"
         }}>
-          <div style={{ fontWeight: "bold", color: "#4CAF50", marginBottom: "8px" }}>
-            ⚡ Dynamic Layer Recreation
+          <div style={{ fontWeight: "bold", color: "#FF5722", marginBottom: "8px" }}>
+            🔬 DEBUG & CALIBRATION MODE
           </div>
           <div style={{ fontSize: "11px", lineHeight: "1.5" }}>{message}</div>
           <div style={{ 
@@ -459,7 +563,7 @@ export default class Widget extends React.PureComponent<any, State> {
             paddingTop: "8px",
             lineHeight: "1.5"
           }}>
-            Method: Layer destroyed & recreated on zoom change with pre-calculated exponential radius values matching Maplibre's interpolation algorithm (base 2).
+            Use scaling factor controls to match Maplibre's exact circle sizes. Check console for detailed logs.
           </div>
         </div>
       </div>
