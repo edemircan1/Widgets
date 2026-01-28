@@ -3,6 +3,7 @@ import { React, jsx } from "jimu-core";
 
 const MVT_STYLE_URL = "/styles/all/style.json?coverageLayer=rsrp_dbm";
 const MANUAL_BEARER = "token";
+const ARCGIS_API_VERSION = "4.32";
 
 interface State {
   message: string;
@@ -11,7 +12,7 @@ interface State {
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
-  private maplibreMap: any;
+  private mapView: any;
 
   constructor(props) {
     super(props);
@@ -22,152 +23,258 @@ export default class Widget extends React.PureComponent<any, State> {
   }
 
   componentDidMount() {
-    this.loadMapLibre();
+    this.loadArcGISAPI();
   }
 
   componentWillUnmount() {
-    if (this.maplibreMap) {
-      this.maplibreMap.remove();
+    if (this.mapView) {
+      this.mapView.destroy();
     }
   }
 
-  loadMapLibre = () => {
-    this.setState({ message: "📦 MapLibre yükleniyor..." });
+  loadArcGISAPI = () => {
+    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
 
-    // MapLibre CSS
-    if (!document.querySelector('link[href*="maplibre-gl.css"]')) {
-      const cssLink = document.createElement("link");
-      cssLink.rel = "stylesheet";
-      cssLink.href = "https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.css";
-      document.head.appendChild(cssLink);
-    }
-
-    // MapLibre JS
-    if ((window as any).maplibregl) {
-      this.setState({ message: "✅ MapLibre zaten yüklü" });
+    if ((window as any).require) {
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
       this.createMap();
       return;
     }
 
-    const existing = document.querySelector('script[src*="maplibre-gl.js"]');
+    const cssLink = document.createElement("link");
+    cssLink.rel = "stylesheet";
+    cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
+    document.head.appendChild(cssLink);
+
+    const existing = document.querySelector(`script[data-arcgis-api="${ARCGIS_API_VERSION}"]`) as HTMLScriptElement | null;
     if (existing) {
       existing.addEventListener('load', () => {
-        this.setState({ message: "✅ MapLibre yüklendi" });
+        this.setState({ message: "✅ ArcGIS API yüklendi" });
         this.createMap();
       });
       return;
     }
 
     const script = document.createElement("script");
-    script.src = "https://unpkg.com/maplibre-gl@3.6.2/dist/maplibre-gl.js";
+    script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
+    script.setAttribute('data-arcgis-api', ARCGIS_API_VERSION);
     script.onload = () => {
-      this.setState({ message: "✅ MapLibre yüklendi" });
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
       this.createMap();
     };
     script.onerror = () => {
-      this.setState({ message: "❌ MapLibre yüklenemedi" });
+      this.setState({ message: "❌ ArcGIS API yüklenemedi" });
     };
     document.head.appendChild(script);
   };
 
-  createMap = () => {
-    if (!this.mapDiv) {
-      setTimeout(() => this.createMap(), 100);
-      return;
+  // 🎨 interpolate → step expression'a çevir
+  convertInterpolateToStep = (interpolateArray) => {
+    // interpolate formatı: ["interpolate", ["linear"], ["get", "rsrp_dbm"], -135, "#313695", -126, "#4575B4", ...]
+    // step formatı: ["step", ["get", "rsrp_dbm"], defaultColor, threshold1, color1, threshold2, color2, ...]
+    
+    if (!Array.isArray(interpolateArray) || interpolateArray[0] !== 'interpolate') {
+      return interpolateArray; // Zaten interpolate değilse olduğu gibi dön
     }
 
-    if (!(window as any).maplibregl) {
-      setTimeout(() => this.createMap(), 100);
-      return;
-    }
-
-    this.setState({ message: "🗺️ Map oluşturuluyor..." });
-
-    const maplibregl = (window as any).maplibregl;
-
-    // Fetch override ÖNCE
-    const originalFetch = window.fetch;
-    window.fetch = (url, options = {}) => {
-      const urlStr = url.toString();
-      if (urlStr.includes('abc.com') || urlStr.includes('/styles/')) {
-        console.log(`🔍 Fetch with auth: ${urlStr}`);
-        return originalFetch(url, {
-          ...options,
-          headers: {
-            ...(options['headers'] || {}),
-            'Authorization': `Bearer ${MANUAL_BEARER}`
-          }
+    const stops = [];
+    for (let i = 3; i < interpolateArray.length; i += 2) {
+      if (i + 1 < interpolateArray.length) {
+        stops.push({
+          value: interpolateArray[i],
+          color: interpolateArray[i + 1]
         });
       }
-      return originalFetch(url, options);
-    };
+    }
 
-    // Style JSON'u fetch et
-    this.setState({ message: "📄 Style JSON alınıyor..." });
-    
-    fetch(MVT_STYLE_URL, {
-      headers: {
-        'Authorization': `Bearer ${MANUAL_BEARER}`
-      }
-    })
-    .then(res => {
-      console.log("📥 Style response status:", res.status);
-      if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-      }
-      return res.json();
-    })
-    .then(styleJson => {
-      console.log("✅ Style JSON received:", styleJson);
-      this.setState({ message: "📋 Style JSON alındı, map oluşturuluyor..." });
+    if (stops.length === 0) {
+      return interpolateArray;
+    }
 
-      // MapLibre map oluştur
-      this.maplibreMap = new maplibregl.Map({
+    // step expression oluştur
+    const stepExpression = [
+      "step",
+      ["get", "rsrp_dbm"],
+      stops[0].color // default color (ilk renk)
+    ];
+
+    // Diğer threshold'ları ekle
+    for (let i = 1; i < stops.length; i++) {
+      stepExpression.push(stops[i].value);
+      stepExpression.push(stops[i].color);
+    }
+
+    return stepExpression;
+  };
+
+  createMap = () => {
+    this.setState({ message: "🗺️ Map oluşturuluyor..." });
+
+    if (!this.mapDiv) {
+      setTimeout(() => this.createMap(), 50);
+      return;
+    }
+
+    if (!(window as any).require) {
+      this.setState({ message: "❌ ArcGIS API loader bulunamadı" });
+      return;
+    }
+
+    (window as any).require([
+      'esri/Map',
+      'esri/views/MapView',
+      'esri/layers/VectorTileLayer',
+      'esri/request'
+    ], (Map, MapView, VectorTileLayer, esriRequest) => {
+      
+      const map = new Map({
+        basemap: 'dark-gray-vector'
+      });
+
+      this.mapView = new MapView({
         container: this.mapDiv,
-        style: styleJson,
+        map: map,
         center: [32, 39],
         zoom: 15,
-        attributionControl: false
-      });
-
-      this.maplibreMap.on('load', () => {
-        console.log("✅ MapLibre map loaded!");
-        
-        // Layers'ı listele
-        const style = this.maplibreMap.getStyle();
-        console.log("📊 Map style:", style);
-        console.log("📊 Layers:", style.layers.map(l => `${l.id} (${l.type})`));
-        console.log("📊 Sources:", Object.keys(style.sources));
-        
-        this.setState({ message: "✅ MapLibre map yüklendi!" });
-      });
-
-      this.maplibreMap.on('error', (e) => {
-        console.error("❌ MapLibre error:", e);
-        this.setState({ message: `❌ MapLibre error: ${e.error?.message || 'unknown'}` });
-      });
-
-      this.maplibreMap.on('data', (e) => {
-        if (e.dataType === 'source' && e.isSourceLoaded) {
-          console.log(`📦 Source loaded: ${e.sourceId}`);
+        constraints: {
+          snapToZoom: false,
+          minZoom: 3,
+          maxZoom: 22,
+          rotationEnabled: false
+        },
+        navigation: {
+          mouseWheelZoomEnabled: true,
+          browserTouchPanEnabled: true
         }
       });
 
-      this.maplibreMap.on('zoom', () => {
-        const zoom = this.maplibreMap.getZoom();
-        this.setState({ currentZoom: Math.round(zoom * 10) / 10 });
+      // Mouse wheel zoom control
+      this.mapView.when(() => {
+        const container = this.mapView.container as HTMLElement;
+        
+        container.addEventListener('wheel', (event: WheelEvent) => {
+          event.preventDefault();
+          
+          const currentZoom = this.mapView.zoom;
+          const delta = event.deltaY;
+          const zoomChange = delta > 0 ? -0.2 : 0.2;
+          const newZoom = Math.max(3, Math.min(22, currentZoom + zoomChange));
+          
+          this.mapView.goTo({
+            zoom: newZoom
+          }, {
+            duration: 100
+          });
+        }, { passive: false });
       });
 
-      this.maplibreMap.on('sourcedata', (e) => {
-        if (e.isSourceLoaded && e.tile) {
-          console.log(`🔍 Tile loaded: ${e.sourceId} - ${e.tile.tileID.canonical.z}/${e.tile.tileID.canonical.x}/${e.tile.tileID.canonical.y}`);
+      this.mapView.watch('zoom', (newZoom) => {
+        this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
+      });
+
+      this.setState({ message: "✅ Map oluşturuldu! MVT yükleniyor..." });
+
+      // Fetch override for authorization
+      const originalFetch = window.fetch;
+      window.fetch = (url, options = {}) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('abc.com') || urlStr.includes(new URL(MVT_STYLE_URL, window.location.href).hostname)) {
+          const zxyMatch = urlStr.match(/\/(\d+)\/(\d+)\/(\d+)\.pbf/);
+          if (zxyMatch) {
+            const [, z, x, y] = zxyMatch;
+            console.log(`🔍 Tile request: Z=${z}, X=${x}, Y=${y}`);
+          }
+          
+          return originalFetch(url, {
+            ...options,
+            headers: {
+              ...(options['headers'] || {}),
+              'Authorization': `Bearer ${MANUAL_BEARER}`
+            }
+          });
         }
-      });
+        return originalFetch(url, options);
+      };
 
-    })
-    .catch(err => {
-      console.error("❌ Fetch error:", err);
-      this.setState({ message: `❌ Fetch error: ${err.message}` });
+      // 🎯 ÇÖZÜM: Style JSON'u al ve interpolate → step'e çevir
+      esriRequest(MVT_STYLE_URL, {
+        headers: {
+          'Authorization': `Bearer ${MANUAL_BEARER}`
+        },
+        responseType: 'json'
+      }).then(response => {
+        this.setState({ message: "📄 Style JSON alındı, düzenleniyor..." });
+        const originalStyle = response.data;
+        
+        console.log("📥 Original Style JSON:", originalStyle);
+
+        // 🎨 Her layer'ın paint bilgisini interpolate → step'e çevir
+        const fixedStyle = {
+          version: 8,
+          sources: originalStyle.sources,
+          layers: originalStyle.layers.map(layer => {
+            const newLayer = { ...layer };
+
+            if (layer.paint) {
+              const newPaint = { ...layer.paint };
+
+              // fill-color'u düzelt
+              if (newPaint['fill-color']) {
+                const converted = this.convertInterpolateToStep(newPaint['fill-color']);
+                console.log(`🎨 Converting ${layer.id} fill-color:`);
+                console.log("  Original:", newPaint['fill-color']);
+                console.log("  Converted:", converted);
+                newPaint['fill-color'] = converted;
+              }
+
+              // line-color'u düzelt
+              if (newPaint['line-color']) {
+                const converted = this.convertInterpolateToStep(newPaint['line-color']);
+                console.log(`🎨 Converting ${layer.id} line-color:`);
+                console.log("  Original:", newPaint['line-color']);
+                console.log("  Converted:", converted);
+                newPaint['line-color'] = converted;
+              }
+
+              newLayer.paint = newPaint;
+            }
+
+            return newLayer;
+          })
+        };
+
+        console.log("✅ Fixed Style JSON:", fixedStyle);
+
+        // VectorTileLayer oluştur
+        const vectorTileLayer = new VectorTileLayer({
+          style: fixedStyle,
+          title: "Coverage MVT (Step Colors)"
+        });
+
+        // Layer debug
+        vectorTileLayer.when(() => {
+          console.log("✅ VectorTileLayer loaded!");
+          console.log("📊 Layer properties:");
+          console.log("  - loaded:", vectorTileLayer.loaded);
+          console.log("  - visible:", vectorTileLayer.visible);
+          console.log("  - style:", vectorTileLayer.style);
+          console.log("  - currentStyleInfo:", vectorTileLayer.currentStyleInfo);
+          
+          this.setState({ message: "✅ Renkli MVT layer yüklendi! (Step expression)" });
+        }).catch(err => {
+          console.error("❌ VectorTileLayer error:", err);
+          this.setState({ message: `❌ Layer error: ${err.message}` });
+        });
+
+        map.add(vectorTileLayer);
+        
+      }).catch(err => {
+        this.setState({ message: `❌ Fetch error: ${err.message}` });
+        console.error("FETCH HATASI:", err);
+      });
+    }, (err) => {
+      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
+      console.error('AMD require error:', err);
     });
   };
 
@@ -176,10 +283,9 @@ export default class Widget extends React.PureComponent<any, State> {
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
-        {/* MapLibre Container */}
         <div 
           ref={el => this.mapDiv = el}
-          style={{ width: "100%", height: "100%", background: "#1a1a1a" }}
+          style={{ width: "100%", height: "100%" }}
         />
 
         {/* Zoom Control Panel */}
@@ -196,8 +302,8 @@ export default class Widget extends React.PureComponent<any, State> {
           fontSize: "14px",
           minWidth: "200px"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FF6B6B" }}>
-            🧪 PURE MAPLIBRE TEST
+          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#4CAF50" }}>
+            🎮 STEP EXPRESSION
           </div>
           
           <div style={{ 
@@ -218,9 +324,9 @@ export default class Widget extends React.PureComponent<any, State> {
           <div style={{ display: "flex", gap: "10px", marginBottom: "15px" }}>
             <button
               onClick={() => {
-                if (this.maplibreMap) {
-                  const newZoom = this.maplibreMap.getZoom() - 0.5;
-                  this.maplibreMap.setZoom(newZoom);
+                if (this.mapView) {
+                  const newZoom = this.mapView.zoom - 0.1;
+                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
                 }
               }}
               style={{
@@ -239,9 +345,9 @@ export default class Widget extends React.PureComponent<any, State> {
             </button>
             <button
               onClick={() => {
-                if (this.maplibreMap) {
-                  const newZoom = this.maplibreMap.getZoom() + 0.5;
-                  this.maplibreMap.setZoom(newZoom);
+                if (this.mapView) {
+                  const newZoom = this.mapView.zoom + 0.1;
+                  this.mapView.goTo({ zoom: newZoom }, { duration: 200 });
                 }
               }}
               style={{
@@ -260,8 +366,8 @@ export default class Widget extends React.PureComponent<any, State> {
             </button>
           </div>
 
-          <div style={{ fontSize: "10px", color: "#FFD700", textAlign: "center" }}>
-            Open Console (F12)
+          <div style={{ fontSize: "10px", color: "#888", textAlign: "center" }}>
+            Check console for conversion logs
           </div>
         </div>
 
@@ -270,28 +376,25 @@ export default class Widget extends React.PureComponent<any, State> {
           position: "absolute",
           top: "10px",
           left: "10px",
-          background: "rgba(0,0,0,0.85)",
+          background: "rgba(0,0,0,0.8)",
           color: "white",
           padding: "15px",
           borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px",
-          maxWidth: "300px"
+          fontSize: "12px"
         }}>
-          <strong style={{ color: "#FF6B6B" }}>🧪 DEBUG MODE:</strong>
-          <div style={{ marginTop: "10px", color: "#FFD700" }}>{message}</div>
-          <div style={{ marginTop: "10px", fontSize: "10px", color: "#888", borderTop: "1px solid rgba(255,255,255,0.1)", paddingTop: "10px" }}>
-            <div>• Check console for logs</div>
-            <div>• Look for tile requests</div>
-            <div>• Check for errors</div>
-          </div>
-          <div style={{ marginTop: "10px", fontSize: "11px", color: "#4CAF50" }}>
-            Expected Grid: {
+          <strong>🎨 Color Mode: STEP</strong>
+          <div style={{ marginTop: "10px" }}>{message}</div>
+          <div style={{ marginTop: "5px", fontSize: "11px", color: "#4CAF50" }}>
+            Grid: {
               currentZoom < 7 ? "10km (3z)" :
               currentZoom < 11 ? "1km (7z)" :
               currentZoom < 15 ? "100m (11z)" : "10m (15z)"
             }
+          </div>
+          <div style={{ marginTop: "10px", fontSize: "10px", color: "#888" }}>
+            interpolate → step conversion
           </div>
         </div>
       </div>
