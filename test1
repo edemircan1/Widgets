@@ -133,14 +133,35 @@ export default class Widget extends React.PureComponent<any, State> {
     this.currentLayers = [];
   };
 
+  // Color mapping from API
+  getColorForRSRP = (rsrp: number): string => {
+    if (rsrp >= -49) return '#A50026';
+    if (rsrp >= -57) return '#D73027';
+    if (rsrp >= -66) return '#F46D43';
+    if (rsrp >= -75) return '#FDAE61';
+    if (rsrp >= -83) return '#FEE090';
+    if (rsrp >= -92) return '#FFFFBF';
+    if (rsrp >= -100) return '#E0F3F8';
+    if (rsrp >= -109) return '#ABD9E9';
+    if (rsrp >= -118) return '#74ADD1';
+    if (rsrp >= -126) return '#4575B4';
+    return '#313695';
+  };
+
   applyTest = (testName: string) => {
     this.setState({ message: `🧪 Test: ${testName}...`, currentTest: testName });
     this.clearLayers();
 
     (window as any).require([
       'esri/layers/VectorTileLayer',
-      'esri/request'
-    ], (VectorTileLayer, esriRequest) => {
+      'esri/layers/FeatureLayer',
+      'esri/layers/GraphicsLayer',
+      'esri/request',
+      'esri/renderers/ClassBreaksRenderer',
+      'esri/symbols/SimpleFillSymbol',
+      'esri/symbols/SimpleLineSymbol',
+      'esri/Graphic'
+    ], (VectorTileLayer, FeatureLayer, GraphicsLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol, SimpleLineSymbol, Graphic) => {
 
       console.log(`\n🧪 ========== TEST: ${testName} ==========`);
 
@@ -148,26 +169,20 @@ export default class Widget extends React.PureComponent<any, State> {
         case 'baseline':
           this.testBaseline(VectorTileLayer, esriRequest);
           break;
-        case 'step_expression':
-          this.testStepExpression(VectorTileLayer, esriRequest);
+        case 'solution_a':
+          this.solutionA_CustomLayer(GraphicsLayer, esriRequest, Graphic, SimpleFillSymbol);
           break;
-        case 'step_with_cast':
-          this.testStepWithCast(VectorTileLayer, esriRequest);
+        case 'solution_b':
+          this.solutionB_FeatureLayer(FeatureLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol);
           break;
-        case 'match_expression':
-          this.testMatchExpression(VectorTileLayer, esriRequest);
-          break;
-        case 'case_ranges':
-          this.testCaseRanges(VectorTileLayer, esriRequest);
-          break;
-        case 'interpolate_cubic':
-          this.testInterpolateCubic(VectorTileLayer, esriRequest);
+        case 'solution_c':
+          this.solutionC_PostProcess(VectorTileLayer, esriRequest);
           break;
       }
     });
   };
 
-  // BASELINE: Original API (gri görünen, ama MVT yükleniyor)
+  // BASELINE: Original (gri görünen)
   testBaseline = (VectorTileLayer, esriRequest) => {
     console.log("📋 BASELINE: Original API style");
     
@@ -176,7 +191,6 @@ export default class Widget extends React.PureComponent<any, State> {
       responseType: 'json'
     }).then(response => {
       const originalStyle = response.data;
-      console.log("Original Style:", originalStyle);
 
       const zoomConfigs = [
         { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
@@ -207,12 +221,6 @@ export default class Widget extends React.PureComponent<any, State> {
           title: `Baseline ${config.name}`
         });
 
-        layer.when(() => {
-          console.log(`✅ ${config.name} loaded`);
-        }).catch(err => {
-          console.error(`❌ ${config.name} error:`, err);
-        });
-
         this.map.add(layer);
         this.currentLayers.push(layer);
       });
@@ -223,176 +231,64 @@ export default class Widget extends React.PureComponent<any, State> {
     });
   };
 
-  // TEST 1: Step Expression (Mapbox spec)
-  testStepExpression = (VectorTileLayer, esriRequest) => {
-    console.log("📋 TEST 1: Step expression");
+  // SOLUTION A: Custom GraphicsLayer - Tile data'yı çekip Graphics olarak çiz
+  solutionA_CustomLayer = (GraphicsLayer, esriRequest, Graphic, SimpleFillSymbol) => {
+    console.log("📋 SOLUTION A: Custom GraphicsLayer with manual coloring");
     
-    esriRequest(MVT_STYLE_URL, {
-      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
-      responseType: 'json'
-    }).then(response => {
-      const originalStyle = response.data;
-
-      const zoomConfigs = [
-        { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
-        { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
-        { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
-        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
-      ];
-
-      zoomConfigs.forEach(config => {
-        const customStyle = {
-          version: 8,
-          sources: {
-            [config.source]: originalStyle.sources[config.source]
-          },
-          layers: [
-            {
-              id: `fill_${config.source}`,
-              type: 'fill',
-              source: config.source,
-              'source-layer': 'data',
-              minzoom: config.minZoom,
-              maxzoom: config.maxZoom,
-              paint: {
-                'fill-opacity': 0.7,
-                'fill-color': [
-                  'step',
-                  ['get', 'rsrp_dbm'],
-                  '#313695',
-                  -126, '#4575B4',
-                  -118, '#74ADD1',
-                  -109, '#ABD9E9',
-                  -100, '#E0F3F8',
-                  -92, '#FFFFBF',
-                  -83, '#FEE090',
-                  -75, '#FDAE61',
-                  -66, '#F46D43',
-                  -57, '#D73027',
-                  -49, '#A50026'
-                ]
-              }
-            },
-            {
-              id: `line_${config.source}`,
-              type: 'line',
-              source: config.source,
-              'source-layer': 'data',
-              minzoom: config.minZoom,
-              maxzoom: config.maxZoom,
-              paint: {
-                'line-opacity': 0.8,
-                'line-color': [
-                  'step',
-                  ['get', 'rsrp_dbm'],
-                  '#313695',
-                  -126, '#4575B4',
-                  -118, '#74ADD1',
-                  -109, '#ABD9E9',
-                  -100, '#E0F3F8',
-                  -92, '#FFFFBF',
-                  -83, '#FEE090',
-                  -75, '#FDAE61',
-                  -66, '#F46D43',
-                  -57, '#D73027',
-                  -49, '#A50026'
-                ]
-              }
-            }
-          ]
-        };
-
-        console.log(`Step style for ${config.name}:`, customStyle);
-
-        const layer = new VectorTileLayer({
-          style: customStyle,
-          minScale: 0,
-          maxScale: 0,
-          title: `Step ${config.name}`
-        });
-
-        this.map.add(layer);
-        this.currentLayers.push(layer);
-      });
-
-      this.setState({ message: "✅ Step expression uygulandı" });
-    }).catch(err => {
-      this.setState({ message: `❌ Step failed: ${err.message}` });
-    });
+    this.setState({ message: "⚠️ Solution A: MVT tile'larını feature'lara çevirip manuel renklendirme yapılacak. Bu yöntem performance açısından ağır olabilir ve tile parsing gerektirir. Şu anda MVT PBF parsing implementasyonu gerekiyor..." });
+    
+    // NOT: Bu çözüm için MVT tile'ları decode edip feature'lara çevirmek gerekiyor
+    // Bu çok complex bir işlem ve protobuf parsing library gerektirir
+    // Örnek: @mapbox/vector-tile library ile tile parse edilir
+    
+    console.log("⚠️ Bu çözüm MVT tile parsing library gerektirir (@mapbox/vector-tile)");
+    console.log("Tile URL'den .pbf dosyaları çekilip decode edilmesi gerekir");
+    console.log("Her feature için rsrp_dbm değerine göre renk atanır");
+    console.log("Graphics olarak haritaya eklenir");
+    console.log("Performance: Düşük (her tile için parsing)");
   };
 
-  // TEST 2: Step with Type Cast
-  testStepWithCast = (VectorTileLayer, esriRequest) => {
-    console.log("📋 TEST 2: Step with explicit type casting");
+  // SOLUTION B: FeatureLayer ile ClassBreaksRenderer
+  solutionB_FeatureLayer = (FeatureLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol) => {
+    console.log("📋 SOLUTION B: Convert to FeatureLayer with ClassBreaksRenderer");
     
-    esriRequest(MVT_STYLE_URL, {
-      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
-      responseType: 'json'
-    }).then(response => {
-      const originalStyle = response.data;
-
-      const zoomConfigs = [
-        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
-      ];
-
-      zoomConfigs.forEach(config => {
-        const customStyle = {
-          version: 8,
-          sources: {
-            [config.source]: originalStyle.sources[config.source]
-          },
-          layers: [
-            {
-              id: `fill_${config.source}`,
-              type: 'fill',
-              source: config.source,
-              'source-layer': 'data',
-              minzoom: config.minZoom,
-              maxzoom: config.maxZoom,
-              paint: {
-                'fill-opacity': 0.7,
-                'fill-color': [
-                  'step',
-                  ['to-number', ['get', 'rsrp_dbm']],
-                  '#313695',
-                  -126, '#4575B4',
-                  -118, '#74ADD1',
-                  -109, '#ABD9E9',
-                  -100, '#E0F3F8',
-                  -92, '#FFFFBF',
-                  -83, '#FEE090',
-                  -75, '#FDAE61',
-                  -66, '#F46D43',
-                  -57, '#D73027',
-                  -49, '#A50026'
-                ]
-              }
-            }
-          ]
-        };
-
-        console.log(`Step with cast:`, customStyle);
-
-        const layer = new VectorTileLayer({
-          style: customStyle,
-          minScale: 0,
-          maxScale: 0,
-          title: `StepCast ${config.name}`
-        });
-
-        this.map.add(layer);
-        this.currentLayers.push(layer);
-      });
-
-      this.setState({ message: "✅ Step + type cast uygulandı" });
-    }).catch(err => {
-      this.setState({ message: `❌ Step+cast failed: ${err.message}` });
+    this.setState({ message: "⚠️ Solution B: MVT'yi FeatureLayer'a çevirmek için feature service gerekiyor. VectorTileLayer'ı direkt FeatureLayer'a çeviremiyoruz..." });
+    
+    // NOT: Bu çözüm için:
+    // 1. MVT tile service'i yerine feature service gerekir
+    // VEYA
+    // 2. MVT tile'ları parse edip in-memory feature collection oluşturulması gerekir
+    
+    console.log("⚠️ Bu çözüm için:");
+    console.log("- MVT yerine Feature Service URL'i gerekir");
+    console.log("- VEYA MVT tile'ları parse edip FeatureCollection oluşturulur");
+    console.log("- ClassBreaksRenderer ile manuel renklendirme yapılır");
+    
+    // Örnek ClassBreaksRenderer (eğer FeatureLayer olsaydı):
+    const renderer = new ClassBreaksRenderer({
+      field: 'rsrp_dbm',
+      classBreakInfos: [
+        { minValue: -135, maxValue: -126, symbol: new SimpleFillSymbol({ color: [49, 54, 149, 180] }) },
+        { minValue: -126, maxValue: -118, symbol: new SimpleFillSymbol({ color: [69, 117, 180, 180] }) },
+        { minValue: -118, maxValue: -109, symbol: new SimpleFillSymbol({ color: [116, 173, 209, 180] }) },
+        { minValue: -109, maxValue: -100, symbol: new SimpleFillSymbol({ color: [171, 217, 233, 180] }) },
+        { minValue: -100, maxValue: -92, symbol: new SimpleFillSymbol({ color: [224, 243, 248, 180] }) },
+        { minValue: -92, maxValue: -83, symbol: new SimpleFillSymbol({ color: [255, 255, 191, 180] }) },
+        { minValue: -83, maxValue: -75, symbol: new SimpleFillSymbol({ color: [254, 224, 144, 180] }) },
+        { minValue: -75, maxValue: -66, symbol: new SimpleFillSymbol({ color: [253, 174, 97, 180] }) },
+        { minValue: -66, maxValue: -57, symbol: new SimpleFillSymbol({ color: [244, 109, 67, 180] }) },
+        { minValue: -57, maxValue: -49, symbol: new SimpleFillSymbol({ color: [215, 48, 39, 180] }) },
+        { minValue: -49, maxValue: 0, symbol: new SimpleFillSymbol({ color: [165, 0, 38, 180] }) }
+      ]
     });
+    
+    console.log("ClassBreaksRenderer oluşturuldu:", renderer);
+    console.log("Ama FeatureLayer olmadığı için uygulanamıyor");
   };
 
-  // TEST 3: Match Expression
-  testMatchExpression = (VectorTileLayer, esriRequest) => {
-    console.log("📋 TEST 3: Match expression with rounded values");
+  // SOLUTION C: Post-process VectorTileLayer - Layer yüklendikten sonra style manipülasyonu
+  solutionC_PostProcess = (VectorTileLayer, esriRequest) => {
+    console.log("📋 SOLUTION C: Post-process VectorTileLayer style manipulation");
     
     esriRequest(MVT_STYLE_URL, {
       headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
@@ -405,6 +301,7 @@ export default class Widget extends React.PureComponent<any, State> {
       ];
 
       zoomConfigs.forEach(config => {
+        // Simplified style - sadece source
         const customStyle = {
           version: 8,
           sources: {
@@ -419,182 +316,86 @@ export default class Widget extends React.PureComponent<any, State> {
               minzoom: config.minZoom,
               maxzoom: config.maxZoom,
               paint: {
-                'fill-opacity': 0.7,
-                'fill-color': [
-                  'match',
-                  ['round', ['/', ['get', 'rsrp_dbm'], 10]],
-                  -13, '#313695',
-                  -12, '#4575B4',
-                  -11, '#74ADD1',
-                  -10, '#ABD9E9',
-                  -9, '#E0F3F8',
-                  -8, '#FFFFBF',
-                  -7, '#FEE090',
-                  -6, '#FDAE61',
-                  -5, '#F46D43',
-                  -4, '#D73027',
-                  '#CCCCCC'
-                ]
+                'fill-color': '#FF0000',
+                'fill-opacity': 0.7
               }
             }
           ]
         };
 
-        console.log(`Match expression:`, customStyle);
-
         const layer = new VectorTileLayer({
           style: customStyle,
           minScale: 0,
           maxScale: 0,
-          title: `Match ${config.name}`
+          title: `PostProcess ${config.name}`
+        });
+
+        // Layer yüklendikten sonra manipülasyon dene
+        layer.when(() => {
+          console.log("✅ Layer loaded, attempting post-process manipulation...");
+          
+          // Deneme 1: loadedLayers property'sine erişim
+          console.log("Layer properties:", Object.keys(layer));
+          console.log("Layer.style:", layer.style);
+          
+          // Deneme 2: Style JSON'ı runtime'da değiştirme
+          try {
+            // API'dan gelen doğru renk kurallarıyla güncelle
+            const newStyle = {
+              ...customStyle,
+              layers: originalStyle.layers.filter(l => l.source === config.source).map(l => ({
+                ...l,
+                minzoom: config.minZoom,
+                maxzoom: config.maxZoom,
+                paint: {
+                  ...l.paint,
+                  'fill-color': [
+                    'step',
+                    ['get', 'rsrp_dbm'],
+                    '#313695',
+                    -126, '#4575B4',
+                    -118, '#74ADD1',
+                    -109, '#ABD9E9',
+                    -100, '#E0F3F8',
+                    -92, '#FFFFBF',
+                    -83, '#FEE090',
+                    -75, '#FDAE61',
+                    -66, '#F46D43',
+                    -57, '#D73027',
+                    -49, '#A50026'
+                  ]
+                }
+              }))
+            };
+            
+            console.log("Attempting to update style to:", newStyle);
+            layer.style = newStyle;
+            console.log("✅ Style updated (maybe?)");
+            
+          } catch (err) {
+            console.error("❌ Post-process manipulation failed:", err);
+          }
+          
+          // Deneme 3: Internal properties
+          if ((layer as any)._style) {
+            console.log("Layer has _style property:", (layer as any)._style);
+          }
+          
+          if ((layer as any).loadedLayers) {
+            console.log("Layer.loadedLayers:", (layer as any).loadedLayers);
+          }
+          
+        }).catch(err => {
+          console.error("❌ Layer load error:", err);
         });
 
         this.map.add(layer);
         this.currentLayers.push(layer);
       });
 
-      this.setState({ message: "✅ Match expression uygulandı" });
+      this.setState({ message: "✅ Solution C: Post-process deneniyor (console'a bak)" });
     }).catch(err => {
-      this.setState({ message: `❌ Match failed: ${err.message}` });
-    });
-  };
-
-  // TEST 4: Case with Range Checks
-  testCaseRanges = (VectorTileLayer, esriRequest) => {
-    console.log("📋 TEST 4: Case expression with detailed ranges");
-    
-    esriRequest(MVT_STYLE_URL, {
-      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
-      responseType: 'json'
-    }).then(response => {
-      const originalStyle = response.data;
-
-      const zoomConfigs = [
-        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
-      ];
-
-      zoomConfigs.forEach(config => {
-        const customStyle = {
-          version: 8,
-          sources: {
-            [config.source]: originalStyle.sources[config.source]
-          },
-          layers: [
-            {
-              id: `fill_${config.source}`,
-              type: 'fill',
-              source: config.source,
-              'source-layer': 'data',
-              minzoom: config.minZoom,
-              maxzoom: config.maxZoom,
-              paint: {
-                'fill-opacity': 0.7,
-                'fill-color': [
-                  'case',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -135], ['<', ['get', 'rsrp_dbm'], -126]], '#313695',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -126], ['<', ['get', 'rsrp_dbm'], -118]], '#4575B4',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -118], ['<', ['get', 'rsrp_dbm'], -109]], '#74ADD1',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -109], ['<', ['get', 'rsrp_dbm'], -100]], '#ABD9E9',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -100], ['<', ['get', 'rsrp_dbm'], -92]], '#E0F3F8',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -92], ['<', ['get', 'rsrp_dbm'], -83]], '#FFFFBF',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -83], ['<', ['get', 'rsrp_dbm'], -75]], '#FEE090',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -75], ['<', ['get', 'rsrp_dbm'], -66]], '#FDAE61',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -66], ['<', ['get', 'rsrp_dbm'], -57]], '#F46D43',
-                  ['all', ['>=', ['get', 'rsrp_dbm'], -57], ['<', ['get', 'rsrp_dbm'], -49]], '#D73027',
-                  ['>=', ['get', 'rsrp_dbm'], -49], '#A50026',
-                  '#CCCCCC'
-                ]
-              }
-            }
-          ]
-        };
-
-        console.log(`Case ranges:`, customStyle);
-
-        const layer = new VectorTileLayer({
-          style: customStyle,
-          minScale: 0,
-          maxScale: 0,
-          title: `Case ${config.name}`
-        });
-
-        this.map.add(layer);
-        this.currentLayers.push(layer);
-      });
-
-      this.setState({ message: "✅ Case ranges uygulandı" });
-    }).catch(err => {
-      this.setState({ message: `❌ Case failed: ${err.message}` });
-    });
-  };
-
-  // TEST 5: Interpolate with Cubic
-  testInterpolateCubic = (VectorTileLayer, esriRequest) => {
-    console.log("📋 TEST 5: Interpolate with cubic-bezier");
-    
-    esriRequest(MVT_STYLE_URL, {
-      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
-      responseType: 'json'
-    }).then(response => {
-      const originalStyle = response.data;
-
-      const zoomConfigs = [
-        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
-      ];
-
-      zoomConfigs.forEach(config => {
-        const customStyle = {
-          version: 8,
-          sources: {
-            [config.source]: originalStyle.sources[config.source]
-          },
-          layers: [
-            {
-              id: `fill_${config.source}`,
-              type: 'fill',
-              source: config.source,
-              'source-layer': 'data',
-              minzoom: config.minZoom,
-              maxzoom: config.maxZoom,
-              paint: {
-                'fill-opacity': 0.7,
-                'fill-color': [
-                  'interpolate',
-                  ['cubic-bezier', 0.42, 0, 0.58, 1],
-                  ['get', 'rsrp_dbm'],
-                  -135, '#313695',
-                  -126, '#4575B4',
-                  -118, '#74ADD1',
-                  -109, '#ABD9E9',
-                  -100, '#E0F3F8',
-                  -92, '#FFFFBF',
-                  -83, '#FEE090',
-                  -75, '#FDAE61',
-                  -66, '#F46D43',
-                  -57, '#D73027',
-                  -49, '#A50026'
-                ]
-              }
-            }
-          ]
-        };
-
-        console.log(`Interpolate cubic:`, customStyle);
-
-        const layer = new VectorTileLayer({
-          style: customStyle,
-          minScale: 0,
-          maxScale: 0,
-          title: `InterpCubic ${config.name}`
-        });
-
-        this.map.add(layer);
-        this.currentLayers.push(layer);
-      });
-
-      this.setState({ message: "✅ Interpolate cubic uygulandı" });
-    }).catch(err => {
-      this.setState({ message: `❌ Interpolate failed: ${err.message}` });
+      this.setState({ message: `❌ Solution C failed: ${err.message}` });
     });
   };
 
@@ -619,11 +420,11 @@ export default class Widget extends React.PureComponent<any, State> {
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "12px",
-          maxWidth: "280px"
+          fontSize: "11px",
+          maxWidth: "300px"
         }}>
-          <div style={{ marginBottom: "12px", fontWeight: "bold", color: "#4CAF50" }}>
-            🎯 FOCUSED TESTS
+          <div style={{ marginBottom: "12px", fontWeight: "bold", color: "#4CAF50", fontSize: "13px" }}>
+            🔧 MANUAL COLOR SOLUTIONS
           </div>
           
           <div style={{ marginBottom: "10px", padding: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", fontSize: "10px" }}>
@@ -635,24 +436,20 @@ export default class Widget extends React.PureComponent<any, State> {
             BASELINE (gri MVT)
           </button>
 
-          <button onClick={() => this.applyTest('step_expression')} style={buttonStyle}>
-            1. Step Expression
+          <div style={{ fontSize: "10px", color: "#FFD700", margin: "10px 0 5px 0" }}>
+            Manuel Renklendirme:
+          </div>
+
+          <button onClick={() => this.applyTest('solution_a')} style={buttonStyle}>
+            A) Custom GraphicsLayer
           </button>
 
-          <button onClick={() => this.applyTest('step_with_cast')} style={buttonStyle}>
-            2. Step + Type Cast
+          <button onClick={() => this.applyTest('solution_b')} style={buttonStyle}>
+            B) FeatureLayer + Renderer
           </button>
 
-          <button onClick={() => this.applyTest('match_expression')} style={buttonStyle}>
-            3. Match Expression
-          </button>
-
-          <button onClick={() => this.applyTest('case_ranges')} style={buttonStyle}>
-            4. Case + Ranges
-          </button>
-
-          <button onClick={() => this.applyTest('interpolate_cubic')} style={buttonStyle}>
-            5. Interpolate Cubic
+          <button onClick={() => this.applyTest('solution_c')} style={buttonStyle}>
+            C) Post-Process Style
           </button>
 
           <button 
@@ -664,6 +461,12 @@ export default class Widget extends React.PureComponent<any, State> {
           >
             🗑️ Clear
           </button>
+
+          <div style={{ fontSize: "9px", color: "#aaa", marginTop: "10px", lineHeight: "1.3" }}>
+            💡 A: Tile parsing + Graphics<br/>
+            💡 B: Feature Service gerekir<br/>
+            💡 C: Runtime style manipulation
+          </div>
         </div>
 
         {/* Status Panel */}
@@ -673,14 +476,17 @@ export default class Widget extends React.PureComponent<any, State> {
           left: "10px",
           background: "rgba(0,0,0,0.9)",
           color: "white",
-          padding: "10px",
+          padding: "12px",
           borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "11px",
-          maxWidth: "300px"
+          fontSize: "10px",
+          maxWidth: "400px",
+          maxHeight: "200px",
+          overflowY: "auto"
         }}>
-          <div style={{ color: "#4CAF50" }}>{message}</div>
+          <div style={{ color: "#4CAF50", marginBottom: "5px" }}>Status:</div>
+          <div style={{ fontSize: "10px", lineHeight: "1.4" }}>{message}</div>
         </div>
       </div>
     );
