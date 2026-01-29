@@ -8,36 +8,22 @@ const ARCGIS_API_VERSION = "4.32";
 interface State {
   message: string;
   currentZoom: number;
+  currentTest: string;
 }
-
-// RSRP renk haritası
-const RSRP_COLOR_MAP = [
-  { min: -135, max: -126, color: '#313695' },
-  { min: -126, max: -118, color: '#4575B4' },
-  { min: -118, max: -109, color: '#74ADD1' },
-  { min: -109, max: -100, color: '#ABD9E9' },
-  { min: -100, max: -92, color: '#E0F3F8' },
-  { min: -92, max: -83, color: '#FFFFBF' },
-  { min: -83, max: -75, color: '#FEE090' },
-  { min: -75, max: -66, color: '#FDAE61' },
-  { min: -66, max: -57, color: '#F46D43' },
-  { min: -57, max: -49, color: '#D73027' },
-  { min: -49, max: 0, color: '#A50026' }
-];
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
   private map: any;
   private currentLayers: any[] = [];
-  private styleData: any = null;
-  private VectorTileLayer: any = null;
+  private animationFrame: number = null;
 
   constructor(props) {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
-      currentZoom: 15
+      currentZoom: 15,
+      currentTest: "none"
     };
   }
 
@@ -48,6 +34,9 @@ export default class Widget extends React.PureComponent<any, State> {
   componentWillUnmount() {
     if (this.mapView) {
       this.mapView.destroy();
+    }
+    if (this.animationFrame) {
+      cancelAnimationFrame(this.animationFrame);
     }
   }
 
@@ -93,12 +82,8 @@ export default class Widget extends React.PureComponent<any, State> {
 
     (window as any).require([
       'esri/Map',
-      'esri/views/MapView',
-      'esri/layers/VectorTileLayer',
-      'esri/request'
-    ], (Map, MapView, VectorTileLayer, esriRequest) => {
-      
-      this.VectorTileLayer = VectorTileLayer;
+      'esri/views/MapView'
+    ], (Map, MapView) => {
       
       this.map = new Map({
         basemap: 'dark-gray-vector'
@@ -117,18 +102,11 @@ export default class Widget extends React.PureComponent<any, State> {
         }
       });
 
-      // Watch zoom changes
       this.mapView.watch('zoom', (newZoom) => {
-        const roundedZoom = Math.round(newZoom * 10) / 10;
-        this.setState({ currentZoom: roundedZoom });
-        
-        // Zoom level değiştiğinde layer'ları yeniden yükle
-        if (this.styleData) {
-          this.updateLayersForZoom(newZoom);
-        }
+        this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
       });
 
-      this.setState({ message: "✅ Map hazır! MVT yükleniyor..." });
+      this.setState({ message: "✅ Map hazır! Test seçin..." });
 
       // Setup fetch override for authorization
       const originalFetch = window.fetch;
@@ -145,125 +123,389 @@ export default class Widget extends React.PureComponent<any, State> {
         }
         return originalFetch(url, options);
       };
-
-      // Style JSON'ı çek
-      esriRequest(MVT_STYLE_URL, {
-        headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
-        responseType: 'json'
-      }).then(response => {
-        this.styleData = response.data;
-        console.log("✅ Style JSON fetched:", this.styleData);
-        
-        // İlk layer'ları yükle
-        this.updateLayersForZoom(this.mapView.zoom);
-        
-      }).catch(err => {
-        this.setState({ message: `❌ Style fetch failed: ${err.message}` });
-        console.error("Style fetch error:", err);
-      });
       
     }, (err) => {
       this.setState({ message: `❌ Loader error: ${err?.message || err}` });
     });
   };
 
-  // Zoom level'a göre uygun source'u seç
-  getSourceForZoom = (zoom: number): { name: string, source: string, minZoom: number, maxZoom: number } => {
-    if (zoom < 7) return { name: '3z', source: 'coverage_3z', minZoom: 3, maxZoom: 7 };
-    if (zoom < 11) return { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 };
-    if (zoom < 15) return { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 };
-    return { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 };
-  };
-
-  // Mevcut layer'ları temizle
   clearLayers = () => {
     this.currentLayers.forEach(layer => {
       this.map.remove(layer);
     });
     this.currentLayers = [];
+    if (this.animationFrame) {
+      cancelAnimationFrame(this.animationFrame);
+      this.animationFrame = null;
+    }
   };
 
-  // Zoom level için layer'ları güncelle
-  updateLayersForZoom = (zoom: number) => {
-    const zoomConfig = this.getSourceForZoom(zoom);
-    console.log(`\n🔄 Updating layers for zoom ${zoom} → using ${zoomConfig.name}`);
-    
+  runTest = (testName: string) => {
+    this.setState({ currentTest: testName, message: `🧪 ${testName}` });
     this.clearLayers();
-    this.setState({ message: `🎨 ${zoomConfig.name} layer'ları yükleniyor...` });
 
-    // Her RSRP range için layer oluştur
-    RSRP_COLOR_MAP.forEach((colorRange, index) => {
-      
+    (window as any).require([
+      'esri/layers/VectorTileLayer',
+      'esri/request'
+    ], (VectorTileLayer, esriRequest) => {
+
+      switch(testName) {
+        case 'baseline':
+          this.testBaseline(VectorTileLayer, esriRequest);
+          break;
+        case 'css_filter':
+          this.testCSSFilter(VectorTileLayer, esriRequest);
+          break;
+        case 'blend_modes':
+          this.testBlendModes(VectorTileLayer, esriRequest);
+          break;
+        case 'canvas_manipulation':
+          this.testCanvasManipulation(VectorTileLayer, esriRequest);
+          break;
+        case 'multiple_overlays':
+          this.testMultipleOverlays(VectorTileLayer, esriRequest);
+          break;
+      }
+    });
+  };
+
+  // BASELINE: Original working (gri MVT)
+  testBaseline = (VectorTileLayer, esriRequest) => {
+    console.log("📋 BASELINE: Original single-color MVT");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
       const customStyle = {
         version: 8,
         sources: {
-          [zoomConfig.source]: this.styleData.sources[zoomConfig.source]
+          'coverage_15z': originalStyle.sources['coverage_15z']
         },
-        layers: [
-          {
-            id: `fill_${zoomConfig.source}_${index}`,
-            type: 'fill',
-            source: zoomConfig.source,
-            'source-layer': 'data',
-            minzoom: zoomConfig.minZoom,
-            maxzoom: zoomConfig.maxZoom,
-            filter: [
-              'all',
-              ['>=', ['get', 'rsrp_dbm'], colorRange.min],
-              ['<', ['get', 'rsrp_dbm'], colorRange.max]
-            ],
-            paint: {
-              'fill-color': colorRange.color,
-              'fill-opacity': 0.6
-            }
-          },
-          {
-            id: `line_${zoomConfig.source}_${index}`,
-            type: 'line',
-            source: zoomConfig.source,
-            'source-layer': 'data',
-            minzoom: zoomConfig.minZoom,
-            maxzoom: zoomConfig.maxZoom,
-            filter: [
-              'all',
-              ['>=', ['get', 'rsrp_dbm'], colorRange.min],
-              ['<', ['get', 'rsrp_dbm'], colorRange.max]
-            ],
-            paint: {
-              'line-color': colorRange.color,
-              'line-opacity': 0.8,
-              'line-width': 0.5
-            }
-          }
-        ]
+        layers: originalStyle.layers.filter(layer => 
+          layer.source === 'coverage_15z'
+        ).map(layer => ({
+          ...layer,
+          minzoom: 15,
+          maxzoom: 24
+        }))
       };
 
-      const layer = new this.VectorTileLayer({
+      const layer = new VectorTileLayer({
         style: customStyle,
         minScale: 0,
         maxScale: 0,
-        title: `${zoomConfig.name}_range_${index}`,
-        opacity: 1.0
-      });
-
-      layer.when(() => {
-        console.log(`  ✅ Layer ${index} loaded for ${zoomConfig.name}`);
-      }).catch(err => {
-        console.error(`  ❌ Layer ${index} error:`, err);
+        title: 'Baseline'
       });
 
       this.map.add(layer);
       this.currentLayers.push(layer);
-    });
+      this.setState({ message: "✅ Baseline: Gri/beyaz MVT yüklendi" });
 
-    this.setState({ 
-      message: `✅ ${zoomConfig.name} yüklendi! (${RSRP_COLOR_MAP.length} renk katmanı)` 
+    }).catch(err => {
+      this.setState({ message: `❌ Baseline failed: ${err.message}` });
+    });
+  };
+
+  // TEST 1: CSS Filter ile renk manipülasyonu
+  testCSSFilter = (VectorTileLayer, esriRequest) => {
+    console.log("🎨 TEST 1: CSS Filter manipulation");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [{
+          id: 'fill_test',
+          type: 'fill',
+          source: 'coverage_15z',
+          'source-layer': 'data',
+          minzoom: 15,
+          maxzoom: 24,
+          paint: {
+            'fill-color': '#FFFFFF',
+            'fill-opacity': 0.7
+          }
+        }]
+      };
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        minScale: 0,
+        maxScale: 0,
+        title: 'CSS_Filter'
+      });
+
+      layer.when(() => {
+        console.log("✅ Layer loaded, applying CSS filters...");
+        
+        // MapView container'a CSS filter uygula
+        setTimeout(() => {
+          const container = this.mapView.container as HTMLElement;
+          const canvas = container.querySelector('canvas');
+          
+          if (canvas) {
+            console.log("Canvas found, applying filters...");
+            // Farklı CSS filter kombinasyonları dene
+            canvas.style.filter = 'hue-rotate(180deg) saturate(2) brightness(1.2)';
+            this.setState({ message: "✅ CSS Filter uygulandı (hue-rotate + saturate)" });
+          } else {
+            console.log("Canvas not found");
+            this.setState({ message: "⚠️ Canvas bulunamadı" });
+          }
+        }, 1000);
+        
+      }).catch(err => {
+        console.error("Layer error:", err);
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+
+    }).catch(err => {
+      this.setState({ message: `❌ CSS Filter failed: ${err.message}` });
+    });
+  };
+
+  // TEST 2: Blend Modes ile overlap
+  testBlendModes = (VectorTileLayer, esriRequest) => {
+    console.log("🎨 TEST 2: Multiple layers with blend modes");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      // Farklı renklerde 3 layer oluştur, blend mode ile karıştır
+      const colors = [
+        { color: '#FF0000', opacity: 0.3 },
+        { color: '#00FF00', opacity: 0.3 },
+        { color: '#0000FF', opacity: 0.3 }
+      ];
+
+      colors.forEach((config, idx) => {
+        const customStyle = {
+          version: 8,
+          sources: {
+            'coverage_15z': originalStyle.sources['coverage_15z']
+          },
+          layers: [{
+            id: `fill_blend_${idx}`,
+            type: 'fill',
+            source: 'coverage_15z',
+            'source-layer': 'data',
+            minzoom: 15,
+            maxzoom: 24,
+            paint: {
+              'fill-color': config.color,
+              'fill-opacity': config.opacity
+            }
+          }]
+        };
+
+        const layer = new VectorTileLayer({
+          style: customStyle,
+          minScale: 0,
+          maxScale: 0,
+          title: `Blend_${idx}`,
+          blendMode: 'screen' // multiply, screen, overlay
+        });
+
+        this.map.add(layer);
+        this.currentLayers.push(layer);
+      });
+
+      this.setState({ message: "✅ Blend modes: 3 renkli layer overlap" });
+
+    }).catch(err => {
+      this.setState({ message: `❌ Blend modes failed: ${err.message}` });
+    });
+  };
+
+  // TEST 3: Canvas pixel manipulation
+  testCanvasManipulation = (VectorTileLayer, esriRequest) => {
+    console.log("🎨 TEST 3: Canvas pixel manipulation");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [{
+          id: 'fill_test',
+          type: 'fill',
+          source: 'coverage_15z',
+          'source-layer': 'data',
+          minzoom: 15,
+          maxzoom: 24,
+          paint: {
+            'fill-color': '#FFFFFF',
+            'fill-opacity': 1.0
+          }
+        }]
+      };
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        minScale: 0,
+        maxScale: 0,
+        title: 'Canvas_Manipulation'
+      });
+
+      layer.when(() => {
+        console.log("✅ Layer loaded, starting canvas manipulation...");
+        
+        setTimeout(() => {
+          this.manipulateCanvas();
+        }, 1500);
+        
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+      this.setState({ message: "✅ Canvas manipulation başlatıldı..." });
+
+    }).catch(err => {
+      this.setState({ message: `❌ Canvas manipulation failed: ${err.message}` });
+    });
+  };
+
+  // Canvas manipulation logic
+  manipulateCanvas = () => {
+    const container = this.mapView.container as HTMLElement;
+    const canvas = container.querySelector('canvas') as HTMLCanvasElement;
+    
+    if (!canvas) {
+      console.log("Canvas not found");
+      this.setState({ message: "⚠️ Canvas bulunamadı" });
+      return;
+    }
+
+    console.log("Canvas found, reading pixels...");
+    
+    try {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) {
+        console.log("Cannot get 2D context");
+        return;
+      }
+
+      const width = canvas.width;
+      const height = canvas.height;
+      
+      console.log(`Canvas size: ${width}x${height}`);
+      
+      // Pixel data'yı oku
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      
+      // Gri tonları renkli gradiente çevir
+      for (let i = 0; i < data.length; i += 4) {
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const a = data[i + 3];
+        
+        // Eğer beyaz/gri bir pixel ise (MVT)
+        if (r > 200 && g > 200 && b > 200 && a > 0) {
+          // Gri değerine göre renk ata
+          const intensity = (r + g + b) / 3;
+          
+          if (intensity > 240) {
+            data[i] = 255; data[i + 1] = 0; data[i + 2] = 0; // Kırmızı
+          } else if (intensity > 220) {
+            data[i] = 255; data[i + 1] = 165; data[i + 2] = 0; // Turuncu
+          } else if (intensity > 200) {
+            data[i] = 0; data[i + 1] = 255; data[i + 2] = 0; // Yeşil
+          }
+        }
+      }
+      
+      // Değiştirilmiş pixel data'yı geri yaz
+      ctx.putImageData(imageData, 0, 0);
+      
+      console.log("✅ Pixels manipulated");
+      this.setState({ message: "✅ Canvas pixel'leri değiştirildi!" });
+      
+    } catch (err) {
+      console.error("Canvas manipulation error:", err);
+      this.setState({ message: `⚠️ Canvas manipulation error: ${err.message}` });
+    }
+  };
+
+  // TEST 4: Multiple color overlays with different opacities
+  testMultipleOverlays = (VectorTileLayer, esriRequest) => {
+    console.log("🎨 TEST 4: Multiple overlays with gradient");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      // Gradient colors
+      const gradientColors = [
+        '#313695', '#4575B4', '#74ADD1', '#ABD9E9', '#E0F3F8',
+        '#FFFFBF', '#FEE090', '#FDAE61', '#F46D43', '#D73027', '#A50026'
+      ];
+
+      gradientColors.forEach((color, idx) => {
+        const customStyle = {
+          version: 8,
+          sources: {
+            'coverage_15z': originalStyle.sources['coverage_15z']
+          },
+          layers: [{
+            id: `fill_overlay_${idx}`,
+            type: 'fill',
+            source: 'coverage_15z',
+            'source-layer': 'data',
+            minzoom: 15,
+            maxzoom: 24,
+            paint: {
+              'fill-color': color,
+              'fill-opacity': 0.1
+            }
+          }]
+        };
+
+        const layer = new VectorTileLayer({
+          style: customStyle,
+          minScale: 0,
+          maxScale: 0,
+          title: `Overlay_${idx}`,
+          opacity: 0.9
+        });
+
+        this.map.add(layer);
+        this.currentLayers.push(layer);
+      });
+
+      this.setState({ message: `✅ ${gradientColors.length} renkli overlay oluşturuldu` });
+
+    }).catch(err => {
+      this.setState({ message: `❌ Overlays failed: ${err.message}` });
     });
   };
 
   render() {
-    const { message, currentZoom } = this.state;
-    const zoomConfig = this.getSourceForZoom(currentZoom);
+    const { message, currentZoom, currentTest } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -272,79 +514,98 @@ export default class Widget extends React.PureComponent<any, State> {
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Status Panel */}
+        {/* Test Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
-          left: "10px",
-          background: "rgba(0,0,0,0.9)",
+          right: "10px",
+          background: "rgba(0,0,0,0.95)",
           color: "white",
           padding: "15px",
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "11px",
-          maxWidth: "320px"
+          maxWidth: "280px"
         }}>
-          <div style={{ marginBottom: "10px", fontWeight: "bold", color: "#4CAF50", fontSize: "13px" }}>
-            🎨 MVT COLORED POLYGONS
+          <div style={{ marginBottom: "12px", fontWeight: "bold", color: "#4CAF50" }}>
+            🎨 POST-PROCESS TESTS
           </div>
           
-          <div style={{ marginBottom: "10px", padding: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px" }}>
-            <div style={{ fontSize: "10px", color: "#aaa" }}>Zoom: {currentZoom}</div>
-            <div style={{ fontSize: "10px", color: "#aaa", marginTop: "3px" }}>
-              Active: {zoomConfig.name}
-            </div>
-            <div style={{ fontSize: "10px", color: "#aaa", marginTop: "3px" }}>
-              Layers: {this.currentLayers.length}
-            </div>
+          <div style={{ marginBottom: "10px", padding: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", fontSize: "10px" }}>
+            <div>Zoom: {currentZoom}</div>
+            <div>Test: {currentTest || "none"}</div>
           </div>
 
-          <div style={{ fontSize: "10px", lineHeight: "1.5", color: "#ddd" }}>
-            {message}
-          </div>
+          <button onClick={() => this.runTest('baseline')} style={{...buttonStyle, background: '#666'}}>
+            BASELINE (gri MVT)
+          </button>
 
-          <div style={{ marginTop: "10px", fontSize: "9px", color: "#888", lineHeight: "1.4" }}>
-            ✅ Filter expressions çalışıyor!<br/>
-            ✅ Her RSRP range ayrı layer<br/>
-            ✅ Zoom'a göre otomatik güncelleme
+          <button onClick={() => this.runTest('css_filter')} style={buttonStyle}>
+            1. CSS Filters
+          </button>
+
+          <button onClick={() => this.runTest('blend_modes')} style={buttonStyle}>
+            2. Blend Modes
+          </button>
+
+          <button onClick={() => this.runTest('canvas_manipulation')} style={buttonStyle}>
+            3. Canvas Pixels
+          </button>
+
+          <button onClick={() => this.runTest('multiple_overlays')} style={buttonStyle}>
+            4. Multiple Overlays
+          </button>
+
+          <button 
+            onClick={() => {
+              this.clearLayers();
+              this.setState({ message: "✅ Temizlendi", currentTest: "none" });
+            }} 
+            style={{...buttonStyle, background: "#f44336", marginTop: "10px"}}
+          >
+            🗑️ Clear
+          </button>
+
+          <div style={{ fontSize: "9px", color: "#aaa", marginTop: "10px", lineHeight: "1.3" }}>
+            💡 1: CSS filter (hue-rotate)<br/>
+            💡 2: RGB overlay blend<br/>
+            💡 3: Direct pixel edit<br/>
+            💡 4: Gradient overlays
           </div>
         </div>
 
-        {/* Color Legend */}
+        {/* Status */}
         <div style={{
           position: "absolute",
-          top: "10px",
-          right: "10px",
+          bottom: "10px",
+          left: "10px",
           background: "rgba(0,0,0,0.9)",
           color: "white",
           padding: "12px",
-          borderRadius: "8px",
+          borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "10px",
-          maxWidth: "180px"
+          maxWidth: "350px"
         }}>
-          <div style={{ marginBottom: "8px", fontWeight: "bold", fontSize: "11px" }}>
-            📊 RSRP (dBm)
-          </div>
-          {RSRP_COLOR_MAP.map((range, idx) => (
-            <div key={idx} style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
-              <div style={{ 
-                width: "20px", 
-                height: "12px", 
-                background: range.color, 
-                marginRight: "6px",
-                border: "1px solid #555",
-                borderRadius: "2px"
-              }}></div>
-              <div style={{ fontSize: "9px" }}>
-                {range.min} to {range.max}
-              </div>
-            </div>
-          ))}
+          <div style={{ color: "#4CAF50" }}>{message}</div>
         </div>
       </div>
     );
   }
 }
+
+const buttonStyle = {
+  width: "100%",
+  padding: "10px 8px",
+  marginBottom: "5px",
+  background: "#2196F3",
+  color: "white",
+  border: "none",
+  borderRadius: "4px",
+  cursor: "pointer",
+  fontSize: "11px",
+  textAlign: "left" as const,
+  fontFamily: "monospace"
+};
