@@ -196,9 +196,9 @@ export default class Widget extends React.PureComponent<any, State> {
     });
   };
 
-  // TEST 1: Original API Style (Baseline - şu an gri görünen)
+  // TEST 1: Original Working Code (Baseline - gri görünen ama MVT yükleniyor)
   test1_original = (VectorTileLayer, esriRequest) => {
-    console.log("📋 Original API style (fill-opacity: 0.5, interpolate)");
+    console.log("📋 Original working code - MVT should be visible (gray)");
     
     esriRequest(MVT_STYLE_URL, {
       headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
@@ -208,6 +208,9 @@ export default class Widget extends React.PureComponent<any, State> {
       console.log("Original Style JSON:", JSON.stringify(originalStyle, null, 2));
 
       const zoomConfigs = [
+        { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
+        { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
+        { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
         { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
       ];
 
@@ -230,7 +233,9 @@ export default class Widget extends React.PureComponent<any, State> {
 
         const layer = new VectorTileLayer({
           style: customStyle,
-          title: `Test1 ${config.name}`
+          minScale: 0,
+          maxScale: 0,
+          title: `Coverage ${config.name}`
         });
 
         layer.when(() => {
@@ -243,7 +248,7 @@ export default class Widget extends React.PureComponent<any, State> {
         this.currentLayers.push(layer);
       });
 
-      this.setState({ message: "✅ Test 1: Original style uygulandı" });
+      this.setState({ message: "✅ Test 1: Original (gri MVT görünmeli)" });
     }).catch(err => {
       this.setState({ message: `❌ Test 1 failed: ${err.message}` });
       console.error("Test 1 error:", err);
@@ -261,6 +266,9 @@ export default class Widget extends React.PureComponent<any, State> {
       const originalStyle = response.data;
 
       const zoomConfigs = [
+        { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
+        { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
+        { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
         { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
       ];
 
@@ -288,6 +296,8 @@ export default class Widget extends React.PureComponent<any, State> {
 
         const layer = new VectorTileLayer({
           style: customStyle,
+          minScale: 0,
+          maxScale: 0,
           title: `Test2 ${config.name}`
         });
 
@@ -312,6 +322,9 @@ export default class Widget extends React.PureComponent<any, State> {
       const originalStyle = response.data;
 
       const zoomConfigs = [
+        { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
+        { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
+        { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
         { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
       ];
 
@@ -337,6 +350,8 @@ export default class Widget extends React.PureComponent<any, State> {
 
         const layer = new VectorTileLayer({
           style: customStyle,
+          minScale: 0,
+          maxScale: 0,
           title: `Test3 ${config.name}`
         });
 
