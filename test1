@@ -1,29 +1,33 @@
 /** @jsx jsx */
 import { React, jsx } from "jimu-core";
 
+const MVT_STYLE_URL = "/styles/all/style.json?coverageLayer=rsrp_dbm";
+const MANUAL_BEARER = "token";
 const ARCGIS_API_VERSION = "4.32";
 
 interface State {
   message: string;
   currentZoom: number;
-  step: number;
+  currentTest: string;
 }
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
   private mapView: any;
+  private map: any;
+  private currentLayers: any[] = [];
 
   constructor(props) {
     super(props);
     this.state = {
-      message: "Widget başlatılıyor...",
+      message: "Widget yükleniyor...",
       currentZoom: 15,
-      step: 1
+      currentTest: "none"
     };
   }
 
   componentDidMount() {
-    this.loadArcGIS();
+    this.loadArcGISAPI();
   }
 
   componentWillUnmount() {
@@ -32,12 +36,12 @@ export default class Widget extends React.PureComponent<any, State> {
     }
   }
 
-  loadArcGIS = () => {
-    this.setState({ message: "STEP 1: ArcGIS API yükleniyor..." });
+  loadArcGISAPI = () => {
+    this.setState({ message: "📦 ArcGIS API yükleniyor..." });
 
     if ((window as any).require) {
-      this.setState({ message: "STEP 1: ArcGIS API zaten yüklü" });
-      this.createArcGISMap();
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.createMap();
       return;
     }
 
@@ -46,201 +50,686 @@ export default class Widget extends React.PureComponent<any, State> {
     cssLink.href = `https://js.arcgis.com/${ARCGIS_API_VERSION}/esri/themes/dark/main.css`;
     document.head.appendChild(cssLink);
 
+    const existing = document.querySelector(`script[data-arcgis-api="${ARCGIS_API_VERSION}"]`) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', () => {
+        this.setState({ message: "✅ ArcGIS API yüklendi" });
+        this.createMap();
+      });
+      return;
+    }
+
     const script = document.createElement("script");
     script.src = `https://js.arcgis.com/${ARCGIS_API_VERSION}/`;
+    script.setAttribute('data-arcgis-api', ARCGIS_API_VERSION);
     script.onload = () => {
-      this.setState({ message: "STEP 1: ✅ ArcGIS API yüklendi" });
-      this.createArcGISMap();
+      this.setState({ message: "✅ ArcGIS API yüklendi" });
+      this.createMap();
     };
     script.onerror = () => {
-      this.setState({ message: "STEP 1: ❌ ArcGIS yüklenemedi" });
+      this.setState({ message: "❌ ArcGIS API yüklenemedi" });
     };
     document.head.appendChild(script);
   };
 
-  createArcGISMap = () => {
-    this.setState({ message: "STEP 2: ArcGIS Map oluşturuluyor..." });
+  createMap = () => {
+    this.setState({ message: "🗺️ Map oluşturuluyor..." });
 
     if (!this.mapDiv) {
-      console.log("⚠️ mapDiv henüz hazır değil, bekleniyor...");
-      setTimeout(() => this.createArcGISMap(), 100);
+      setTimeout(() => this.createMap(), 50);
       return;
     }
 
-    console.log("✅ mapDiv hazır:", this.mapDiv);
+    if (!(window as any).require) {
+      this.setState({ message: "❌ ArcGIS API loader bulunamadı" });
+      return;
+    }
 
     (window as any).require([
       'esri/Map',
       'esri/views/MapView'
     ], (Map, MapView) => {
       
-      console.log("📦 ArcGIS modules loaded");
-
-      const map = new Map({
+      this.map = new Map({
         basemap: 'dark-gray-vector'
       });
 
-      console.log("🗺️ Map oluşturuldu");
-
       this.mapView = new MapView({
         container: this.mapDiv,
-        map: map,
+        map: this.map,
         center: [32, 39],
-        zoom: 15
+        zoom: 15,
+        constraints: {
+          snapToZoom: false,
+          minZoom: 3,
+          maxZoom: 22,
+          rotationEnabled: false
+        }
       });
 
-      console.log("🗺️ MapView oluşturuldu");
-
       this.mapView.when(() => {
-        console.log("✅ MapView.when() triggered");
-        this.setState({ 
-          message: "STEP 2: ✅ ArcGIS Map görünür!", 
-          step: 2 
-        });
-      }).catch(err => {
-        console.error("❌ MapView error:", err);
-        this.setState({ message: `STEP 2: ❌ MapView error: ${err.message}` });
+        const container = this.mapView.container as HTMLElement;
+        container.addEventListener('wheel', (event: WheelEvent) => {
+          event.preventDefault();
+          const currentZoom = this.mapView.zoom;
+          const delta = event.deltaY;
+          const zoomChange = delta > 0 ? -0.2 : 0.2;
+          const newZoom = Math.max(3, Math.min(22, currentZoom + zoomChange));
+          this.mapView.goTo({ zoom: newZoom }, { duration: 100 });
+        }, { passive: false });
       });
 
       this.mapView.watch('zoom', (newZoom) => {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
       });
 
+      this.setState({ message: "✅ Map hazır! Test seçin..." });
+
+      // Setup fetch override for authorization
+      const originalFetch = window.fetch;
+      window.fetch = (url, options = {}) => {
+        const urlStr = url.toString();
+        if (urlStr.includes('oauth21') || urlStr.includes('vector/tile')) {
+          return originalFetch(url, {
+            ...options,
+            headers: {
+              ...(options['headers'] || {}),
+              'Authorization': `Bearer ${MANUAL_BEARER}`
+            }
+          });
+        }
+        return originalFetch(url, options);
+      };
+      
     }, (err) => {
-      console.error("❌ AMD require error:", err);
-      this.setState({ message: `STEP 2: ❌ Module load error: ${err}` });
+      this.setState({ message: `❌ Loader error: ${err?.message || err}` });
+      console.error('AMD require error:', err);
+    });
+  };
+
+  clearLayers = () => {
+    this.currentLayers.forEach(layer => {
+      this.map.remove(layer);
+    });
+    this.currentLayers = [];
+  };
+
+  applyTest = (testName: string) => {
+    this.setState({ message: `🧪 Test uygulanıyor: ${testName}...`, currentTest: testName });
+    this.clearLayers();
+
+    (window as any).require([
+      'esri/layers/VectorTileLayer',
+      'esri/request',
+      'esri/renderers/ClassBreaksRenderer',
+      'esri/symbols/SimpleFillSymbol'
+    ], (VectorTileLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol) => {
+
+      console.log(`\n🧪 ========== TEST: ${testName} ==========`);
+
+      switch(testName) {
+        case 'test1_original':
+          this.test1_original(VectorTileLayer, esriRequest);
+          break;
+        case 'test2_no_opacity':
+          this.test2_no_opacity(VectorTileLayer, esriRequest);
+          break;
+        case 'test3_high_opacity':
+          this.test3_high_opacity(VectorTileLayer, esriRequest);
+          break;
+        case 'test4_static_red':
+          this.test4_static_red(VectorTileLayer, esriRequest);
+          break;
+        case 'test5_static_red_no_opacity':
+          this.test5_static_red_no_opacity(VectorTileLayer, esriRequest);
+          break;
+        case 'test6_simple_expression':
+          this.test6_simple_expression(VectorTileLayer, esriRequest);
+          break;
+        case 'test7_arcgis_renderer':
+          this.test7_arcgis_renderer(VectorTileLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol);
+          break;
+        case 'test8_modified_interpolate':
+          this.test8_modified_interpolate(VectorTileLayer, esriRequest);
+          break;
+      }
+    });
+  };
+
+  // TEST 1: Original API Style (Baseline - şu an gri görünen)
+  test1_original = (VectorTileLayer, esriRequest) => {
+    console.log("📋 Original API style (fill-opacity: 0.5, interpolate)");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+      console.log("Original Style JSON:", JSON.stringify(originalStyle, null, 2));
+
+      const zoomConfigs = [
+        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
+      ];
+
+      zoomConfigs.forEach(config => {
+        const customStyle = {
+          version: 8,
+          sources: {
+            [config.source]: originalStyle.sources[config.source]
+          },
+          layers: originalStyle.layers.filter(layer => 
+            layer.source === config.source
+          ).map(layer => ({
+            ...layer,
+            minzoom: config.minZoom,
+            maxzoom: config.maxZoom
+          }))
+        };
+
+        console.log(`Creating layer ${config.name}:`, customStyle);
+
+        const layer = new VectorTileLayer({
+          style: customStyle,
+          title: `Test1 ${config.name}`
+        });
+
+        layer.when(() => {
+          console.log(`✅ Layer ${config.name} loaded`);
+        }).catch(err => {
+          console.error(`❌ Layer ${config.name} error:`, err);
+        });
+
+        this.map.add(layer);
+        this.currentLayers.push(layer);
+      });
+
+      this.setState({ message: "✅ Test 1: Original style uygulandı" });
+    }).catch(err => {
+      this.setState({ message: `❌ Test 1 failed: ${err.message}` });
+      console.error("Test 1 error:", err);
+    });
+  };
+
+  // TEST 2: No Opacity (opacity'yi kaldır veya 1.0 yap)
+  test2_no_opacity = (VectorTileLayer, esriRequest) => {
+    console.log("📋 Removing fill-opacity (set to 1.0)");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const zoomConfigs = [
+        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
+      ];
+
+      zoomConfigs.forEach(config => {
+        const customStyle = {
+          version: 8,
+          sources: {
+            [config.source]: originalStyle.sources[config.source]
+          },
+          layers: originalStyle.layers.filter(layer => 
+            layer.source === config.source
+          ).map(layer => ({
+            ...layer,
+            minzoom: config.minZoom,
+            maxzoom: config.maxZoom,
+            paint: {
+              ...layer.paint,
+              'fill-opacity': 1.0,
+              'line-opacity': 1.0
+            }
+          }))
+        };
+
+        console.log(`Modified style (opacity=1.0):`, customStyle);
+
+        const layer = new VectorTileLayer({
+          style: customStyle,
+          title: `Test2 ${config.name}`
+        });
+
+        this.map.add(layer);
+        this.currentLayers.push(layer);
+      });
+
+      this.setState({ message: "✅ Test 2: Opacity=1.0 uygulandı" });
+    }).catch(err => {
+      this.setState({ message: `❌ Test 2 failed: ${err.message}` });
+    });
+  };
+
+  // TEST 3: High Opacity (opacity: 0.9)
+  test3_high_opacity = (VectorTileLayer, esriRequest) => {
+    console.log("📋 Setting fill-opacity to 0.9");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const zoomConfigs = [
+        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
+      ];
+
+      zoomConfigs.forEach(config => {
+        const customStyle = {
+          version: 8,
+          sources: {
+            [config.source]: originalStyle.sources[config.source]
+          },
+          layers: originalStyle.layers.filter(layer => 
+            layer.source === config.source
+          ).map(layer => ({
+            ...layer,
+            minzoom: config.minZoom,
+            maxzoom: config.maxZoom,
+            paint: {
+              ...layer.paint,
+              'fill-opacity': 0.9,
+              'line-opacity': 0.9
+            }
+          }))
+        };
+
+        const layer = new VectorTileLayer({
+          style: customStyle,
+          title: `Test3 ${config.name}`
+        });
+
+        this.map.add(layer);
+        this.currentLayers.push(layer);
+      });
+
+      this.setState({ message: "✅ Test 3: Opacity=0.9 uygulandı" });
+    }).catch(err => {
+      this.setState({ message: `❌ Test 3 failed: ${err.message}` });
+    });
+  };
+
+  // TEST 4: Static Red (opacity 0.5 ile)
+  test4_static_red = (VectorTileLayer, esriRequest) => {
+    console.log("📋 Static red color with opacity 0.5");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [{
+          id: 'test_fill',
+          type: 'fill',
+          source: 'coverage_15z',
+          'source-layer': 'data',
+          minzoom: 15,
+          maxzoom: 24,
+          paint: {
+            'fill-color': '#FF0000',
+            'fill-opacity': 0.5
+          }
+        }]
+      };
+
+      console.log("Static red style:", customStyle);
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        title: 'Test4 Static Red'
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+      this.setState({ message: "✅ Test 4: Static red uygulandı" });
+    }).catch(err => {
+      this.setState({ message: `❌ Test 4 failed: ${err.message}` });
+    });
+  };
+
+  // TEST 5: Static Red No Opacity
+  test5_static_red_no_opacity = (VectorTileLayer, esriRequest) => {
+    console.log("📋 Static red color WITHOUT opacity");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [{
+          id: 'test_fill',
+          type: 'fill',
+          source: 'coverage_15z',
+          'source-layer': 'data',
+          minzoom: 15,
+          maxzoom: 24,
+          paint: {
+            'fill-color': '#FF0000'
+          }
+        }]
+      };
+
+      console.log("Static red (no opacity) style:", customStyle);
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        title: 'Test5 Static Red No Opacity'
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+      this.setState({ message: "✅ Test 5: Static red (no opacity) uygulandı" });
+    }).catch(err => {
+      this.setState({ message: `❌ Test 5 failed: ${err.message}` });
+    });
+  };
+
+  // TEST 6: Simple Case Expression
+  test6_simple_expression = (VectorTileLayer, esriRequest) => {
+    console.log("📋 Simple case expression for colors");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [{
+          id: 'test_fill',
+          type: 'fill',
+          source: 'coverage_15z',
+          'source-layer': 'data',
+          minzoom: 15,
+          maxzoom: 24,
+          paint: {
+            'fill-opacity': 0.7,
+            'fill-color': [
+              'case',
+              ['<', ['get', 'rsrp_dbm'], -100], '#FF0000',
+              ['<', ['get', 'rsrp_dbm'], -80], '#00FF00',
+              '#0000FF'
+            ]
+          }
+        }]
+      };
+
+      console.log("Case expression style:", customStyle);
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        title: 'Test6 Case Expression'
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+      this.setState({ message: "✅ Test 6: Case expression uygulandı" });
+    }).catch(err => {
+      this.setState({ message: `❌ Test 6 failed: ${err.message}` });
+    });
+  };
+
+  // TEST 7: ArcGIS Native Renderer
+  test7_arcgis_renderer = (VectorTileLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol) => {
+    console.log("📋 Using ArcGIS ClassBreaksRenderer");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      // Create simple style without colors
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [{
+          id: 'test_fill',
+          type: 'fill',
+          source: 'coverage_15z',
+          'source-layer': 'data',
+          minzoom: 15,
+          maxzoom: 24,
+          paint: {
+            'fill-color': '#FFFFFF'
+          }
+        }]
+      };
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        title: 'Test7 ArcGIS Renderer'
+      });
+
+      // Try to apply renderer after layer loads
+      layer.when(() => {
+        console.log("Layer loaded, attempting to apply renderer...");
+        try {
+          const renderer = new ClassBreaksRenderer({
+            field: 'rsrp_dbm',
+            classBreakInfos: [
+              { minValue: -135, maxValue: -126, symbol: new SimpleFillSymbol({ color: [49, 54, 149, 128] }), label: '-135 to -126' },
+              { minValue: -126, maxValue: -118, symbol: new SimpleFillSymbol({ color: [69, 117, 180, 128] }), label: '-126 to -118' },
+              { minValue: -118, maxValue: -109, symbol: new SimpleFillSymbol({ color: [116, 173, 209, 128] }), label: '-118 to -109' },
+              { minValue: -109, maxValue: -100, symbol: new SimpleFillSymbol({ color: [171, 217, 233, 128] }), label: '-109 to -100' },
+              { minValue: -100, maxValue: -92, symbol: new SimpleFillSymbol({ color: [224, 243, 248, 128] }), label: '-100 to -92' },
+              { minValue: -92, maxValue: -83, symbol: new SimpleFillSymbol({ color: [255, 255, 191, 128] }), label: '-92 to -83' },
+              { minValue: -83, maxValue: -75, symbol: new SimpleFillSymbol({ color: [254, 224, 144, 128] }), label: '-83 to -75' },
+              { minValue: -75, maxValue: -66, symbol: new SimpleFillSymbol({ color: [253, 174, 97, 128] }), label: '-75 to -66' },
+              { minValue: -66, maxValue: -57, symbol: new SimpleFillSymbol({ color: [244, 109, 67, 128] }), label: '-66 to -57' },
+              { minValue: -57, maxValue: -49, symbol: new SimpleFillSymbol({ color: [215, 48, 39, 128] }), label: '-57 to -49' }
+            ]
+          });
+          
+          layer.renderer = renderer;
+          console.log("✅ Renderer applied:", renderer);
+        } catch(err) {
+          console.error("❌ Renderer application failed:", err);
+        }
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+      this.setState({ message: "✅ Test 7: ArcGIS renderer deneniyor..." });
+    }).catch(err => {
+      this.setState({ message: `❌ Test 7 failed: ${err.message}` });
+    });
+  };
+
+  // TEST 8: Modified Interpolate (step yerine interpolate dene)
+  test8_modified_interpolate = (VectorTileLayer, esriRequest) => {
+    console.log("📋 Modified interpolate expression");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [{
+          id: 'test_fill',
+          type: 'fill',
+          source: 'coverage_15z',
+          'source-layer': 'data',
+          minzoom: 15,
+          maxzoom: 24,
+          paint: {
+            'fill-opacity': 0.7,
+            'fill-color': [
+              'step',
+              ['get', 'rsrp_dbm'],
+              '#313695',
+              -126, '#4575B4',
+              -118, '#74ADD1',
+              -109, '#ABD9E9',
+              -100, '#E0F3F8',
+              -92, '#FFFFBF',
+              -83, '#FEE090',
+              -75, '#FDAE61',
+              -66, '#F46D43',
+              -57, '#D73027',
+              -49, '#A50026'
+            ]
+          }
+        }]
+      };
+
+      console.log("Step expression style:", customStyle);
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        title: 'Test8 Step Expression'
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+      this.setState({ message: "✅ Test 8: Step expression uygulandı" });
+    }).catch(err => {
+      this.setState({ message: `❌ Test 8 failed: ${err.message}` });
     });
   };
 
   render() {
-    const { message, currentZoom, step } = this.state;
+    const { message, currentZoom, currentTest } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
-        {/* Map Container */}
         <div 
-          ref={el => {
-            console.log("🔗 mapDiv ref set:", el ? "YES" : "NO");
-            this.mapDiv = el;
-          }}
-          style={{ 
-            width: "100%", 
-            height: "100%",
-            background: "#1a1a1a" // Debug: görülsün diye
-          }}
+          ref={el => this.mapDiv = el}
+          style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Debug Panel */}
+        {/* Test Control Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
           right: "10px",
           background: "rgba(0,0,0,0.95)",
           color: "white",
-          padding: "20px",
+          padding: "15px",
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
-          fontSize: "13px",
-          minWidth: "300px"
+          fontSize: "12px",
+          maxWidth: "300px",
+          maxHeight: "90vh",
+          overflowY: "auto"
         }}>
-          <div style={{ marginBottom: "15px", textAlign: "center", fontWeight: "bold", color: "#FF6B6B" }}>
-            🔍 DEBUG MODE
+          <div style={{ marginBottom: "15px", fontWeight: "bold", color: "#4CAF50", fontSize: "14px" }}>
+            🧪 MVT STYLING DEBUG
           </div>
           
-          <div style={{ 
-            background: "rgba(255,255,255,0.1)", 
-            padding: "15px", 
-            borderRadius: "5px",
-            marginBottom: "15px"
-          }}>
-            <div style={{ fontSize: "11px", color: "#aaa", marginBottom: "5px" }}>
-              Current Step
-            </div>
-            <div style={{ fontSize: "28px", fontWeight: "bold", color: step === 2 ? "#4CAF50" : "#FFD700" }}>
-              {step} / 2
-            </div>
+          <div style={{ marginBottom: "10px", padding: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px" }}>
+            <div style={{ fontSize: "10px", color: "#aaa" }}>Zoom: {currentZoom}</div>
+            <div style={{ fontSize: "10px", color: "#aaa" }}>Test: {currentTest || "none"}</div>
           </div>
 
-          <div style={{ fontSize: "11px", marginBottom: "15px", lineHeight: "1.6" }}>
-            <strong style={{ color: "#FFD700" }}>Status:</strong>
-            <div style={{ marginTop: "8px", color: "#fff" }}>
-              {message}
-            </div>
+          <div style={{ marginBottom: "5px", color: "#FFD700", fontSize: "11px" }}>
+            TEST SCENARIOS:
           </div>
 
-          {step === 2 && (
-            <div style={{ 
-              background: "rgba(76, 175, 80, 0.2)", 
-              padding: "10px", 
-              borderRadius: "5px",
-              border: "1px solid #4CAF50"
-            }}>
-              <div style={{ fontSize: "11px", color: "#4CAF50", fontWeight: "bold" }}>
-                ✅ SUCCESS!
-              </div>
-              <div style={{ fontSize: "10px", color: "#aaa", marginTop: "5px" }}>
-                Zoom: {currentZoom}
-              </div>
-            </div>
-          )}
+          <button onClick={() => this.applyTest('test1_original')} style={buttonStyle}>
+            1. Original (opacity=0.5)
+          </button>
 
-          <div style={{ fontSize: "10px", color: "#888", marginTop: "15px", lineHeight: "1.5" }}>
-            Open Console (F12) to see logs
-          </div>
+          <button onClick={() => this.applyTest('test2_no_opacity')} style={buttonStyle}>
+            2. No Opacity (1.0)
+          </button>
+
+          <button onClick={() => this.applyTest('test3_high_opacity')} style={buttonStyle}>
+            3. High Opacity (0.9)
+          </button>
+
+          <button onClick={() => this.applyTest('test4_static_red')} style={buttonStyle}>
+            4. Static Red + Opacity
+          </button>
+
+          <button onClick={() => this.applyTest('test5_static_red_no_opacity')} style={buttonStyle}>
+            5. Static Red (no opacity)
+          </button>
+
+          <button onClick={() => this.applyTest('test6_simple_expression')} style={buttonStyle}>
+            6. Case Expression
+          </button>
+
+          <button onClick={() => this.applyTest('test7_arcgis_renderer')} style={buttonStyle}>
+            7. ArcGIS Renderer
+          </button>
+
+          <button onClick={() => this.applyTest('test8_modified_interpolate')} style={buttonStyle}>
+            8. Step Expression
+          </button>
+
+          <button 
+            onClick={() => {
+              this.clearLayers();
+              this.setState({ message: "✅ Layer'lar temizlendi", currentTest: "none" });
+            }} 
+            style={{...buttonStyle, background: "#f44336", marginTop: "10px"}}
+          >
+            🗑️ Clear All Layers
+          </button>
         </div>
 
-        {/* Basit Zoom Controls */}
-        {step === 2 && (
-          <div style={{
-            position: "absolute",
-            bottom: "20px",
-            right: "20px",
-            display: "flex",
-            gap: "10px",
-            zIndex: 9999
-          }}>
-            <button
-              onClick={() => {
-                if (this.mapView) {
-                  this.mapView.goTo({ zoom: this.mapView.zoom - 1 });
-                }
-              }}
-              style={{
-                padding: "10px 20px",
-                fontSize: "18px",
-                background: "#f44336",
-                color: "white",
-                border: "none",
-                borderRadius: "5px",
-                cursor: "pointer",
-                fontWeight: "bold"
-              }}
-            >
-              -
-            </button>
-            <button
-              onClick={() => {
-                if (this.mapView) {
-                  this.mapView.goTo({ zoom: this.mapView.zoom + 1 });
-                }
-              }}
-              style={{
-                padding: "10px 20px",
-                fontSize: "18px",
-                background: "#4CAF50",
-                color: "white",
-                border: "none",
-                borderRadius: "5px",
-                cursor: "pointer",
-                fontWeight: "bold"
-              }}
-            >
-              +
-            </button>
+        {/* Status Panel */}
+        <div style={{
+          position: "absolute",
+          top: "10px",
+          left: "10px",
+          background: "rgba(0,0,0,0.9)",
+          color: "white",
+          padding: "12px",
+          borderRadius: "5px",
+          zIndex: 9999,
+          fontFamily: "monospace",
+          fontSize: "11px",
+          maxWidth: "300px"
+        }}>
+          <strong>Status:</strong>
+          <div style={{ marginTop: "8px", color: "#4CAF50" }}>{message}</div>
+          <div style={{ marginTop: "8px", fontSize: "10px", color: "#aaa" }}>
+            💡 Console'u aç ve test sonuçlarını gör
           </div>
-        )}
+        </div>
       </div>
     );
   }
 }
+
+const buttonStyle = {
+  width: "100%",
+  padding: "10px",
+  marginBottom: "5px",
+  background: "#2196F3",
+  color: "white",
+  border: "none",
+  borderRadius: "4px",
+  cursor: "pointer",
+  fontSize: "11px",
+  textAlign: "left" as const,
+  fontFamily: "monospace"
+};
