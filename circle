@@ -1,0 +1,280 @@
+{
+   "version": 8,
+   "name": "Rhea Coverage RSRP Bins",
+   "metadata": {"openmaptiles:version": "3.15.0"},
+   "bearing": 0,
+   "pitch": 0,
+   "sources":    {
+      "coverage_15z":       {
+         "type": "vector",
+         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
+         "minzoom": 15,
+         "maxzoom": 15
+      },
+      "coverage_11z":       {
+         "type": "vector",
+         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
+         "minzoom": 11,
+         "maxzoom": 11
+      },
+      "coverage_7z":       {
+         "type": "vector",
+         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
+         "minzoom": 7,
+         "maxzoom": 7
+      },
+      "coverage_3z":       {
+         "type": "vector",
+         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
+         "minzoom": 3,
+         "maxzoom": 3
+      }
+   },
+   "layers":    [
+            {
+         "id": "vis_mvt_15z",
+         "type": "circle",
+         "source": "coverage_15z",
+         "minzoom": 15,
+         "maxzoom": 24,
+         "layout": {"visibility": "visible"},
+         "source-layer": "points",
+         "paint":          {
+            "circle-color":             [
+               "interpolate",
+               ["linear"],
+                              [
+                  "get",
+                  "rsrp_dbm"
+               ],
+               -135,
+               "#313695",
+               -126,
+               "#4575B4",
+               -118,
+               "#74ADD1",
+               -109,
+               "#ABD9E9",
+               -100,
+               "#E0F3F8",
+               -92,
+               "#FFFFBF",
+               -83,
+               "#FEE090",
+               -75,
+               "#FDAE61",
+               -66,
+               "#F46D43",
+               -57,
+               "#D73027",
+               -49,
+               "#A50026",
+               0,
+               "#ccccff",
+               1,
+               "#cc66ff",
+               2,
+               "#f5f5f0"
+            ],
+            "circle-pitch-scale": "map",
+            "circle-radius":             {
+               "base": 2,
+               "stops":                [
+                                    [
+                     15,
+                     2.5
+                  ],
+                                    [
+                     22,
+                     250
+                  ]
+               ]
+            }
+         }
+      },
+            {
+         "id": "vis_mvt_11z",
+         "type": "circle",
+         "source": "coverage_11z",
+         "minzoom": 11,
+         "maxzoom": 15,
+         "layout": {"visibility": "visible"},
+         "source-layer": "points",
+         "paint":          {
+            "circle-color":             [
+               "interpolate",
+               ["linear"],
+                              [
+                  "get",
+                  "rsrp_dbm"
+               ],
+               -135,
+               "#313695",
+               -126,
+               "#4575B4",
+               -118,
+               "#74ADD1",
+               -109,
+               "#ABD9E9",
+               -100,
+               "#E0F3F8",
+               -92,
+               "#FFFFBF",
+               -83,
+               "#FEE090",
+               -75,
+               "#FDAE61",
+               -66,
+               "#F46D43",
+               -57,
+               "#D73027",
+               -49,
+               "#A50026",
+               0,
+               "#ccccff",
+               1,
+               "#cc66ff",
+               2,
+               "#f5f5f0"
+            ],
+            "circle-pitch-scale": "map",
+            "circle-radius":             {
+               "base": 2,
+               "stops":                [
+                                    [
+                     11,
+                     2
+                  ],
+                                    [
+                     15,
+                     20
+                  ]
+               ]
+            }
+         }
+      },
+            {
+         "id": "vis_mvt_7z",
+         "type": "circle",
+         "source": "coverage_7z",
+         "minzoom": 7,
+         "maxzoom": 11,
+         "layout": {"visibility": "visible"},
+         "source-layer": "points",
+         "paint":          {
+            "circle-color":             [
+               "interpolate",
+               ["linear"],
+                              [
+                  "get",
+                  "rsrp_dbm"
+               ],
+               -135,
+               "#313695",
+               -126,
+               "#4575B4",
+               -118,
+               "#74ADD1",
+               -109,
+               "#ABD9E9",
+               -100,
+               "#E0F3F8",
+               -92,
+               "#FFFFBF",
+               -83,
+               "#FEE090",
+               -75,
+               "#FDAE61",
+               -66,
+               "#F46D43",
+               -57,
+               "#D73027",
+               -49,
+               "#A50026",
+               0,
+               "#ccccff",
+               1,
+               "#cc66ff",
+               2,
+               "#f5f5f0"
+            ],
+            "circle-pitch-scale": "map",
+            "circle-radius":             {
+               "base": 2,
+               "stops":                [
+                                    [
+                     7,
+                     1
+                  ],
+                                    [
+                     11,
+                     13
+                  ]
+               ]
+            }
+         }
+      },
+            {
+         "id": "vis_mvt_3z",
+         "type": "circle",
+         "source": "coverage_3z",
+         "minzoom": 3,
+         "maxzoom": 7,
+         "layout": {"visibility": "visible"},
+         "source-layer": "points",
+         "paint":          {
+            "circle-color":             [
+               "interpolate",
+               ["linear"],
+                              [
+                  "get",
+                  "rsrp_dbm"
+               ],
+               -135,
+               "#313695",
+               -126,
+               "#4575B4",
+               -118,
+               "#74ADD1",
+               -109,
+               "#ABD9E9",
+               -100,
+               "#E0F3F8",
+               -92,
+               "#FFFFBF",
+               -83,
+               "#FEE090",
+               -75,
+               "#FDAE61",
+               -66,
+               "#F46D43",
+               -57,
+               "#D73027",
+               -49,
+               "#A50026",
+               0,
+               "#ccccff",
+               1,
+               "#cc66ff",
+               2,
+               "#f5f5f0"
+            ],
+            "circle-pitch-scale": "map",
+            "circle-radius":             {
+               "base": 2,
+               "stops":                [
+                                    [
+                     3,
+                     1
+                  ],
+                                    [
+                     7,
+                     10
+                  ]
+               ]
+            }
+         }
+      }
+   ],
+   "id": "rhea_coverage_style"
+}
