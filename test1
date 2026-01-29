@@ -8,8 +8,22 @@ const ARCGIS_API_VERSION = "4.32";
 interface State {
   message: string;
   currentZoom: number;
-  currentTest: string;
 }
+
+// RSRP renk haritası
+const RSRP_COLOR_MAP = [
+  { min: -135, max: -126, color: '#313695', name: 'Very Poor' },
+  { min: -126, max: -118, color: '#4575B4', name: 'Poor' },
+  { min: -118, max: -109, color: '#74ADD1', name: 'Fair' },
+  { min: -109, max: -100, color: '#ABD9E9', name: 'Good' },
+  { min: -100, max: -92, color: '#E0F3F8', name: 'Very Good' },
+  { min: -92, max: -83, color: '#FFFFBF', name: 'Excellent' },
+  { min: -83, max: -75, color: '#FEE090', name: 'Outstanding' },
+  { min: -75, max: -66, color: '#FDAE61', name: 'Superior' },
+  { min: -66, max: -57, color: '#F46D43', name: 'Exceptional' },
+  { min: -57, max: -49, color: '#D73027', name: 'Extraordinary' },
+  { min: -49, max: 0, color: '#A50026', name: 'Ultimate' }
+];
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
@@ -21,8 +35,7 @@ export default class Widget extends React.PureComponent<any, State> {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
-      currentZoom: 15,
-      currentTest: "none"
+      currentZoom: 15
     };
   }
 
@@ -78,8 +91,10 @@ export default class Widget extends React.PureComponent<any, State> {
 
     (window as any).require([
       'esri/Map',
-      'esri/views/MapView'
-    ], (Map, MapView) => {
+      'esri/views/MapView',
+      'esri/layers/VectorTileLayer',
+      'esri/request'
+    ], (Map, MapView, VectorTileLayer, esriRequest) => {
       
       this.map = new Map({
         basemap: 'dark-gray-vector'
@@ -102,7 +117,7 @@ export default class Widget extends React.PureComponent<any, State> {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
       });
 
-      this.setState({ message: "✅ Map hazır! Test seçin..." });
+      this.setState({ message: "✅ Map hazır! Layer'lar yükleniyor..." });
 
       // Setup fetch override for authorization
       const originalFetch = window.fetch;
@@ -119,6 +134,9 @@ export default class Widget extends React.PureComponent<any, State> {
         }
         return originalFetch(url, options);
       };
+
+      // YAKLAŞIM 5: Her RSRP range için ayrı layer, filter ile görünürlük kontrol
+      this.createMultipleColoredLayers(VectorTileLayer, esriRequest);
       
     }, (err) => {
       this.setState({ message: `❌ Loader error: ${err?.message || err}` });
@@ -126,71 +144,15 @@ export default class Widget extends React.PureComponent<any, State> {
     });
   };
 
-  clearLayers = () => {
-    this.currentLayers.forEach(layer => {
-      this.map.remove(layer);
-    });
-    this.currentLayers = [];
-  };
-
-  // Color mapping from API
-  getColorForRSRP = (rsrp: number): string => {
-    if (rsrp >= -49) return '#A50026';
-    if (rsrp >= -57) return '#D73027';
-    if (rsrp >= -66) return '#F46D43';
-    if (rsrp >= -75) return '#FDAE61';
-    if (rsrp >= -83) return '#FEE090';
-    if (rsrp >= -92) return '#FFFFBF';
-    if (rsrp >= -100) return '#E0F3F8';
-    if (rsrp >= -109) return '#ABD9E9';
-    if (rsrp >= -118) return '#74ADD1';
-    if (rsrp >= -126) return '#4575B4';
-    return '#313695';
-  };
-
-  applyTest = (testName: string) => {
-    this.setState({ message: `🧪 Test: ${testName}...`, currentTest: testName });
-    this.clearLayers();
-
-    (window as any).require([
-      'esri/layers/VectorTileLayer',
-      'esri/layers/FeatureLayer',
-      'esri/layers/GraphicsLayer',
-      'esri/request',
-      'esri/renderers/ClassBreaksRenderer',
-      'esri/symbols/SimpleFillSymbol',
-      'esri/symbols/SimpleLineSymbol',
-      'esri/Graphic'
-    ], (VectorTileLayer, FeatureLayer, GraphicsLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol, SimpleLineSymbol, Graphic) => {
-
-      console.log(`\n🧪 ========== TEST: ${testName} ==========`);
-
-      switch(testName) {
-        case 'baseline':
-          this.testBaseline(VectorTileLayer, esriRequest);
-          break;
-        case 'solution_a':
-          this.solutionA_CustomLayer(GraphicsLayer, esriRequest, Graphic, SimpleFillSymbol);
-          break;
-        case 'solution_b':
-          this.solutionB_FeatureLayer(FeatureLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol);
-          break;
-        case 'solution_c':
-          this.solutionC_PostProcess(VectorTileLayer, esriRequest);
-          break;
-      }
-    });
-  };
-
-  // BASELINE: Original (gri görünen)
-  testBaseline = (VectorTileLayer, esriRequest) => {
-    console.log("📋 BASELINE: Original API style");
+  createMultipleColoredLayers = (VectorTileLayer, esriRequest) => {
+    console.log("🎨 Creating multiple layers with color filters...");
     
     esriRequest(MVT_STYLE_URL, {
       headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
       responseType: 'json'
     }).then(response => {
       const originalStyle = response.data;
+      console.log("Original Style:", originalStyle);
 
       const zoomConfigs = [
         { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
@@ -199,208 +161,92 @@ export default class Widget extends React.PureComponent<any, State> {
         { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
       ];
 
-      zoomConfigs.forEach(config => {
-        const customStyle = {
-          version: 8,
-          sources: {
-            [config.source]: originalStyle.sources[config.source]
-          },
-          layers: originalStyle.layers.filter(layer => 
-            layer.source === config.source
-          ).map(layer => ({
-            ...layer,
-            minzoom: config.minZoom,
-            maxzoom: config.maxZoom
-          }))
-        };
+      // Her zoom level için
+      zoomConfigs.forEach(zoomConfig => {
+        console.log(`\n📍 Processing ${zoomConfig.name}...`);
 
-        const layer = new VectorTileLayer({
-          style: customStyle,
-          minScale: 0,
-          maxScale: 0,
-          title: `Baseline ${config.name}`
-        });
+        // Her RSRP range için ayrı layer oluştur
+        RSRP_COLOR_MAP.forEach((colorRange, index) => {
+          console.log(`  🎨 Creating layer for ${colorRange.name} (${colorRange.min} to ${colorRange.max}): ${colorRange.color}`);
 
-        this.map.add(layer);
-        this.currentLayers.push(layer);
-      });
-
-      this.setState({ message: "✅ Baseline yüklendi (gri MVT)" });
-    }).catch(err => {
-      this.setState({ message: `❌ Baseline failed: ${err.message}` });
-    });
-  };
-
-  // SOLUTION A: Custom GraphicsLayer - Tile data'yı çekip Graphics olarak çiz
-  solutionA_CustomLayer = (GraphicsLayer, esriRequest, Graphic, SimpleFillSymbol) => {
-    console.log("📋 SOLUTION A: Custom GraphicsLayer with manual coloring");
-    
-    this.setState({ message: "⚠️ Solution A: MVT tile'larını feature'lara çevirip manuel renklendirme yapılacak. Bu yöntem performance açısından ağır olabilir ve tile parsing gerektirir. Şu anda MVT PBF parsing implementasyonu gerekiyor..." });
-    
-    // NOT: Bu çözüm için MVT tile'ları decode edip feature'lara çevirmek gerekiyor
-    // Bu çok complex bir işlem ve protobuf parsing library gerektirir
-    // Örnek: @mapbox/vector-tile library ile tile parse edilir
-    
-    console.log("⚠️ Bu çözüm MVT tile parsing library gerektirir (@mapbox/vector-tile)");
-    console.log("Tile URL'den .pbf dosyaları çekilip decode edilmesi gerekir");
-    console.log("Her feature için rsrp_dbm değerine göre renk atanır");
-    console.log("Graphics olarak haritaya eklenir");
-    console.log("Performance: Düşük (her tile için parsing)");
-  };
-
-  // SOLUTION B: FeatureLayer ile ClassBreaksRenderer
-  solutionB_FeatureLayer = (FeatureLayer, esriRequest, ClassBreaksRenderer, SimpleFillSymbol) => {
-    console.log("📋 SOLUTION B: Convert to FeatureLayer with ClassBreaksRenderer");
-    
-    this.setState({ message: "⚠️ Solution B: MVT'yi FeatureLayer'a çevirmek için feature service gerekiyor. VectorTileLayer'ı direkt FeatureLayer'a çeviremiyoruz..." });
-    
-    // NOT: Bu çözüm için:
-    // 1. MVT tile service'i yerine feature service gerekir
-    // VEYA
-    // 2. MVT tile'ları parse edip in-memory feature collection oluşturulması gerekir
-    
-    console.log("⚠️ Bu çözüm için:");
-    console.log("- MVT yerine Feature Service URL'i gerekir");
-    console.log("- VEYA MVT tile'ları parse edip FeatureCollection oluşturulur");
-    console.log("- ClassBreaksRenderer ile manuel renklendirme yapılır");
-    
-    // Örnek ClassBreaksRenderer (eğer FeatureLayer olsaydı):
-    const renderer = new ClassBreaksRenderer({
-      field: 'rsrp_dbm',
-      classBreakInfos: [
-        { minValue: -135, maxValue: -126, symbol: new SimpleFillSymbol({ color: [49, 54, 149, 180] }) },
-        { minValue: -126, maxValue: -118, symbol: new SimpleFillSymbol({ color: [69, 117, 180, 180] }) },
-        { minValue: -118, maxValue: -109, symbol: new SimpleFillSymbol({ color: [116, 173, 209, 180] }) },
-        { minValue: -109, maxValue: -100, symbol: new SimpleFillSymbol({ color: [171, 217, 233, 180] }) },
-        { minValue: -100, maxValue: -92, symbol: new SimpleFillSymbol({ color: [224, 243, 248, 180] }) },
-        { minValue: -92, maxValue: -83, symbol: new SimpleFillSymbol({ color: [255, 255, 191, 180] }) },
-        { minValue: -83, maxValue: -75, symbol: new SimpleFillSymbol({ color: [254, 224, 144, 180] }) },
-        { minValue: -75, maxValue: -66, symbol: new SimpleFillSymbol({ color: [253, 174, 97, 180] }) },
-        { minValue: -66, maxValue: -57, symbol: new SimpleFillSymbol({ color: [244, 109, 67, 180] }) },
-        { minValue: -57, maxValue: -49, symbol: new SimpleFillSymbol({ color: [215, 48, 39, 180] }) },
-        { minValue: -49, maxValue: 0, symbol: new SimpleFillSymbol({ color: [165, 0, 38, 180] }) }
-      ]
-    });
-    
-    console.log("ClassBreaksRenderer oluşturuldu:", renderer);
-    console.log("Ama FeatureLayer olmadığı için uygulanamıyor");
-  };
-
-  // SOLUTION C: Post-process VectorTileLayer - Layer yüklendikten sonra style manipülasyonu
-  solutionC_PostProcess = (VectorTileLayer, esriRequest) => {
-    console.log("📋 SOLUTION C: Post-process VectorTileLayer style manipulation");
-    
-    esriRequest(MVT_STYLE_URL, {
-      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
-      responseType: 'json'
-    }).then(response => {
-      const originalStyle = response.data;
-
-      const zoomConfigs = [
-        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
-      ];
-
-      zoomConfigs.forEach(config => {
-        // Simplified style - sadece source
-        const customStyle = {
-          version: 8,
-          sources: {
-            [config.source]: originalStyle.sources[config.source]
-          },
-          layers: [
-            {
-              id: `fill_${config.source}`,
-              type: 'fill',
-              source: config.source,
-              'source-layer': 'data',
-              minzoom: config.minZoom,
-              maxzoom: config.maxZoom,
-              paint: {
-                'fill-color': '#FF0000',
-                'fill-opacity': 0.7
-              }
-            }
-          ]
-        };
-
-        const layer = new VectorTileLayer({
-          style: customStyle,
-          minScale: 0,
-          maxScale: 0,
-          title: `PostProcess ${config.name}`
-        });
-
-        // Layer yüklendikten sonra manipülasyon dene
-        layer.when(() => {
-          console.log("✅ Layer loaded, attempting post-process manipulation...");
-          
-          // Deneme 1: loadedLayers property'sine erişim
-          console.log("Layer properties:", Object.keys(layer));
-          console.log("Layer.style:", layer.style);
-          
-          // Deneme 2: Style JSON'ı runtime'da değiştirme
-          try {
-            // API'dan gelen doğru renk kurallarıyla güncelle
-            const newStyle = {
-              ...customStyle,
-              layers: originalStyle.layers.filter(l => l.source === config.source).map(l => ({
-                ...l,
-                minzoom: config.minZoom,
-                maxzoom: config.maxZoom,
+          // Bu range için style JSON oluştur
+          const customStyle = {
+            version: 8,
+            sources: {
+              [zoomConfig.source]: originalStyle.sources[zoomConfig.source]
+            },
+            layers: [
+              {
+                id: `fill_${zoomConfig.source}_${index}`,
+                type: 'fill',
+                source: zoomConfig.source,
+                'source-layer': 'data',
+                minzoom: zoomConfig.minZoom,
+                maxzoom: zoomConfig.maxZoom,
+                filter: [
+                  'all',
+                  ['>=', ['get', 'rsrp_dbm'], colorRange.min],
+                  ['<', ['get', 'rsrp_dbm'], colorRange.max]
+                ],
                 paint: {
-                  ...l.paint,
-                  'fill-color': [
-                    'step',
-                    ['get', 'rsrp_dbm'],
-                    '#313695',
-                    -126, '#4575B4',
-                    -118, '#74ADD1',
-                    -109, '#ABD9E9',
-                    -100, '#E0F3F8',
-                    -92, '#FFFFBF',
-                    -83, '#FEE090',
-                    -75, '#FDAE61',
-                    -66, '#F46D43',
-                    -57, '#D73027',
-                    -49, '#A50026'
-                  ]
+                  'fill-color': colorRange.color,
+                  'fill-opacity': 0.7
                 }
-              }))
-            };
-            
-            console.log("Attempting to update style to:", newStyle);
-            layer.style = newStyle;
-            console.log("✅ Style updated (maybe?)");
-            
-          } catch (err) {
-            console.error("❌ Post-process manipulation failed:", err);
-          }
-          
-          // Deneme 3: Internal properties
-          if ((layer as any)._style) {
-            console.log("Layer has _style property:", (layer as any)._style);
-          }
-          
-          if ((layer as any).loadedLayers) {
-            console.log("Layer.loadedLayers:", (layer as any).loadedLayers);
-          }
-          
-        }).catch(err => {
-          console.error("❌ Layer load error:", err);
-        });
+              },
+              {
+                id: `line_${zoomConfig.source}_${index}`,
+                type: 'line',
+                source: zoomConfig.source,
+                'source-layer': 'data',
+                minzoom: zoomConfig.minZoom,
+                maxzoom: zoomConfig.maxZoom,
+                filter: [
+                  'all',
+                  ['>=', ['get', 'rsrp_dbm'], colorRange.min],
+                  ['<', ['get', 'rsrp_dbm'], colorRange.max]
+                ],
+                paint: {
+                  'line-color': colorRange.color,
+                  'line-opacity': 0.9,
+                  'line-width': 1
+                }
+              }
+            ]
+          };
 
-        this.map.add(layer);
-        this.currentLayers.push(layer);
+          console.log(`    Style for ${colorRange.name}:`, customStyle);
+
+          const layer = new VectorTileLayer({
+            style: customStyle,
+            minScale: 0,
+            maxScale: 0,
+            title: `${zoomConfig.name}_${colorRange.name}`,
+            opacity: 1.0
+          });
+
+          layer.when(() => {
+            console.log(`    ✅ ${zoomConfig.name}_${colorRange.name} loaded`);
+          }).catch(err => {
+            console.error(`    ❌ ${zoomConfig.name}_${colorRange.name} error:`, err);
+          });
+
+          this.map.add(layer);
+          this.currentLayers.push(layer);
+        });
       });
 
-      this.setState({ message: "✅ Solution C: Post-process deneniyor (console'a bak)" });
+      this.setState({ 
+        message: `✅ ${zoomConfigs.length * RSRP_COLOR_MAP.length} layer oluşturuldu! Her RSRP range ayrı layer olarak yükleniyor...` 
+      });
+
     }).catch(err => {
-      this.setState({ message: `❌ Solution C failed: ${err.message}` });
+      this.setState({ message: `❌ Layer creation failed: ${err.message}` });
+      console.error("Layer creation error:", err);
     });
   };
 
   render() {
-    const { message, currentZoom, currentTest } = this.state;
+    const { message, currentZoom } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -409,100 +255,74 @@ export default class Widget extends React.PureComponent<any, State> {
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Test Control Panel */}
+        {/* Status Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
-          right: "10px",
-          background: "rgba(0,0,0,0.95)",
+          left: "10px",
+          background: "rgba(0,0,0,0.9)",
           color: "white",
           padding: "15px",
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "11px",
-          maxWidth: "300px"
+          maxWidth: "350px"
         }}>
-          <div style={{ marginBottom: "12px", fontWeight: "bold", color: "#4CAF50", fontSize: "13px" }}>
-            🔧 MANUAL COLOR SOLUTIONS
+          <div style={{ marginBottom: "10px", fontWeight: "bold", color: "#4CAF50", fontSize: "13px" }}>
+            🎨 MULTI-LAYER COLOR APPROACH
           </div>
           
-          <div style={{ marginBottom: "10px", padding: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", fontSize: "10px" }}>
-            <div>Zoom: {currentZoom}</div>
-            <div>Test: {currentTest || "none"}</div>
+          <div style={{ marginBottom: "10px", padding: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px" }}>
+            <div style={{ fontSize: "10px", color: "#aaa" }}>Zoom: {currentZoom}</div>
+            <div style={{ fontSize: "10px", color: "#aaa", marginTop: "5px" }}>
+              Layers: {this.currentLayers.length}
+            </div>
           </div>
 
-          <button onClick={() => this.applyTest('baseline')} style={{...buttonStyle, background: '#666'}}>
-            BASELINE (gri MVT)
-          </button>
-
-          <div style={{ fontSize: "10px", color: "#FFD700", margin: "10px 0 5px 0" }}>
-            Manuel Renklendirme:
+          <div style={{ fontSize: "10px", lineHeight: "1.5", color: "#ddd" }}>
+            {message}
           </div>
 
-          <button onClick={() => this.applyTest('solution_a')} style={buttonStyle}>
-            A) Custom GraphicsLayer
-          </button>
-
-          <button onClick={() => this.applyTest('solution_b')} style={buttonStyle}>
-            B) FeatureLayer + Renderer
-          </button>
-
-          <button onClick={() => this.applyTest('solution_c')} style={buttonStyle}>
-            C) Post-Process Style
-          </button>
-
-          <button 
-            onClick={() => {
-              this.clearLayers();
-              this.setState({ message: "✅ Temizlendi", currentTest: "none" });
-            }} 
-            style={{...buttonStyle, background: "#f44336", marginTop: "10px"}}
-          >
-            🗑️ Clear
-          </button>
-
-          <div style={{ fontSize: "9px", color: "#aaa", marginTop: "10px", lineHeight: "1.3" }}>
-            💡 A: Tile parsing + Graphics<br/>
-            💡 B: Feature Service gerekir<br/>
-            💡 C: Runtime style manipulation
+          <div style={{ marginTop: "10px", fontSize: "9px", color: "#888", lineHeight: "1.4" }}>
+            💡 Yaklaşım: Her RSRP aralığı için ayrı VectorTileLayer + Filter kullanıldı
           </div>
         </div>
 
-        {/* Status Panel */}
+        {/* Color Legend */}
         <div style={{
           position: "absolute",
-          bottom: "10px",
-          left: "10px",
+          top: "10px",
+          right: "10px",
           background: "rgba(0,0,0,0.9)",
           color: "white",
           padding: "12px",
-          borderRadius: "5px",
+          borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "10px",
-          maxWidth: "400px",
-          maxHeight: "200px",
-          overflowY: "auto"
+          maxWidth: "180px"
         }}>
-          <div style={{ color: "#4CAF50", marginBottom: "5px" }}>Status:</div>
-          <div style={{ fontSize: "10px", lineHeight: "1.4" }}>{message}</div>
+          <div style={{ marginBottom: "8px", fontWeight: "bold", fontSize: "11px" }}>
+            📊 RSRP Legend
+          </div>
+          {RSRP_COLOR_MAP.map((range, idx) => (
+            <div key={idx} style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
+              <div style={{ 
+                width: "20px", 
+                height: "12px", 
+                background: range.color, 
+                marginRight: "6px",
+                border: "1px solid #555",
+                borderRadius: "2px"
+              }}></div>
+              <div style={{ fontSize: "9px" }}>
+                {range.min} to {range.max}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     );
   }
 }
-
-const buttonStyle = {
-  width: "100%",
-  padding: "10px 8px",
-  marginBottom: "5px",
-  background: "#2196F3",
-  color: "white",
-  border: "none",
-  borderRadius: "4px",
-  cursor: "pointer",
-  fontSize: "11px",
-  textAlign: "left" as const,
-  fontFamily: "monospace"
-};
