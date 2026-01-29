@@ -146,13 +146,16 @@ export default class Widget extends React.PureComponent<any, State> {
 
   createMultipleColoredLayers = (VectorTileLayer, esriRequest) => {
     console.log("🎨 Creating multiple layers with color filters...");
+    this.setState({ message: "📡 Style JSON çekiliyor..." });
     
+    // SADECE BİR KEZ style JSON çek
     esriRequest(MVT_STYLE_URL, {
       headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
       responseType: 'json'
     }).then(response => {
       const originalStyle = response.data;
-      console.log("Original Style:", originalStyle);
+      console.log("✅ Original Style fetched:", originalStyle);
+      this.setState({ message: "✅ Style JSON alındı, layer'lar oluşturuluyor..." });
 
       const zoomConfigs = [
         { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
@@ -160,6 +163,9 @@ export default class Widget extends React.PureComponent<any, State> {
         { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
         { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
       ];
+
+      let layerCount = 0;
+      const totalLayers = zoomConfigs.length * RSRP_COLOR_MAP.length;
 
       // Her zoom level için
       zoomConfigs.forEach(zoomConfig => {
@@ -169,7 +175,7 @@ export default class Widget extends React.PureComponent<any, State> {
         RSRP_COLOR_MAP.forEach((colorRange, index) => {
           console.log(`  🎨 Creating layer for ${colorRange.name} (${colorRange.min} to ${colorRange.max}): ${colorRange.color}`);
 
-          // Bu range için style JSON oluştur
+          // Bu range için style JSON oluştur (originalStyle'dan kopyala)
           const customStyle = {
             version: 8,
             sources: {
@@ -214,8 +220,6 @@ export default class Widget extends React.PureComponent<any, State> {
             ]
           };
 
-          console.log(`    Style for ${colorRange.name}:`, customStyle);
-
           const layer = new VectorTileLayer({
             style: customStyle,
             minScale: 0,
@@ -225,7 +229,11 @@ export default class Widget extends React.PureComponent<any, State> {
           });
 
           layer.when(() => {
-            console.log(`    ✅ ${zoomConfig.name}_${colorRange.name} loaded`);
+            layerCount++;
+            console.log(`    ✅ ${zoomConfig.name}_${colorRange.name} loaded (${layerCount}/${totalLayers})`);
+            this.setState({ 
+              message: `✅ Layer'lar yükleniyor... ${layerCount}/${totalLayers}` 
+            });
           }).catch(err => {
             console.error(`    ❌ ${zoomConfig.name}_${colorRange.name} error:`, err);
           });
@@ -236,12 +244,12 @@ export default class Widget extends React.PureComponent<any, State> {
       });
 
       this.setState({ 
-        message: `✅ ${zoomConfigs.length * RSRP_COLOR_MAP.length} layer oluşturuldu! Her RSRP range ayrı layer olarak yükleniyor...` 
+        message: `🚀 ${totalLayers} layer oluşturuldu! Yükleniyor...` 
       });
 
     }).catch(err => {
-      this.setState({ message: `❌ Layer creation failed: ${err.message}` });
-      console.error("Layer creation error:", err);
+      this.setState({ message: `❌ Style JSON fetch failed: ${err.message}` });
+      console.error("Style JSON fetch error:", err);
     });
   };
 
