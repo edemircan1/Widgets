@@ -8,22 +8,8 @@ const ARCGIS_API_VERSION = "4.32";
 interface State {
   message: string;
   currentZoom: number;
+  testMode: string;
 }
-
-// RSRP renk haritası
-const RSRP_COLOR_MAP = [
-  { min: -135, max: -126, color: '#313695', name: 'Very Poor' },
-  { min: -126, max: -118, color: '#4575B4', name: 'Poor' },
-  { min: -118, max: -109, color: '#74ADD1', name: 'Fair' },
-  { min: -109, max: -100, color: '#ABD9E9', name: 'Good' },
-  { min: -100, max: -92, color: '#E0F3F8', name: 'Very Good' },
-  { min: -92, max: -83, color: '#FFFFBF', name: 'Excellent' },
-  { min: -83, max: -75, color: '#FEE090', name: 'Outstanding' },
-  { min: -75, max: -66, color: '#FDAE61', name: 'Superior' },
-  { min: -66, max: -57, color: '#F46D43', name: 'Exceptional' },
-  { min: -57, max: -49, color: '#D73027', name: 'Extraordinary' },
-  { min: -49, max: 0, color: '#A50026', name: 'Ultimate' }
-];
 
 export default class Widget extends React.PureComponent<any, State> {
   private mapDiv: HTMLDivElement;
@@ -35,7 +21,8 @@ export default class Widget extends React.PureComponent<any, State> {
     super(props);
     this.state = {
       message: "Widget yükleniyor...",
-      currentZoom: 15
+      currentZoom: 15,
+      testMode: "none"
     };
   }
 
@@ -91,10 +78,8 @@ export default class Widget extends React.PureComponent<any, State> {
 
     (window as any).require([
       'esri/Map',
-      'esri/views/MapView',
-      'esri/layers/VectorTileLayer',
-      'esri/request'
-    ], (Map, MapView, VectorTileLayer, esriRequest) => {
+      'esri/views/MapView'
+    ], (Map, MapView) => {
       
       this.map = new Map({
         basemap: 'dark-gray-vector'
@@ -117,7 +102,7 @@ export default class Widget extends React.PureComponent<any, State> {
         this.setState({ currentZoom: Math.round(newZoom * 10) / 10 });
       });
 
-      this.setState({ message: "✅ Map hazır! Layer'lar yükleniyor..." });
+      this.setState({ message: "✅ Map hazır! Test seçin..." });
 
       // Setup fetch override for authorization
       const originalFetch = window.fetch;
@@ -134,127 +119,210 @@ export default class Widget extends React.PureComponent<any, State> {
         }
         return originalFetch(url, options);
       };
-
-      // YAKLAŞIM 5: Her RSRP range için ayrı layer, filter ile görünürlük kontrol
-      this.createMultipleColoredLayers(VectorTileLayer, esriRequest);
       
     }, (err) => {
       this.setState({ message: `❌ Loader error: ${err?.message || err}` });
-      console.error('AMD require error:', err);
     });
   };
 
-  createMultipleColoredLayers = (VectorTileLayer, esriRequest) => {
-    console.log("🎨 Creating multiple layers with color filters...");
-    this.setState({ message: "📡 Style JSON çekiliyor..." });
+  clearLayers = () => {
+    this.currentLayers.forEach(layer => {
+      this.map.remove(layer);
+    });
+    this.currentLayers = [];
+  };
+
+  runTest = (mode: string) => {
+    this.setState({ testMode: mode, message: `🧪 Test: ${mode}` });
+    this.clearLayers();
+
+    (window as any).require([
+      'esri/layers/VectorTileLayer',
+      'esri/request'
+    ], (VectorTileLayer, esriRequest) => {
+
+      if (mode === 'test1_no_filter') {
+        this.test1_NoFilter(VectorTileLayer, esriRequest);
+      } else if (mode === 'test2_with_filter') {
+        this.test2_WithFilter(VectorTileLayer, esriRequest);
+      } else if (mode === 'test3_simple_filter') {
+        this.test3_SimpleFilter(VectorTileLayer, esriRequest);
+      }
+    });
+  };
+
+  // TEST 1: Filter OLMADAN, sadece static renk
+  test1_NoFilter = (VectorTileLayer, esriRequest) => {
+    console.log("🧪 TEST 1: No filter, just static red color");
     
-    // SADECE BİR KEZ style JSON çek
     esriRequest(MVT_STYLE_URL, {
       headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
       responseType: 'json'
     }).then(response => {
       const originalStyle = response.data;
-      console.log("✅ Original Style fetched:", originalStyle);
-      this.setState({ message: "✅ Style JSON alındı, layer'lar oluşturuluyor..." });
 
-      const zoomConfigs = [
-        { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
-        { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
-        { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
-        { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
-      ];
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [
+          {
+            id: 'fill_test',
+            type: 'fill',
+            source: 'coverage_15z',
+            'source-layer': 'data',
+            minzoom: 15,
+            maxzoom: 24,
+            paint: {
+              'fill-color': '#FF0000',
+              'fill-opacity': 0.7
+            }
+          }
+        ]
+      };
 
-      let layerCount = 0;
-      const totalLayers = zoomConfigs.length * RSRP_COLOR_MAP.length;
+      console.log("Style (no filter):", customStyle);
 
-      // Her zoom level için
-      zoomConfigs.forEach(zoomConfig => {
-        console.log(`\n📍 Processing ${zoomConfig.name}...`);
-
-        // Her RSRP range için ayrı layer oluştur
-        RSRP_COLOR_MAP.forEach((colorRange, index) => {
-          console.log(`  🎨 Creating layer for ${colorRange.name} (${colorRange.min} to ${colorRange.max}): ${colorRange.color}`);
-
-          // Bu range için style JSON oluştur (originalStyle'dan kopyala)
-          const customStyle = {
-            version: 8,
-            sources: {
-              [zoomConfig.source]: originalStyle.sources[zoomConfig.source]
-            },
-            layers: [
-              {
-                id: `fill_${zoomConfig.source}_${index}`,
-                type: 'fill',
-                source: zoomConfig.source,
-                'source-layer': 'data',
-                minzoom: zoomConfig.minZoom,
-                maxzoom: zoomConfig.maxZoom,
-                filter: [
-                  'all',
-                  ['>=', ['get', 'rsrp_dbm'], colorRange.min],
-                  ['<', ['get', 'rsrp_dbm'], colorRange.max]
-                ],
-                paint: {
-                  'fill-color': colorRange.color,
-                  'fill-opacity': 0.7
-                }
-              },
-              {
-                id: `line_${zoomConfig.source}_${index}`,
-                type: 'line',
-                source: zoomConfig.source,
-                'source-layer': 'data',
-                minzoom: zoomConfig.minZoom,
-                maxzoom: zoomConfig.maxZoom,
-                filter: [
-                  'all',
-                  ['>=', ['get', 'rsrp_dbm'], colorRange.min],
-                  ['<', ['get', 'rsrp_dbm'], colorRange.max]
-                ],
-                paint: {
-                  'line-color': colorRange.color,
-                  'line-opacity': 0.9,
-                  'line-width': 1
-                }
-              }
-            ]
-          };
-
-          const layer = new VectorTileLayer({
-            style: customStyle,
-            minScale: 0,
-            maxScale: 0,
-            title: `${zoomConfig.name}_${colorRange.name}`,
-            opacity: 1.0
-          });
-
-          layer.when(() => {
-            layerCount++;
-            console.log(`    ✅ ${zoomConfig.name}_${colorRange.name} loaded (${layerCount}/${totalLayers})`);
-            this.setState({ 
-              message: `✅ Layer'lar yükleniyor... ${layerCount}/${totalLayers}` 
-            });
-          }).catch(err => {
-            console.error(`    ❌ ${zoomConfig.name}_${colorRange.name} error:`, err);
-          });
-
-          this.map.add(layer);
-          this.currentLayers.push(layer);
-        });
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        minScale: 0,
+        maxScale: 0,
+        title: 'Test1_NoFilter'
       });
 
-      this.setState({ 
-        message: `🚀 ${totalLayers} layer oluşturuldu! Yükleniyor...` 
+      layer.when(() => {
+        console.log("✅ Layer loaded (no filter)");
+        this.setState({ message: "✅ Test 1: Layer yüklendi (kırmızı görünmeli)" });
+      }).catch(err => {
+        console.error("❌ Layer error:", err);
+        this.setState({ message: `❌ Test 1 failed: ${err.message}` });
       });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
 
     }).catch(err => {
-      this.setState({ message: `❌ Style JSON fetch failed: ${err.message}` });
-      console.error("Style JSON fetch error:", err);
+      this.setState({ message: `❌ Style fetch failed: ${err.message}` });
+    });
+  };
+
+  // TEST 2: Filter ile (>=, <)
+  test2_WithFilter = (VectorTileLayer, esriRequest) => {
+    console.log("🧪 TEST 2: With filter (RSRP >= -100)");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [
+          {
+            id: 'fill_test',
+            type: 'fill',
+            source: 'coverage_15z',
+            'source-layer': 'data',
+            minzoom: 15,
+            maxzoom: 24,
+            filter: ['>=', ['get', 'rsrp_dbm'], -100],
+            paint: {
+              'fill-color': '#00FF00',
+              'fill-opacity': 0.7
+            }
+          }
+        ]
+      };
+
+      console.log("Style (with filter >= -100):", customStyle);
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        minScale: 0,
+        maxScale: 0,
+        title: 'Test2_WithFilter'
+      });
+
+      layer.when(() => {
+        console.log("✅ Layer loaded (with filter)");
+        this.setState({ message: "✅ Test 2: Layer yüklendi (yeşil görünmeli, sadece RSRP>-100)" });
+      }).catch(err => {
+        console.error("❌ Layer error:", err);
+        this.setState({ message: `❌ Test 2 failed: ${err.message}` });
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+
+    }).catch(err => {
+      this.setState({ message: `❌ Style fetch failed: ${err.message}` });
+    });
+  };
+
+  // TEST 3: Simple filter (has property)
+  test3_SimpleFilter = (VectorTileLayer, esriRequest) => {
+    console.log("🧪 TEST 3: Simple filter (has rsrp_dbm)");
+    
+    esriRequest(MVT_STYLE_URL, {
+      headers: { 'Authorization': `Bearer ${MANUAL_BEARER}` },
+      responseType: 'json'
+    }).then(response => {
+      const originalStyle = response.data;
+
+      const customStyle = {
+        version: 8,
+        sources: {
+          'coverage_15z': originalStyle.sources['coverage_15z']
+        },
+        layers: [
+          {
+            id: 'fill_test',
+            type: 'fill',
+            source: 'coverage_15z',
+            'source-layer': 'data',
+            minzoom: 15,
+            maxzoom: 24,
+            filter: ['has', 'rsrp_dbm'],
+            paint: {
+              'fill-color': '#0000FF',
+              'fill-opacity': 0.7
+            }
+          }
+        ]
+      };
+
+      console.log("Style (simple filter - has property):", customStyle);
+
+      const layer = new VectorTileLayer({
+        style: customStyle,
+        minScale: 0,
+        maxScale: 0,
+        title: 'Test3_SimpleFilter'
+      });
+
+      layer.when(() => {
+        console.log("✅ Layer loaded (simple filter)");
+        this.setState({ message: "✅ Test 3: Layer yüklendi (mavi görünmeli)" });
+      }).catch(err => {
+        console.error("❌ Layer error:", err);
+        this.setState({ message: `❌ Test 3 failed: ${err.message}` });
+      });
+
+      this.map.add(layer);
+      this.currentLayers.push(layer);
+
+    }).catch(err => {
+      this.setState({ message: `❌ Style fetch failed: ${err.message}` });
     });
   };
 
   render() {
-    const { message, currentZoom } = this.state;
+    const { message, currentZoom, testMode } = this.state;
 
     return (
       <div style={{ width: "100%", height: "100%", position: "relative" }}>
@@ -263,74 +331,89 @@ export default class Widget extends React.PureComponent<any, State> {
           style={{ width: "100%", height: "100%" }}
         />
 
-        {/* Status Panel */}
+        {/* Test Panel */}
         <div style={{
           position: "absolute",
           top: "10px",
-          left: "10px",
-          background: "rgba(0,0,0,0.9)",
+          right: "10px",
+          background: "rgba(0,0,0,0.95)",
           color: "white",
           padding: "15px",
           borderRadius: "8px",
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "11px",
-          maxWidth: "350px"
+          maxWidth: "280px"
         }}>
-          <div style={{ marginBottom: "10px", fontWeight: "bold", color: "#4CAF50", fontSize: "13px" }}>
-            🎨 MULTI-LAYER COLOR APPROACH
+          <div style={{ marginBottom: "12px", fontWeight: "bold", color: "#4CAF50" }}>
+            🧪 FILTER TESTS
           </div>
           
-          <div style={{ marginBottom: "10px", padding: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px" }}>
-            <div style={{ fontSize: "10px", color: "#aaa" }}>Zoom: {currentZoom}</div>
-            <div style={{ fontSize: "10px", color: "#aaa", marginTop: "5px" }}>
-              Layers: {this.currentLayers.length}
-            </div>
+          <div style={{ marginBottom: "10px", padding: "8px", background: "rgba(255,255,255,0.1)", borderRadius: "4px", fontSize: "10px" }}>
+            <div>Zoom: {currentZoom}</div>
+            <div>Mode: {testMode || "none"}</div>
           </div>
 
-          <div style={{ fontSize: "10px", lineHeight: "1.5", color: "#ddd" }}>
-            {message}
-          </div>
+          <button onClick={() => this.runTest('test1_no_filter')} style={buttonStyle}>
+            Test 1: No Filter (RED)
+          </button>
 
-          <div style={{ marginTop: "10px", fontSize: "9px", color: "#888", lineHeight: "1.4" }}>
-            💡 Yaklaşım: Her RSRP aralığı için ayrı VectorTileLayer + Filter kullanıldı
+          <button onClick={() => this.runTest('test2_with_filter')} style={buttonStyle}>
+            Test 2: Filter >= -100 (GREEN)
+          </button>
+
+          <button onClick={() => this.runTest('test3_simple_filter')} style={buttonStyle}>
+            Test 3: Has Property (BLUE)
+          </button>
+
+          <button 
+            onClick={() => {
+              this.clearLayers();
+              this.setState({ message: "✅ Temizlendi", testMode: "none" });
+            }} 
+            style={{...buttonStyle, background: "#f44336", marginTop: "10px"}}
+          >
+            🗑️ Clear
+          </button>
+
+          <div style={{ fontSize: "9px", color: "#aaa", marginTop: "10px", lineHeight: "1.3" }}>
+            💡 Test 1: Filter yok → MVT görünmeli<br/>
+            💡 Test 2: Comparison filter → Kısmi MVT<br/>
+            💡 Test 3: Simple filter → MVT görünmeli
           </div>
         </div>
 
-        {/* Color Legend */}
+        {/* Status */}
         <div style={{
           position: "absolute",
-          top: "10px",
-          right: "10px",
+          bottom: "10px",
+          left: "10px",
           background: "rgba(0,0,0,0.9)",
           color: "white",
           padding: "12px",
-          borderRadius: "8px",
+          borderRadius: "5px",
           zIndex: 9999,
           fontFamily: "monospace",
           fontSize: "10px",
-          maxWidth: "180px"
+          maxWidth: "350px"
         }}>
-          <div style={{ marginBottom: "8px", fontWeight: "bold", fontSize: "11px" }}>
-            📊 RSRP Legend
-          </div>
-          {RSRP_COLOR_MAP.map((range, idx) => (
-            <div key={idx} style={{ display: "flex", alignItems: "center", marginBottom: "4px" }}>
-              <div style={{ 
-                width: "20px", 
-                height: "12px", 
-                background: range.color, 
-                marginRight: "6px",
-                border: "1px solid #555",
-                borderRadius: "2px"
-              }}></div>
-              <div style={{ fontSize: "9px" }}>
-                {range.min} to {range.max}
-              </div>
-            </div>
-          ))}
+          <div style={{ color: "#4CAF50" }}>{message}</div>
         </div>
       </div>
     );
   }
 }
+
+const buttonStyle = {
+  width: "100%",
+  padding: "10px 8px",
+  marginBottom: "5px",
+  background: "#2196F3",
+  color: "white",
+  border: "none",
+  borderRadius: "4px",
+  cursor: "pointer",
+  fontSize: "11px",
+  textAlign: "left" as const,
+  fontFamily: "monospace"
+};
