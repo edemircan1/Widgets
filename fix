@@ -1,2 +1,300 @@
 Crucial Fix: Implemented a style patcher that wraps ["get", "rsrp_dbm"] expressions with ["to-number", ...] inside the interpolate paint properties. This ensures ArcGIS correctly interprets the data values as numbers for color interpolation, fixing the "white polygon" issue.
 Used request from esri-loader (which uses esri/request internally) to fetch the style, ensuring correct handling within the Esri ecosystem.
+
+-----
+
+import { useEffect, useRef, useState } from "react";
+import { loadModules } from "esri-loader";
+import { Loader2, Plus, Minus, Layers, Settings, Navigation } from "lucide-react";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+
+interface MapViewerProps {
+  token?: string;
+}
+
+export function MapViewer({ token = "token" }: MapViewerProps) {
+  const mapDiv = useRef<HTMLDivElement>(null);
+  const [view, setView] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [zoomLevel, setZoomLevel] = useState<number>(15);
+  const [coordinates, setCoordinates] = useState<{ lat: number; lon: number }>({ lat: 39, lon: 32 });
+
+  useEffect(() => {
+    let mounted = true;
+
+    const initializeMap = async () => {
+      try {
+        const [
+          Map,
+          MapView,
+          VectorTileLayer,
+          esriConfig,
+          request
+        ] = await loadModules(
+          [
+            "esri/Map",
+            "esri/views/MapView",
+            "esri/layers/VectorTileLayer",
+            "esri/config",
+            "esri/request"
+          ],
+          {
+            css: "https://js.arcgis.com/4.32/esri/themes/dark/main.css",
+            url: "https://js.arcgis.com/4.32/",
+          }
+        );
+
+        if (!mounted) return;
+
+        // Custom request interceptor for Authorization header
+        esriConfig.request.interceptors.push({
+          urls: [/.*\/styles\/all\/style\.json/, /.*\/tiles\/.*/],
+          before: function(params: any) {
+            if (!params.requestOptions) {
+              params.requestOptions = {};
+            }
+            if (!params.requestOptions.headers) {
+              params.requestOptions.headers = {};
+            }
+            params.requestOptions.headers.Authorization = `Bearer ${token}`;
+          }
+        });
+
+        // Initialize Map
+        const map = new Map({
+          basemap: "dark-gray-vector",
+        });
+
+        const mapView = new MapView({
+          container: mapDiv.current,
+          map: map,
+          center: [32, 39], // Longitude, Latitude
+          zoom: 15,
+          constraints: {
+            snapToZoom: false,
+            rotationEnabled: false,
+          },
+          ui: {
+            components: [] // Remove default UI components
+          }
+        });
+
+        // Event Listeners for UI state
+        mapView.watch("zoom", (newZoom: number) => {
+          if (mounted) setZoomLevel(newZoom);
+        });
+
+        mapView.watch("center", (newCenter: any) => {
+          if (mounted) {
+            setCoordinates({
+              lat: Number(newCenter.latitude.toFixed(4)),
+              lon: Number(newCenter.longitude.toFixed(4))
+            });
+          }
+        });
+
+        // Layer Logic (Splitting MVT styles by zoom level)
+        // We fetch the style JSON and manually create layers for each zoom level range
+        const styleBaseUrl = "/style.json";
+
+        try {
+          // Fetch style JSON
+          const response = await request(styleBaseUrl, {
+            responseType: 'json'
+          });
+          
+          const originalStyle = response.data;
+          
+          // Function to patch style expressions for Esri compatibility
+          const patchStyleLayer = (layer: any) => {
+            const patched = { ...layer };
+            
+            // Helper to patch paint properties
+            const patchPaintProperty = (prop: string) => {
+              if (patched.paint && Array.isArray(patched.paint[prop])) {
+                const expr = patched.paint[prop];
+                // Check if it's an interpolate expression
+                if (expr[0] === 'interpolate') {
+                  // Find the "get" expression
+                  const getIndex = expr.findIndex((e: any) => Array.isArray(e) && e[0] === 'get');
+                  if (getIndex !== -1) {
+                    // Wrap ["get", "field"] with ["to-number", ["get", "field"]]
+                    // This ensures Esri treats the value as a number for interpolation
+                    const getExpr = expr[getIndex];
+                    expr[getIndex] = ["to-number", getExpr];
+                  }
+                }
+              }
+            };
+
+            patchPaintProperty('fill-color');
+            patchPaintProperty('line-color');
+            
+            return patched;
+          };
+
+          const zoomConfigs = [
+            { name: '3z', source: 'coverage_3z', minZoom: 0, maxZoom: 7 },
+            { name: '7z', source: 'coverage_7z', minZoom: 7, maxZoom: 11 },
+            { name: '11z', source: 'coverage_11z', minZoom: 11, maxZoom: 15 },
+            { name: '15z', source: 'coverage_15z', minZoom: 15, maxZoom: 24 }
+          ];
+
+          zoomConfigs.forEach(config => {
+            // Filter layers for this zoom level
+            const layers = originalStyle.layers
+              .filter((layer: any) => layer.source === config.source)
+              .map((layer: any) => {
+                // Patch the layer style
+                const patched = patchStyleLayer(layer);
+                return {
+                  ...patched,
+                  minzoom: config.minZoom,
+                  maxzoom: config.maxZoom
+                };
+              });
+
+            if (layers.length > 0) {
+              const customStyle = {
+                version: 8,
+                sources: {
+                  [config.source]: originalStyle.sources[config.source]
+                },
+                layers: layers
+              };
+
+              console.log(`Creating layer ${config.name}`, customStyle);
+
+              const layer = new VectorTileLayer({
+                style: customStyle,
+                title: `Coverage ${config.name}`
+              });
+
+              map.add(layer);
+            }
+          });
+
+        } catch (error) {
+          console.error("Failed to load map style:", error);
+        }
+
+        setView(mapView);
+        setIsLoading(false);
+
+      } catch (error) {
+        console.error("ArcGIS initialization failed:", error);
+        setIsLoading(false);
+      }
+    };
+
+    initializeMap();
+
+    return () => {
+      mounted = false;
+      if (view) {
+        view.destroy();
+      }
+    };
+  }, [token]);
+
+  // Smooth Zoom Functions
+  const handleZoomIn = () => {
+    if (view) {
+      view.goTo({ zoom: view.zoom + 1 }, { duration: 300 });
+    }
+  };
+
+  const handleZoomOut = () => {
+    if (view) {
+      view.goTo({ zoom: view.zoom - 1 }, { duration: 300 });
+    }
+  };
+
+  return (
+    <div className="relative w-full h-screen bg-background overflow-hidden">
+      {/* Map Container */}
+      <div ref={mapDiv} className="w-full h-full outline-none" />
+
+      {/* Loading Overlay */}
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm z-50">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="w-12 h-12 text-primary animate-spin" />
+            <p className="text-muted-foreground font-medium animate-pulse">Initializing GIS Engine...</p>
+          </div>
+        </div>
+      )}
+
+      {/* Top Left: Status Panel */}
+      <div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+        <Card className="bg-card/90 backdrop-blur-md border-border p-4 shadow-xl w-64">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 bg-primary/10 rounded-lg">
+              <Layers className="w-5 h-5 text-primary" />
+            </div>
+            <div>
+              <h3 className="font-display font-semibold text-sm">Layer Status</h3>
+              <p className="text-xs text-muted-foreground">RSRP Coverage DB</p>
+            </div>
+          </div>
+          
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs">
+              <span className="text-muted-foreground">Zoom Level</span>
+              <span className="font-mono text-primary">{zoomLevel.toFixed(2)}</span>
+            </div>
+            <div className="h-1.5 w-full bg-secondary rounded-full overflow-hidden">
+              <div 
+                className="h-full bg-primary transition-all duration-300" 
+                style={{ width: `${(zoomLevel / 24) * 100}%` }}
+              />
+            </div>
+            <div className="flex justify-between text-xs pt-1 border-t border-border/50">
+              <span className="text-muted-foreground">Lat/Lon</span>
+              <span className="font-mono text-foreground">{coordinates.lat}, {coordinates.lon}</span>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Top Right: Tools */}
+      <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
+        <Card className="bg-card/90 backdrop-blur-md border-border p-1 shadow-xl flex flex-col items-center">
+          <button 
+            onClick={handleZoomIn}
+            className="custom-zoom-btn rounded-t-md"
+            title="Zoom In"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+          <div className="w-full h-[1px] bg-border/50" />
+          <button 
+            onClick={handleZoomOut}
+            className="custom-zoom-btn rounded-b-md"
+            title="Zoom Out"
+          >
+            <Minus className="w-4 h-4" />
+          </button>
+        </Card>
+
+        <Card className="bg-card/90 backdrop-blur-md border-border p-1 shadow-xl mt-2">
+          <Button variant="ghost" size="icon" className="w-8 h-8 hover:bg-muted text-muted-foreground hover:text-foreground">
+            <Navigation className="w-4 h-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="w-8 h-8 hover:bg-muted text-muted-foreground hover:text-foreground">
+            <Settings className="w-4 h-4" />
+          </Button>
+        </Card>
+      </div>
+
+      {/* Bottom Center: Attribution/Info (Optional) */}
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
+        <div className="px-3 py-1.5 rounded-full bg-card/80 backdrop-blur-md border border-border text-[10px] text-muted-foreground shadow-lg flex items-center gap-2">
+          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          <span>ArcGIS Vector Tile System Active</span>
+        </div>
+      </div>
+    </div>
+  );
+}
