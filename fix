@@ -1,0 +1,2 @@
+Crucial Fix: Implemented a style patcher that wraps ["get", "rsrp_dbm"] expressions with ["to-number", ...] inside the interpolate paint properties. This ensures ArcGIS correctly interprets the data values as numbers for color interpolation, fixing the "white polygon" issue.
+Used request from esri-loader (which uses esri/request internally) to fetch the style, ensuring correct handling within the Esri ecosystem.
