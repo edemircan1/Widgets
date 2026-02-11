@@ -1,280 +1,94 @@
-{
-   "version": 8,
-   "name": "Rhea Coverage RSRP Bins",
-   "metadata": {"openmaptiles:version": "3.15.0"},
-   "bearing": 0,
-   "pitch": 0,
-   "sources":    {
-      "coverage_15z":       {
-         "type": "vector",
-         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
-         "minzoom": 15,
-         "maxzoom": 15
+/** @jsx jsx */
+import { React, AllWidgetProps, jsx } from 'jimu-core';
+import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+
+// Import the esri-sources plugin
+// import { addEsriFeatureLayer } from 'mapbox-gl-esri-sources';
+
+export default class Widget extends React.PureComponent<AllWidgetProps<any>, any> {
+  mapContainer: HTMLDivElement;
+  map: maplibregl.Map;
+
+  constructor(props) {
+    super(props);
+    this.state = {};
+  }
+
+  componentDidMount() {
+    this.initializeMap();
+  }
+
+  initializeMap = () => {
+    // Initialize MapLibre map
+    this.map = new maplibregl.Map({
+      container: this.mapContainer,
+      style: {
+        version: 8,
+        sources: {},
+        layers: []
       },
-      "coverage_11z":       {
-         "type": "vector",
-         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
-         "minzoom": 11,
-         "maxzoom": 11
-      },
-      "coverage_7z":       {
-         "type": "vector",
-         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
-         "minzoom": 7,
-         "maxzoom": 7
-      },
-      "coverage_3z":       {
-         "type": "vector",
-         "tiles": ["url.com/oauth21/api/vector/tile/bins/zxy/all/{z}/{x}/{y}.pbf"],
-         "minzoom": 3,
-         "maxzoom": 3
+      center: [-118.2437, 34.0522], // Default to LA
+      zoom: 10
+    });
+
+    this.map.on('load', () => {
+      this.addFeatureServerLayer();
+    });
+  }
+
+  addFeatureServerLayer = () => {
+    // REPLACE THIS URL WITH YOUR FEATURESERVER URL
+    const featureServerUrl = 'https://services.arcgis.com/YOUR_ORG/arcgis/rest/services/YOUR_SERVICE/FeatureServer/0';
+
+    // Add source
+    this.map.addSource('esri-feature-source', {
+      type: 'geojson',
+      data: {
+        type: 'FeatureCollection',
+        features: []
       }
-   },
-   "layers":    [
-            {
-         "id": "vis_mvt_15z",
-         "type": "circle",
-         "source": "coverage_15z",
-         "minzoom": 15,
-         "maxzoom": 24,
-         "layout": {"visibility": "visible"},
-         "source-layer": "points",
-         "paint":          {
-            "circle-color":             [
-               "interpolate",
-               ["linear"],
-                              [
-                  "get",
-                  "rsrp_dbm"
-               ],
-               -135,
-               "#313695",
-               -126,
-               "#4575B4",
-               -118,
-               "#74ADD1",
-               -109,
-               "#ABD9E9",
-               -100,
-               "#E0F3F8",
-               -92,
-               "#FFFFBF",
-               -83,
-               "#FEE090",
-               -75,
-               "#FDAE61",
-               -66,
-               "#F46D43",
-               -57,
-               "#D73027",
-               -49,
-               "#A50026",
-               0,
-               "#ccccff",
-               1,
-               "#cc66ff",
-               2,
-               "#f5f5f0"
-            ],
-            "circle-pitch-scale": "map",
-            "circle-radius":             {
-               "base": 2,
-               "stops":                [
-                                    [
-                     15,
-                     2.5
-                  ],
-                                    [
-                     22,
-                     250
-                  ]
-               ]
-            }
-         }
-      },
-            {
-         "id": "vis_mvt_11z",
-         "type": "circle",
-         "source": "coverage_11z",
-         "minzoom": 11,
-         "maxzoom": 15,
-         "layout": {"visibility": "visible"},
-         "source-layer": "points",
-         "paint":          {
-            "circle-color":             [
-               "interpolate",
-               ["linear"],
-                              [
-                  "get",
-                  "rsrp_dbm"
-               ],
-               -135,
-               "#313695",
-               -126,
-               "#4575B4",
-               -118,
-               "#74ADD1",
-               -109,
-               "#ABD9E9",
-               -100,
-               "#E0F3F8",
-               -92,
-               "#FFFFBF",
-               -83,
-               "#FEE090",
-               -75,
-               "#FDAE61",
-               -66,
-               "#F46D43",
-               -57,
-               "#D73027",
-               -49,
-               "#A50026",
-               0,
-               "#ccccff",
-               1,
-               "#cc66ff",
-               2,
-               "#f5f5f0"
-            ],
-            "circle-pitch-scale": "map",
-            "circle-radius":             {
-               "base": 2,
-               "stops":                [
-                                    [
-                     11,
-                     2
-                  ],
-                                    [
-                     15,
-                     20
-                  ]
-               ]
-            }
-         }
-      },
-            {
-         "id": "vis_mvt_7z",
-         "type": "circle",
-         "source": "coverage_7z",
-         "minzoom": 7,
-         "maxzoom": 11,
-         "layout": {"visibility": "visible"},
-         "source-layer": "points",
-         "paint":          {
-            "circle-color":             [
-               "interpolate",
-               ["linear"],
-                              [
-                  "get",
-                  "rsrp_dbm"
-               ],
-               -135,
-               "#313695",
-               -126,
-               "#4575B4",
-               -118,
-               "#74ADD1",
-               -109,
-               "#ABD9E9",
-               -100,
-               "#E0F3F8",
-               -92,
-               "#FFFFBF",
-               -83,
-               "#FEE090",
-               -75,
-               "#FDAE61",
-               -66,
-               "#F46D43",
-               -57,
-               "#D73027",
-               -49,
-               "#A50026",
-               0,
-               "#ccccff",
-               1,
-               "#cc66ff",
-               2,
-               "#f5f5f0"
-            ],
-            "circle-pitch-scale": "map",
-            "circle-radius":             {
-               "base": 2,
-               "stops":                [
-                                    [
-                     7,
-                     1
-                  ],
-                                    [
-                     11,
-                     13
-                  ]
-               ]
-            }
-         }
-      },
-            {
-         "id": "vis_mvt_3z",
-         "type": "circle",
-         "source": "coverage_3z",
-         "minzoom": 3,
-         "maxzoom": 7,
-         "layout": {"visibility": "visible"},
-         "source-layer": "points",
-         "paint":          {
-            "circle-color":             [
-               "interpolate",
-               ["linear"],
-                              [
-                  "get",
-                  "rsrp_dbm"
-               ],
-               -135,
-               "#313695",
-               -126,
-               "#4575B4",
-               -118,
-               "#74ADD1",
-               -109,
-               "#ABD9E9",
-               -100,
-               "#E0F3F8",
-               -92,
-               "#FFFFBF",
-               -83,
-               "#FEE090",
-               -75,
-               "#FDAE61",
-               -66,
-               "#F46D43",
-               -57,
-               "#D73027",
-               -49,
-               "#A50026",
-               0,
-               "#ccccff",
-               1,
-               "#cc66ff",
-               2,
-               "#f5f5f0"
-            ],
-            "circle-pitch-scale": "map",
-            "circle-radius":             {
-               "base": 2,
-               "stops":                [
-                                    [
-                     3,
-                     1
-                  ],
-                                    [
-                     7,
-                     10
-                  ]
-               ]
-            }
-         }
+    });
+
+    // Fetch data from FeatureServer
+    fetch(`${featureServerUrl}/query?where=1=1&outFields=*&f=geojson`)
+      .then(response => response.json())
+      .then(data => {
+        const source = this.map.getSource('esri-feature-source') as maplibregl.GeoJSONSource;
+        if (source) {
+          source.setData(data);
+        }
+      });
+
+    // Add layer to display the features
+    this.map.addLayer({
+      id: 'esri-feature-layer',
+      type: 'circle',
+      source: 'esri-feature-source',
+      paint: {
+        'circle-radius': 6,
+        'circle-color': '#007cbf',
+        'circle-stroke-width': 2,
+        'circle-stroke-color': '#ffffff'
       }
-   ],
-   "id": "rhea_coverage_style"
+    });
+  }
+
+  componentWillUnmount() {
+    if (this.map) {
+      this.map.remove();
+    }
+  }
+
+  render() {
+    return (
+      <div className="widget-maplibre" style={{ width: '100%', height: '100%' }}>
+        <div
+          ref={el => this.mapContainer = el}
+          style={{ width: '100%', height: '100%' }}
+        />
+      </div>
+    );
+  }
 }
