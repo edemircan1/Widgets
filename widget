@@ -1,5 +1,6 @@
 /** @jsx jsx */
 import { React, AllWidgetProps, jsx, css } from 'jimu-core';
+import { getAppStore } from 'jimu-core';
 import { loadArcGISJSAPIModules } from 'jimu-arcgis';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -9,7 +10,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   map: maplibregl.Map;
 
   // PUT YOUR FEATURE SERVER URL HERE
-  FEATURE_SERVER_URL = 'https://your-enterprise.com/arcgis/rest/services/YourService/FeatureServer/0';
+  FEATURE_SERVER_URL = 'https://your-server/arcgissecure/rest/services/inp/abc/FeatureServer/2';
 
   constructor(props) {
     super(props);
@@ -35,25 +36,55 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     });
 
     this.map.on('load', () => {
-      this.setState({ status: 'Basemap loaded, fetching data...' });
+      this.setState({ status: 'Checking authentication...' });
       this.loadData();
     });
   }
 
   loadData = async () => {
     try {
+      // Get portal info from Experience Builder
+      const appState = getAppStore().getState();
+      const portalUrl = appState?.portalUrl;
+      const token = appState?.token;
+
+      console.log('Portal URL:', portalUrl);
+      console.log('Has token:', !!token);
+
       this.setState({ status: 'Loading ArcGIS modules...' });
 
-      // Use ArcGIS JS API to handle authentication and CORS
-      const [esriRequest, IdentityManager] = await loadArcGISJSAPIModules([
+      const [esriRequest, esriConfig, IdentityManager, OAuthInfo, ServerInfo] = await loadArcGISJSAPIModules([
         'esri/request',
-        'esri/identity/IdentityManager'
+        'esri/config',
+        'esri/identity/IdentityManager',
+        'esri/identity/OAuthInfo',
+        'esri/identity/ServerInfo'
       ]);
+
+      // Configure identity if we have token
+      if (token && portalUrl) {
+        console.log('Registering token...');
+        
+        // Register the token with IdentityManager
+        IdentityManager.registerToken({
+          server: portalUrl,
+          token: token
+        });
+
+        // Also register for the secure endpoint
+        const serverUrl = this.FEATURE_SERVER_URL.split('/rest/')[0];
+        IdentityManager.registerToken({
+          server: serverUrl,
+          token: token
+        });
+      }
 
       this.setState({ status: 'Fetching features...' });
 
       const queryUrl = `${this.FEATURE_SERVER_URL}/query`;
       
+      console.log('Requesting:', queryUrl);
+
       const response = await esriRequest(queryUrl, {
         query: {
           where: '1=1',
@@ -71,7 +102,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
       if (json.error) {
         this.setState({ 
-          status: 'ArcGIS Error',
+          status: 'Error',
           error: `${json.error.message || JSON.stringify(json.error)}`
         });
         return;
