@@ -3,49 +3,18 @@ import { React, AllWidgetProps, jsx, css } from ‘jimu-core’;
 import maplibregl from ‘maplibre-gl’;
 import ‘maplibre-gl/dist/maplibre-gl.css’;
 
-interface FeatureLayer {
-id: string;
-url: string;
-name: string;
-type: ‘point’ | ‘line’ | ‘polygon’;
-style?: any;
-}
-
-interface WidgetState {
-mapLoaded: boolean;
-layersLoaded: number;
-errors: string[];
-featureCount: number;
-}
-
-export default class Widget extends React.PureComponent<AllWidgetProps<any>, WidgetState> {
+export default class Widget extends React.PureComponent<AllWidgetProps<any>, any> {
 mapContainer: HTMLDivElement;
 map: maplibregl.Map;
 
-// CONFIGURE YOUR FEATURE LAYERS HERE
-featureLayers: FeatureLayer[] = [
-{
-id: ‘layer1’,
-name: ‘Sample Layer’,
-url: ‘https://services.arcgis.com/YOUR_ORG/arcgis/rest/services/YOUR_SERVICE/FeatureServer/0’,
-type: ‘point’
-}
-// Add more layers here:
-// {
-//   id: ‘layer2’,
-//   name: ‘Another Layer’,
-//   url: ‘https://services.arcgis.com/YOUR_ORG/arcgis/rest/services/ANOTHER_SERVICE/FeatureServer/0’,
-//   type: ‘polygon’
-// }
-];
+// CONFIGURE YOUR FEATURE LAYER URL HERE
+FEATURE_SERVER_URL = ‘https://sampleserver6.arcgisonline.com/arcgis/rest/services/USA/MapServer/0’;
 
 constructor(props) {
 super(props);
 this.state = {
-mapLoaded: false,
-layersLoaded: 0,
-errors: [],
-featureCount: 0
+status: ‘Initializing…’,
+error: null
 };
 }
 
@@ -54,133 +23,96 @@ this.initializeMap();
 }
 
 initializeMap = () => {
-try {
-// Initialize MapLibre map with Esri World Imagery basemap
+// Initialize map with Carto basemap
 this.map = new maplibregl.Map({
 container: this.mapContainer,
-style: ‘https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json’,
-center: [-98.5795, 39.8283], // Center of USA
-zoom: 4,
-attributionControl: true
+style: ‘https://basemaps.cartocdn.com/gl/positron-gl-style/style.json’,
+center: [-98.5795, 39.8283],
+zoom: 4
 });
 
 ```
-  // Add navigation controls
-  this.map.addControl(new maplibregl.NavigationControl(), 'top-right');
-  this.map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
+this.map.addControl(new maplibregl.NavigationControl(), 'top-right');
 
-  // Map load event
-  this.map.on('load', () => {
-    console.log('Map loaded successfully');
-    this.setState({ mapLoaded: true });
-    this.loadAllFeatureLayers();
-  });
+this.map.on('load', () => {
+  this.setState({ status: 'Map loaded, fetching features...' });
+  this.loadFeatures();
+});
 
-  // Error handling
-  this.map.on('error', (e) => {
-    console.error('Map error:', e);
-    this.addError('Map error: ' + e.error.message);
-  });
-
-} catch (error) {
-  console.error('Failed to initialize map:', error);
-  this.addError('Failed to initialize map: ' + error.message);
-}
+this.map.on('error', (e) => {
+  console.error('Map error:', e);
+  this.setState({ error: 'Map initialization error' });
+});
 ```
 
 }
 
-loadAllFeatureLayers = async () => {
-for (const layer of this.featureLayers) {
-await this.addFeatureServerLayer(layer);
-}
-}
-
-addFeatureServerLayer = async (layer: FeatureLayer) => {
+loadFeatures = async () => {
 try {
-console.log(`Loading layer: ${layer.name} from ${layer.url}`);
+const url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&f=geojson&returnGeometry=true`;
 
 ```
-  // First, get layer info to determine geometry type
-  const infoResponse = await fetch(`${layer.url}?f=json`);
-  const infoData = await infoResponse.json();
+  console.log('Fetching from:', url);
   
-  console.log('Layer info:', infoData);
+  const response = await fetch(url);
+  const data = await response.json();
 
-  // Fetch features as GeoJSON
-  const queryUrl = `${layer.url}/query?where=1=1&outFields=*&f=geojson&returnGeometry=true`;
-  console.log('Fetching from:', queryUrl);
-  
-  const response = await fetch(queryUrl);
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
+  console.log('Response:', data);
 
-  const geojsonData = await response.json();
-  
-  console.log('GeoJSON data:', geojsonData);
-  console.log('Features count:', geojsonData.features?.length || 0);
-
-  if (!geojsonData.features || geojsonData.features.length === 0) {
-    this.addError(`No features found in layer: ${layer.name}`);
+  if (!data.features || data.features.length === 0) {
+    this.setState({ 
+      status: 'No features found',
+      error: 'The layer returned 0 features. Check your URL.'
+    });
     return;
   }
 
   // Add source
-  this.map.addSource(layer.id, {
+  this.map.addSource('features', {
     type: 'geojson',
-    data: geojsonData
+    data: data
   });
 
-  // Determine geometry type from first feature if not specified
-  const firstFeature = geojsonData.features[0];
-  const geometryType = firstFeature.geometry.type.toLowerCase();
-  
-  console.log('Geometry type:', geometryType);
+  // Detect geometry type
+  const geomType = data.features[0].geometry.type.toLowerCase();
 
-  // Add appropriate layer based on geometry type
-  if (geometryType.includes('point')) {
+  // Add layer based on geometry
+  if (geomType.includes('point')) {
     this.map.addLayer({
-      id: `${layer.id}-layer`,
+      id: 'features-layer',
       type: 'circle',
-      source: layer.id,
+      source: 'features',
       paint: {
-        'circle-radius': 8,
+        'circle-radius': 6,
         'circle-color': '#FF5722',
         'circle-stroke-width': 2,
-        'circle-stroke-color': '#FFFFFF',
-        'circle-opacity': 0.8
+        'circle-stroke-color': '#FFF'
       }
     });
-  } else if (geometryType.includes('line') || geometryType.includes('string')) {
+  } else if (geomType.includes('line')) {
     this.map.addLayer({
-      id: `${layer.id}-layer`,
+      id: 'features-layer',
       type: 'line',
-      source: layer.id,
+      source: 'features',
       paint: {
         'line-color': '#2196F3',
-        'line-width': 3,
-        'line-opacity': 0.8
+        'line-width': 3
       }
     });
-  } else if (geometryType.includes('polygon')) {
-    // Add fill layer
+  } else {
     this.map.addLayer({
-      id: `${layer.id}-fill`,
+      id: 'features-layer',
       type: 'fill',
-      source: layer.id,
+      source: 'features',
       paint: {
         'fill-color': '#4CAF50',
-        'fill-opacity': 0.5
+        'fill-opacity': 0.6
       }
     });
-    
-    // Add outline layer
     this.map.addLayer({
-      id: `${layer.id}-outline`,
+      id: 'features-outline',
       type: 'line',
-      source: layer.id,
+      source: 'features',
       paint: {
         'line-color': '#1B5E20',
         'line-width': 2
@@ -188,65 +120,46 @@ console.log(`Loading layer: ${layer.name} from ${layer.url}`);
     });
   }
 
-  // Add popup on click
-  this.map.on('click', `${layer.id}-layer`, (e) => {
-    const coordinates = e.lngLat;
-    const properties = e.features[0].properties;
-    
-    const popupContent = Object.entries(properties)
-      .map(([key, value]) => `<strong>${key}:</strong> ${value}`)
-      .join('<br>');
-
-    new maplibregl.Popup()
-      .setLngLat(coordinates)
-      .setHTML(popupContent)
-      .addTo(this.map);
-  });
-
-  // Change cursor on hover
-  this.map.on('mouseenter', `${layer.id}-layer`, () => {
-    this.map.getCanvas().style.cursor = 'pointer';
-  });
-
-  this.map.on('mouseleave', `${layer.id}-layer`, () => {
-    this.map.getCanvas().style.cursor = '';
-  });
-
-  // Zoom to layer extent
+  // Fit to bounds
   const bounds = new maplibregl.LngLatBounds();
-  geojsonData.features.forEach(feature => {
-    if (feature.geometry.type === 'Point') {
-      bounds.extend(feature.geometry.coordinates);
-    } else if (feature.geometry.type === 'LineString') {
-      feature.geometry.coordinates.forEach(coord => bounds.extend(coord));
-    } else if (feature.geometry.type === 'Polygon') {
-      feature.geometry.coordinates[0].forEach(coord => bounds.extend(coord));
+  data.features.forEach(f => {
+    if (f.geometry.type === 'Point') {
+      bounds.extend(f.geometry.coordinates);
     }
   });
-
+  
   if (!bounds.isEmpty()) {
     this.map.fitBounds(bounds, { padding: 50 });
   }
 
-  this.setState(prev => ({ 
-    layersLoaded: prev.layersLoaded + 1,
-    featureCount: prev.featureCount + geojsonData.features.length
-  }));
+  // Add popup
+  this.map.on('click', 'features-layer', (e) => {
+    const props = e.features[0].properties;
+    const html = Object.entries(props)
+      .slice(0, 5)
+      .map(([k, v]) => `<b>${k}:</b> ${v}`)
+      .join('<br>');
 
-  console.log(`✓ Layer ${layer.name} loaded successfully with ${geojsonData.features.length} features`);
+    new maplibregl.Popup()
+      .setLngLat(e.lngLat)
+      .setHTML(html)
+      .addTo(this.map);
+  });
+
+  this.setState({ 
+    status: `✓ Loaded ${data.features.length} features`,
+    error: null
+  });
 
 } catch (error) {
-  console.error(`Failed to load layer ${layer.name}:`, error);
-  this.addError(`Failed to load ${layer.name}: ${error.message}`);
+  console.error('Load error:', error);
+  this.setState({ 
+    status: 'Failed to load',
+    error: error.message
+  });
 }
 ```
 
-}
-
-addError = (error: string) => {
-this.setState(prev => ({
-errors: […prev.errors, error]
-}));
 }
 
 componentWillUnmount() {
@@ -256,51 +169,26 @@ this.map.remove();
 }
 
 render() {
-const { mapLoaded, layersLoaded, errors, featureCount } = this.state;
+return (
+<div css={css`width: 100%; height: 100%; position: relative;`}>
+<div ref={el => this.mapContainer = el} css={css`width: 100%; height: 100%;`} />
 
 ```
-return (
-  <div css={css`
-    width: 100%;
-    height: 100%;
-    position: relative;
-  `}>
-    <div
-      ref={el => this.mapContainer = el}
-      css={css`
-        width: 100%;
-        height: 100%;
-      `}
-    />
-    
-    {/* Status Panel */}
     <div css={css`
       position: absolute;
       top: 10px;
       left: 10px;
       background: white;
-      padding: 10px 15px;
+      padding: 8px 12px;
       border-radius: 4px;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-      font-size: 12px;
-      max-width: 300px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+      font-size: 13px;
       z-index: 1;
     `}>
-      <div><strong>Map Status:</strong> {mapLoaded ? '✓ Loaded' : 'Loading...'}</div>
-      <div><strong>Layers:</strong> {layersLoaded} / {this.featureLayers.length}</div>
-      <div><strong>Features:</strong> {featureCount}</div>
-      
-      {errors.length > 0 && (
-        <div css={css`
-          margin-top: 10px;
-          padding-top: 10px;
-          border-top: 1px solid #ddd;
-          color: #d32f2f;
-        `}>
-          <strong>Errors:</strong>
-          {errors.map((err, idx) => (
-            <div key={idx} css={css`font-size: 11px; margin-top: 4px;`}>• {err}</div>
-          ))}
+      <div>{this.state.status}</div>
+      {this.state.error && (
+        <div css={css`color: red; margin-top: 5px; font-size: 12px;`}>
+          {this.state.error}
         </div>
       )}
     </div>
