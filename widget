@@ -1,200 +1,191 @@
 /** @jsx jsx */
-import { React, AllWidgetProps, jsx, css } from ‘jimu-core’;
-import maplibregl from ‘maplibre-gl’;
-import ‘maplibre-gl/dist/maplibre-gl.css’;
+import { React, AllWidgetProps, jsx, css } from 'jimu-core';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 
 export default class Widget extends React.PureComponent<AllWidgetProps<any>, any> {
-mapContainer: HTMLDivElement;
-map: maplibregl.Map;
+  mapContainer: HTMLDivElement;
+  map: maplibregl.Map;
 
-// CONFIGURE YOUR FEATURE LAYER URL HERE
-FEATURE_SERVER_URL = ‘https://sampleserver6.arcgisonline.com/arcgis/rest/services/USA/MapServer/0’;
+  // CONFIGURE YOUR FEATURE LAYER URL HERE
+  FEATURE_SERVER_URL = 'https://sampleserver6.arcgisonline.com/arcgis/rest/services/USA/MapServer/0';
 
-constructor(props) {
-super(props);
-this.state = {
-status: ‘Initializing…’,
-error: null
-};
-}
-
-componentDidMount() {
-this.initializeMap();
-}
-
-initializeMap = () => {
-// Initialize map with Carto basemap
-this.map = new maplibregl.Map({
-container: this.mapContainer,
-style: ‘https://basemaps.cartocdn.com/gl/positron-gl-style/style.json’,
-center: [-98.5795, 39.8283],
-zoom: 4
-});
-
-```
-this.map.addControl(new maplibregl.NavigationControl(), 'top-right');
-
-this.map.on('load', () => {
-  this.setState({ status: 'Map loaded, fetching features...' });
-  this.loadFeatures();
-});
-
-this.map.on('error', (e) => {
-  console.error('Map error:', e);
-  this.setState({ error: 'Map initialization error' });
-});
-```
-
-}
-
-loadFeatures = async () => {
-try {
-const url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&f=geojson&returnGeometry=true`;
-
-```
-  console.log('Fetching from:', url);
-  
-  const response = await fetch(url);
-  const data = await response.json();
-
-  console.log('Response:', data);
-
-  if (!data.features || data.features.length === 0) {
-    this.setState({ 
-      status: 'No features found',
-      error: 'The layer returned 0 features. Check your URL.'
-    });
-    return;
+  constructor(props) {
+    super(props);
+    this.state = {
+      status: 'Initializing...',
+      error: null
+    };
   }
 
-  // Add source
-  this.map.addSource('features', {
-    type: 'geojson',
-    data: data
-  });
+  componentDidMount() {
+    this.initializeMap();
+  }
 
-  // Detect geometry type
-  const geomType = data.features[0].geometry.type.toLowerCase();
+  initializeMap = () => {
+    // Initialize map with Carto basemap
+    this.map = new maplibregl.Map({
+      container: this.mapContainer,
+      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      center: [-98.5795, 39.8283],
+      zoom: 4
+    });
 
-  // Add layer based on geometry
-  if (geomType.includes('point')) {
-    this.map.addLayer({
-      id: 'features-layer',
-      type: 'circle',
-      source: 'features',
-      paint: {
-        'circle-radius': 6,
-        'circle-color': '#FF5722',
-        'circle-stroke-width': 2,
-        'circle-stroke-color': '#FFF'
-      }
+    this.map.addControl(new maplibregl.NavigationControl(), 'top-right');
+
+    this.map.on('load', () => {
+      this.setState({ status: 'Map loaded, fetching features...' });
+      this.loadFeatures();
     });
-  } else if (geomType.includes('line')) {
-    this.map.addLayer({
-      id: 'features-layer',
-      type: 'line',
-      source: 'features',
-      paint: {
-        'line-color': '#2196F3',
-        'line-width': 3
-      }
-    });
-  } else {
-    this.map.addLayer({
-      id: 'features-layer',
-      type: 'fill',
-      source: 'features',
-      paint: {
-        'fill-color': '#4CAF50',
-        'fill-opacity': 0.6
-      }
-    });
-    this.map.addLayer({
-      id: 'features-outline',
-      type: 'line',
-      source: 'features',
-      paint: {
-        'line-color': '#1B5E20',
-        'line-width': 2
-      }
+
+    this.map.on('error', (e) => {
+      console.error('Map error:', e);
+      this.setState({ error: 'Map initialization error' });
     });
   }
 
-  // Fit to bounds
-  const bounds = new maplibregl.LngLatBounds();
-  data.features.forEach(f => {
-    if (f.geometry.type === 'Point') {
-      bounds.extend(f.geometry.coordinates);
+  loadFeatures = async () => {
+    try {
+      const url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&f=geojson&returnGeometry=true`;
+      
+      console.log('Fetching from:', url);
+      
+      const response = await fetch(url);
+      const data = await response.json();
+
+      console.log('Response:', data);
+
+      if (!data.features || data.features.length === 0) {
+        this.setState({ 
+          status: 'No features found',
+          error: 'The layer returned 0 features. Check your URL.'
+        });
+        return;
+      }
+
+      // Add source
+      this.map.addSource('features', {
+        type: 'geojson',
+        data: data
+      });
+
+      // Detect geometry type
+      const geomType = data.features[0].geometry.type.toLowerCase();
+
+      // Add layer based on geometry
+      if (geomType.includes('point')) {
+        this.map.addLayer({
+          id: 'features-layer',
+          type: 'circle',
+          source: 'features',
+          paint: {
+            'circle-radius': 6,
+            'circle-color': '#FF5722',
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#FFF'
+          }
+        });
+      } else if (geomType.includes('line')) {
+        this.map.addLayer({
+          id: 'features-layer',
+          type: 'line',
+          source: 'features',
+          paint: {
+            'line-color': '#2196F3',
+            'line-width': 3
+          }
+        });
+      } else {
+        this.map.addLayer({
+          id: 'features-layer',
+          type: 'fill',
+          source: 'features',
+          paint: {
+            'fill-color': '#4CAF50',
+            'fill-opacity': 0.6
+          }
+        });
+        this.map.addLayer({
+          id: 'features-outline',
+          type: 'line',
+          source: 'features',
+          paint: {
+            'line-color': '#1B5E20',
+            'line-width': 2
+          }
+        });
+      }
+
+      // Fit to bounds
+      const bounds = new maplibregl.LngLatBounds();
+      data.features.forEach(f => {
+        if (f.geometry.type === 'Point') {
+          bounds.extend(f.geometry.coordinates);
+        }
+      });
+      
+      if (!bounds.isEmpty()) {
+        this.map.fitBounds(bounds, { padding: 50 });
+      }
+
+      // Add popup
+      this.map.on('click', 'features-layer', (e) => {
+        const props = e.features[0].properties;
+        const html = Object.entries(props)
+          .slice(0, 5)
+          .map(([k, v]) => `<b>${k}:</b> ${v}`)
+          .join('<br>');
+
+        new maplibregl.Popup()
+          .setLngLat(e.lngLat)
+          .setHTML(html)
+          .addTo(this.map);
+      });
+
+      this.setState({ 
+        status: `✓ Loaded ${data.features.length} features`,
+        error: null
+      });
+
+    } catch (error) {
+      console.error('Load error:', error);
+      this.setState({ 
+        status: 'Failed to load',
+        error: error.message
+      });
     }
-  });
-  
-  if (!bounds.isEmpty()) {
-    this.map.fitBounds(bounds, { padding: 50 });
   }
 
-  // Add popup
-  this.map.on('click', 'features-layer', (e) => {
-    const props = e.features[0].properties;
-    const html = Object.entries(props)
-      .slice(0, 5)
-      .map(([k, v]) => `<b>${k}:</b> ${v}`)
-      .join('<br>');
+  componentWillUnmount() {
+    if (this.map) {
+      this.map.remove();
+    }
+  }
 
-    new maplibregl.Popup()
-      .setLngLat(e.lngLat)
-      .setHTML(html)
-      .addTo(this.map);
-  });
-
-  this.setState({ 
-    status: `✓ Loaded ${data.features.length} features`,
-    error: null
-  });
-
-} catch (error) {
-  console.error('Load error:', error);
-  this.setState({ 
-    status: 'Failed to load',
-    error: error.message
-  });
-}
-```
-
-}
-
-componentWillUnmount() {
-if (this.map) {
-this.map.remove();
-}
-}
-
-render() {
-return (
-<div css={css`width: 100%; height: 100%; position: relative;`}>
-<div ref={el => this.mapContainer = el} css={css`width: 100%; height: 100%;`} />
-
-```
-    <div css={css`
-      position: absolute;
-      top: 10px;
-      left: 10px;
-      background: white;
-      padding: 8px 12px;
-      border-radius: 4px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-      font-size: 13px;
-      z-index: 1;
-    `}>
-      <div>{this.state.status}</div>
-      {this.state.error && (
-        <div css={css`color: red; margin-top: 5px; font-size: 12px;`}>
-          {this.state.error}
+  render() {
+    return (
+      <div css={css`width: 100%; height: 100%; position: relative;`}>
+        <div ref={el => this.mapContainer = el} css={css`width: 100%; height: 100%;`} />
+        
+        <div css={css`
+          position: absolute;
+          top: 10px;
+          left: 10px;
+          background: white;
+          padding: 8px 12px;
+          border-radius: 4px;
+          box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+          font-size: 13px;
+          z-index: 1;
+        `}>
+          <div>{this.state.status}</div>
+          {this.state.error && (
+            <div css={css`color: red; margin-top: 5px; font-size: 12px;`}>
+              {this.state.error}
+            </div>
+          )}
         </div>
-      )}
-    </div>
-  </div>
-);
-```
-
-}
+      </div>
+    );
+  }
 }
