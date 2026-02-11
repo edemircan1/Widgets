@@ -1,5 +1,6 @@
 /** @jsx jsx */
 import { React, AllWidgetProps, jsx, css } from 'jimu-core';
+import { loadArcGISJSAPIModules } from 'jimu-arcgis';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -8,10 +9,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   map: maplibregl.Map;
 
   // PUT YOUR FEATURE SERVER URL HERE
-  FEATURE_SERVER_URL = 'https://sampleserver6.arcgisonline.com/arcgis/rest/services/USA/MapServer/2';
-  
-  // PUT YOUR TOKEN HERE (if required) - leave empty if public
-  TOKEN = '';
+  FEATURE_SERVER_URL = 'https://your-enterprise.com/arcgis/rest/services/YourService/FeatureServer/0';
 
   constructor(props) {
     super(props);
@@ -44,42 +42,45 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
   loadData = async () => {
     try {
-      const params = new URLSearchParams({
-        where: '1=1',
-        outFields: '*',
-        returnGeometry: 'true',
-        outSR: '4326',
-        f: 'geojson'
+      this.setState({ status: 'Loading ArcGIS modules...' });
+
+      // Use ArcGIS JS API to handle authentication and CORS
+      const [esriRequest, IdentityManager] = await loadArcGISJSAPIModules([
+        'esri/request',
+        'esri/identity/IdentityManager'
+      ]);
+
+      this.setState({ status: 'Fetching features...' });
+
+      const queryUrl = `${this.FEATURE_SERVER_URL}/query`;
+      
+      const response = await esriRequest(queryUrl, {
+        query: {
+          where: '1=1',
+          outFields: '*',
+          returnGeometry: true,
+          outSR: 4326,
+          f: 'geojson'
+        },
+        responseType: 'json'
       });
 
-      // Add token if provided
-      if (this.TOKEN) {
-        params.append('token', this.TOKEN);
-      }
-
-      const url = `${this.FEATURE_SERVER_URL}/query?${params}`;
-      
-      console.log('Fetching:', url.replace(this.TOKEN, 'TOKEN_HIDDEN'));
-      this.setState({ status: 'Fetching features...' });
-      
-      const res = await fetch(url);
-      const json = await res.json();
+      const json = response.data;
 
       console.log('Response:', json);
 
       if (json.error) {
         this.setState({ 
-          status: 'Error',
+          status: 'ArcGIS Error',
           error: `${json.error.message || JSON.stringify(json.error)}`
         });
-        console.error('ArcGIS Error:', json.error);
         return;
       }
 
       if (!json.features || json.features.length === 0) {
         this.setState({ 
-          status: 'No features found',
-          error: 'Layer returned 0 features. Check your URL or layer data.'
+          status: 'No features',
+          error: 'Layer returned 0 features.'
         });
         return;
       }
@@ -169,8 +170,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     } catch (err) {
       console.error('Error:', err);
       this.setState({ 
-        status: 'Failed to load',
-        error: err.message
+        status: 'Failed',
+        error: err.message || JSON.stringify(err)
       });
     }
   }
@@ -192,16 +193,16 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
           padding: 10px 15px;
           border-radius: 4px;
           box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-          font-size: 13px;
+          font-size: 12px;
           z-index: 1;
-          min-width: 200px;
+          min-width: 250px;
         `}>
           <div><strong>Status:</strong> {this.state.status}</div>
           {this.state.count > 0 && (
             <div><strong>Features:</strong> {this.state.count}</div>
           )}
           {this.state.error && (
-            <div css={css`color: #d32f2f; margin-top: 8px; font-size: 12px;`}>
+            <div css={css`color: #d32f2f; margin-top: 8px; font-size: 11px;`}>
               <strong>Error:</strong><br/>{this.state.error}
             </div>
           )}
