@@ -1,5 +1,5 @@
 /** @jsx jsx */
-import { React, AllWidgetProps, jsx, css } from 'jimu-core';
+import { React, AllWidgetProps, jsx } from 'jimu-core';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -7,185 +7,126 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   mapContainer: HTMLDivElement;
   map: maplibregl.Map;
 
-  // CONFIGURE YOUR FEATURE LAYER URL HERE
+  // PUT YOUR FEATURE SERVER URL HERE
   FEATURE_SERVER_URL = 'https://sampleserver6.arcgisonline.com/arcgis/rest/services/USA/MapServer/0';
 
-  constructor(props) {
-    super(props);
-    this.state = {
-      status: 'Initializing...',
-      error: null
-    };
-  }
-
   componentDidMount() {
-    this.initializeMap();
+    this.initMap();
   }
 
-  initializeMap = () => {
-    // Initialize map with Carto basemap
+  initMap = () => {
     this.map = new maplibregl.Map({
       container: this.mapContainer,
       style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
-      center: [-98.5795, 39.8283],
+      center: [-98, 39],
       zoom: 4
     });
 
-    this.map.addControl(new maplibregl.NavigationControl(), 'top-right');
-
     this.map.on('load', () => {
-      this.setState({ status: 'Map loaded, fetching features...' });
-      this.loadFeatures();
-    });
-
-    this.map.on('error', (e) => {
-      console.error('Map error:', e);
-      this.setState({ error: 'Map initialization error' });
+      this.loadData();
     });
   }
 
-  loadFeatures = async () => {
+  loadData = async () => {
     try {
-      const url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&f=geojson&returnGeometry=true`;
+      const url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&outSR=4326&f=geojson`;
       
-      console.log('Fetching from:', url);
+      console.log('Fetching:', url);
       
-      const response = await fetch(url);
-      const data = await response.json();
+      const res = await fetch(url);
+      const json = await res.json();
 
-      console.log('Response:', data);
+      console.log('Data received:', json);
 
-      if (!data.features || data.features.length === 0) {
-        this.setState({ 
-          status: 'No features found',
-          error: 'The layer returned 0 features. Check your URL.'
-        });
+      if (json.error) {
+        console.error('ArcGIS Error:', json.error);
         return;
       }
 
-      // Add source
-      this.map.addSource('features', {
+      if (!json.features || json.features.length === 0) {
+        console.warn('No features found');
+        return;
+      }
+
+      console.log(`Features: ${json.features.length}`);
+
+      this.map.addSource('data', {
         type: 'geojson',
-        data: data
+        data: json
       });
 
-      // Detect geometry type
-      const geomType = data.features[0].geometry.type.toLowerCase();
+      const type = json.features[0].geometry.type.toLowerCase();
 
-      // Add layer based on geometry
-      if (geomType.includes('point')) {
+      if (type.includes('point')) {
         this.map.addLayer({
-          id: 'features-layer',
+          id: 'layer',
           type: 'circle',
-          source: 'features',
+          source: 'data',
           paint: {
-            'circle-radius': 6,
-            'circle-color': '#FF5722',
-            'circle-stroke-width': 2,
-            'circle-stroke-color': '#FFF'
+            'circle-radius': 5,
+            'circle-color': '#e74c3c',
+            'circle-stroke-width': 1,
+            'circle-stroke-color': '#fff'
           }
         });
-      } else if (geomType.includes('line')) {
+      } else if (type.includes('line')) {
         this.map.addLayer({
-          id: 'features-layer',
+          id: 'layer',
           type: 'line',
-          source: 'features',
+          source: 'data',
           paint: {
-            'line-color': '#2196F3',
-            'line-width': 3
+            'line-color': '#3498db',
+            'line-width': 2
           }
         });
       } else {
         this.map.addLayer({
-          id: 'features-layer',
+          id: 'layer',
           type: 'fill',
-          source: 'features',
+          source: 'data',
           paint: {
-            'fill-color': '#4CAF50',
-            'fill-opacity': 0.6
+            'fill-color': '#2ecc71',
+            'fill-opacity': 0.5
           }
         });
         this.map.addLayer({
-          id: 'features-outline',
+          id: 'outline',
           type: 'line',
-          source: 'features',
+          source: 'data',
           paint: {
-            'line-color': '#1B5E20',
-            'line-width': 2
+            'line-color': '#27ae60',
+            'line-width': 1
           }
         });
       }
 
-      // Fit to bounds
-      const bounds = new maplibregl.LngLatBounds();
-      data.features.forEach(f => {
+      // Zoom to data
+      const coords = [];
+      json.features.forEach(f => {
         if (f.geometry.type === 'Point') {
-          bounds.extend(f.geometry.coordinates);
+          coords.push(f.geometry.coordinates);
+        } else if (f.geometry.type === 'MultiPoint') {
+          coords.push(...f.geometry.coordinates);
         }
       });
-      
-      if (!bounds.isEmpty()) {
+
+      if (coords.length > 0) {
+        const bounds = coords.reduce((b, coord) => b.extend(coord), new maplibregl.LngLatBounds(coords[0], coords[0]));
         this.map.fitBounds(bounds, { padding: 50 });
       }
 
-      // Add popup
-      this.map.on('click', 'features-layer', (e) => {
-        const props = e.features[0].properties;
-        const html = Object.entries(props)
-          .slice(0, 5)
-          .map(([k, v]) => `<b>${k}:</b> ${v}`)
-          .join('<br>');
+      console.log('✓ Loaded successfully');
 
-        new maplibregl.Popup()
-          .setLngLat(e.lngLat)
-          .setHTML(html)
-          .addTo(this.map);
-      });
-
-      this.setState({ 
-        status: `✓ Loaded ${data.features.length} features`,
-        error: null
-      });
-
-    } catch (error) {
-      console.error('Load error:', error);
-      this.setState({ 
-        status: 'Failed to load',
-        error: error.message
-      });
+    } catch (err) {
+      console.error('Error:', err);
     }
   }
 
   componentWillUnmount() {
-    if (this.map) {
-      this.map.remove();
-    }
+    if (this.map) this.map.remove();
   }
 
   render() {
-    return (
-      <div css={css`width: 100%; height: 100%; position: relative;`}>
-        <div ref={el => this.mapContainer = el} css={css`width: 100%; height: 100%;`} />
-        
-        <div css={css`
-          position: absolute;
-          top: 10px;
-          left: 10px;
-          background: white;
-          padding: 8px 12px;
-          border-radius: 4px;
-          box-shadow: 0 1px 4px rgba(0,0,0,0.3);
-          font-size: 13px;
-          z-index: 1;
-        `}>
-          <div>{this.state.status}</div>
-          {this.state.error && (
-            <div css={css`color: red; margin-top: 5px; font-size: 12px;`}>
-              {this.state.error}
-            </div>
-          )}
-        </div>
-      </div>
-    );
+    return <div ref={el => this.mapContainer = el} style={{ width: '100%', height: '100%' }} />;
   }
 }
