@@ -9,6 +9,9 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
   // PUT YOUR FEATURE SERVER URL HERE
   FEATURE_SERVER_URL = 'https://sampleserver6.arcgisonline.com/arcgis/rest/services/USA/MapServer/2';
+  
+  // PUT YOUR TOKEN HERE (if required) - leave empty if public
+  TOKEN = '';
 
   constructor(props) {
     super(props);
@@ -49,9 +52,14 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
         f: 'geojson'
       });
 
+      // Add token if provided
+      if (this.TOKEN) {
+        params.append('token', this.TOKEN);
+      }
+
       const url = `${this.FEATURE_SERVER_URL}/query?${params}`;
       
-      console.log('Fetching:', url);
+      console.log('Fetching:', url.replace(this.TOKEN, 'TOKEN_HIDDEN'));
       this.setState({ status: 'Fetching features...' });
       
       const res = await fetch(url);
@@ -62,7 +70,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       if (json.error) {
         this.setState({ 
           status: 'Error',
-          error: `ArcGIS Error: ${json.error.message || JSON.stringify(json.error)}`
+          error: `${json.error.message || JSON.stringify(json.error)}`
         });
         console.error('ArcGIS Error:', json.error);
         return;
