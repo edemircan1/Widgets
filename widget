@@ -1,109 +1,312 @@
 /** @jsx jsx */
-import { React, AllWidgetProps, jsx } from 'jimu-core';
-import { JimuMapViewComponent, JimuMapView } from 'jimu-arcgis';
-import maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
+import { React, AllWidgetProps, jsx, css } from ‘jimu-core’;
+import maplibregl from ‘maplibre-gl’;
+import ‘maplibre-gl/dist/maplibre-gl.css’;
 
-// Import the esri-sources plugin
-// import { addEsriFeatureLayer } from 'mapbox-gl-esri-sources';
+interface FeatureLayer {
+id: string;
+url: string;
+name: string;
+type: ‘point’ | ‘line’ | ‘polygon’;
+style?: any;
+}
 
-export default class Widget extends React.PureComponent<AllWidgetProps<any>, any> {
-  mapContainer: HTMLDivElement;
-  map: maplibregl.Map;
+interface WidgetState {
+mapLoaded: boolean;
+layersLoaded: number;
+errors: string[];
+featureCount: number;
+}
 
-  constructor(props) {
-    super(props);
-    this.state = {};
+export default class Widget extends React.PureComponent<AllWidgetProps<any>, WidgetState> {
+mapContainer: HTMLDivElement;
+map: maplibregl.Map;
+
+// CONFIGURE YOUR FEATURE LAYERS HERE
+featureLayers: FeatureLayer[] = [
+{
+id: ‘layer1’,
+name: ‘Sample Layer’,
+url: ‘https://services.arcgis.com/YOUR_ORG/arcgis/rest/services/YOUR_SERVICE/FeatureServer/0’,
+type: ‘point’
+}
+// Add more layers here:
+// {
+//   id: ‘layer2’,
+//   name: ‘Another Layer’,
+//   url: ‘https://services.arcgis.com/YOUR_ORG/arcgis/rest/services/ANOTHER_SERVICE/FeatureServer/0’,
+//   type: ‘polygon’
+// }
+];
+
+constructor(props) {
+super(props);
+this.state = {
+mapLoaded: false,
+layersLoaded: 0,
+errors: [],
+featureCount: 0
+};
+}
+
+componentDidMount() {
+this.initializeMap();
+}
+
+initializeMap = () => {
+try {
+// Initialize MapLibre map with Esri World Imagery basemap
+this.map = new maplibregl.Map({
+container: this.mapContainer,
+style: ‘https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json’,
+center: [-98.5795, 39.8283], // Center of USA
+zoom: 4,
+attributionControl: true
+});
+
+```
+  // Add navigation controls
+  this.map.addControl(new maplibregl.NavigationControl(), 'top-right');
+  this.map.addControl(new maplibregl.ScaleControl(), 'bottom-left');
+
+  // Map load event
+  this.map.on('load', () => {
+    console.log('Map loaded successfully');
+    this.setState({ mapLoaded: true });
+    this.loadAllFeatureLayers();
+  });
+
+  // Error handling
+  this.map.on('error', (e) => {
+    console.error('Map error:', e);
+    this.addError('Map error: ' + e.error.message);
+  });
+
+} catch (error) {
+  console.error('Failed to initialize map:', error);
+  this.addError('Failed to initialize map: ' + error.message);
+}
+```
+
+}
+
+loadAllFeatureLayers = async () => {
+for (const layer of this.featureLayers) {
+await this.addFeatureServerLayer(layer);
+}
+}
+
+addFeatureServerLayer = async (layer: FeatureLayer) => {
+try {
+console.log(`Loading layer: ${layer.name} from ${layer.url}`);
+
+```
+  // First, get layer info to determine geometry type
+  const infoResponse = await fetch(`${layer.url}?f=json`);
+  const infoData = await infoResponse.json();
+  
+  console.log('Layer info:', infoData);
+
+  // Fetch features as GeoJSON
+  const queryUrl = `${layer.url}/query?where=1=1&outFields=*&f=geojson&returnGeometry=true`;
+  console.log('Fetching from:', queryUrl);
+  
+  const response = await fetch(queryUrl);
+  
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`);
   }
 
-  componentDidMount() {
-    this.initializeMap();
+  const geojsonData = await response.json();
+  
+  console.log('GeoJSON data:', geojsonData);
+  console.log('Features count:', geojsonData.features?.length || 0);
+
+  if (!geojsonData.features || geojsonData.features.length === 0) {
+    this.addError(`No features found in layer: ${layer.name}`);
+    return;
   }
 
-  initializeMap = () => {
-    // Initialize MapLibre map with OpenStreetMap basemap
-    this.map = new maplibregl.Map({
-      container: this.mapContainer,
-      style: {
-        version: 8,
-        sources: {
-          'osm': {
-            type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-            tileSize: 256,
-            attribution: '© OpenStreetMap contributors'
-          }
-        },
-        layers: [
-          {
-            id: 'osm',
-            type: 'raster',
-            source: 'osm',
-            minzoom: 0,
-            maxzoom: 22
-          }
-        ]
-      },
-      center: [-118.2437, 34.0522], // Default to LA
-      zoom: 10
-    });
+  // Add source
+  this.map.addSource(layer.id, {
+    type: 'geojson',
+    data: geojsonData
+  });
 
-    this.map.on('load', () => {
-      this.addFeatureServerLayer();
-    });
-  }
+  // Determine geometry type from first feature if not specified
+  const firstFeature = geojsonData.features[0];
+  const geometryType = firstFeature.geometry.type.toLowerCase();
+  
+  console.log('Geometry type:', geometryType);
 
-  addFeatureServerLayer = () => {
-    // REPLACE THIS URL WITH YOUR FEATURESERVER URL
-    const featureServerUrl = 'https://services.arcgis.com/YOUR_ORG/arcgis/rest/services/YOUR_SERVICE/FeatureServer/0';
-
-    // Add source
-    this.map.addSource('esri-feature-source', {
-      type: 'geojson',
-      data: {
-        type: 'FeatureCollection',
-        features: []
-      }
-    });
-
-    // Fetch data from FeatureServer
-    fetch(`${featureServerUrl}/query?where=1=1&outFields=*&f=geojson`)
-      .then(response => response.json())
-      .then(data => {
-        const source = this.map.getSource('esri-feature-source') as maplibregl.GeoJSONSource;
-        if (source) {
-          source.setData(data);
-        }
-      });
-
-    // Add layer to display the features
+  // Add appropriate layer based on geometry type
+  if (geometryType.includes('point')) {
     this.map.addLayer({
-      id: 'esri-feature-layer',
+      id: `${layer.id}-layer`,
       type: 'circle',
-      source: 'esri-feature-source',
+      source: layer.id,
       paint: {
-        'circle-radius': 6,
-        'circle-color': '#007cbf',
+        'circle-radius': 8,
+        'circle-color': '#FF5722',
         'circle-stroke-width': 2,
-        'circle-stroke-color': '#ffffff'
+        'circle-stroke-color': '#FFFFFF',
+        'circle-opacity': 0.8
+      }
+    });
+  } else if (geometryType.includes('line') || geometryType.includes('string')) {
+    this.map.addLayer({
+      id: `${layer.id}-layer`,
+      type: 'line',
+      source: layer.id,
+      paint: {
+        'line-color': '#2196F3',
+        'line-width': 3,
+        'line-opacity': 0.8
+      }
+    });
+  } else if (geometryType.includes('polygon')) {
+    // Add fill layer
+    this.map.addLayer({
+      id: `${layer.id}-fill`,
+      type: 'fill',
+      source: layer.id,
+      paint: {
+        'fill-color': '#4CAF50',
+        'fill-opacity': 0.5
+      }
+    });
+    
+    // Add outline layer
+    this.map.addLayer({
+      id: `${layer.id}-outline`,
+      type: 'line',
+      source: layer.id,
+      paint: {
+        'line-color': '#1B5E20',
+        'line-width': 2
       }
     });
   }
 
-  componentWillUnmount() {
-    if (this.map) {
-      this.map.remove();
+  // Add popup on click
+  this.map.on('click', `${layer.id}-layer`, (e) => {
+    const coordinates = e.lngLat;
+    const properties = e.features[0].properties;
+    
+    const popupContent = Object.entries(properties)
+      .map(([key, value]) => `<strong>${key}:</strong> ${value}`)
+      .join('<br>');
+
+    new maplibregl.Popup()
+      .setLngLat(coordinates)
+      .setHTML(popupContent)
+      .addTo(this.map);
+  });
+
+  // Change cursor on hover
+  this.map.on('mouseenter', `${layer.id}-layer`, () => {
+    this.map.getCanvas().style.cursor = 'pointer';
+  });
+
+  this.map.on('mouseleave', `${layer.id}-layer`, () => {
+    this.map.getCanvas().style.cursor = '';
+  });
+
+  // Zoom to layer extent
+  const bounds = new maplibregl.LngLatBounds();
+  geojsonData.features.forEach(feature => {
+    if (feature.geometry.type === 'Point') {
+      bounds.extend(feature.geometry.coordinates);
+    } else if (feature.geometry.type === 'LineString') {
+      feature.geometry.coordinates.forEach(coord => bounds.extend(coord));
+    } else if (feature.geometry.type === 'Polygon') {
+      feature.geometry.coordinates[0].forEach(coord => bounds.extend(coord));
     }
+  });
+
+  if (!bounds.isEmpty()) {
+    this.map.fitBounds(bounds, { padding: 50 });
   }
 
-  render() {
-    return (
-      <div className="widget-maplibre" style={{ width: '100%', height: '100%' }}>
-        <div
-          ref={el => this.mapContainer = el}
-          style={{ width: '100%', height: '100%' }}
-        />
-      </div>
-    );
-  }
+  this.setState(prev => ({ 
+    layersLoaded: prev.layersLoaded + 1,
+    featureCount: prev.featureCount + geojsonData.features.length
+  }));
+
+  console.log(`✓ Layer ${layer.name} loaded successfully with ${geojsonData.features.length} features`);
+
+} catch (error) {
+  console.error(`Failed to load layer ${layer.name}:`, error);
+  this.addError(`Failed to load ${layer.name}: ${error.message}`);
+}
+```
+
+}
+
+addError = (error: string) => {
+this.setState(prev => ({
+errors: […prev.errors, error]
+}));
+}
+
+componentWillUnmount() {
+if (this.map) {
+this.map.remove();
+}
+}
+
+render() {
+const { mapLoaded, layersLoaded, errors, featureCount } = this.state;
+
+```
+return (
+  <div css={css`
+    width: 100%;
+    height: 100%;
+    position: relative;
+  `}>
+    <div
+      ref={el => this.mapContainer = el}
+      css={css`
+        width: 100%;
+        height: 100%;
+      `}
+    />
+    
+    {/* Status Panel */}
+    <div css={css`
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: white;
+      padding: 10px 15px;
+      border-radius: 4px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      font-size: 12px;
+      max-width: 300px;
+      z-index: 1;
+    `}>
+      <div><strong>Map Status:</strong> {mapLoaded ? '✓ Loaded' : 'Loading...'}</div>
+      <div><strong>Layers:</strong> {layersLoaded} / {this.featureLayers.length}</div>
+      <div><strong>Features:</strong> {featureCount}</div>
+      
+      {errors.length > 0 && (
+        <div css={css`
+          margin-top: 10px;
+          padding-top: 10px;
+          border-top: 1px solid #ddd;
+          color: #d32f2f;
+        `}>
+          <strong>Errors:</strong>
+          {errors.map((err, idx) => (
+            <div key={idx} css={css`font-size: 11px; margin-top: 4px;`}>• {err}</div>
+          ))}
+        </div>
+      )}
+    </div>
+  </div>
+);
+```
+
+}
 }
