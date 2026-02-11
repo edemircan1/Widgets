@@ -1,6 +1,5 @@
 /** @jsx jsx */
 import { React, AllWidgetProps, jsx, css } from 'jimu-core';
-import { getAppStore } from 'jimu-core';
 import { loadArcGISJSAPIModules } from 'jimu-arcgis';
 import maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -11,6 +10,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
   // PUT YOUR FEATURE SERVER URL HERE
   FEATURE_SERVER_URL = 'https://your-server/arcgissecure/rest/services/inp/abc/FeatureServer/2';
+  
+  // PUT YOUR PORTAL URL HERE
+  PORTAL_URL = 'https://your-portal.com/portal';
+  
+  // PUT YOUR TOKEN HERE (get from: https://your-portal.com/portal/sharing/rest/generateToken)
+  TOKEN = '';
 
   constructor(props) {
     super(props);
@@ -36,47 +41,37 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     });
 
     this.map.on('load', () => {
-      this.setState({ status: 'Checking authentication...' });
+      this.setState({ status: 'Loading data...' });
       this.loadData();
     });
   }
 
   loadData = async () => {
     try {
-      // Get portal info from Experience Builder
-      const appState = getAppStore().getState();
-      const portalUrl = appState?.portalUrl;
-      const token = appState?.token;
-
-      console.log('Portal URL:', portalUrl);
-      console.log('Has token:', !!token);
-
       this.setState({ status: 'Loading ArcGIS modules...' });
 
-      const [esriRequest, esriConfig, IdentityManager, OAuthInfo, ServerInfo] = await loadArcGISJSAPIModules([
+      const [esriRequest, IdentityManager] = await loadArcGISJSAPIModules([
         'esri/request',
-        'esri/config',
-        'esri/identity/IdentityManager',
-        'esri/identity/OAuthInfo',
-        'esri/identity/ServerInfo'
+        'esri/identity/IdentityManager'
       ]);
 
-      // Configure identity if we have token
-      if (token && portalUrl) {
+      // Register token manually
+      if (this.TOKEN) {
         console.log('Registering token...');
         
-        // Register the token with IdentityManager
-        IdentityManager.registerToken({
-          server: portalUrl,
-          token: token
-        });
-
-        // Also register for the secure endpoint
         const serverUrl = this.FEATURE_SERVER_URL.split('/rest/')[0];
+        
         IdentityManager.registerToken({
           server: serverUrl,
-          token: token
+          token: this.TOKEN
         });
+        
+        if (this.PORTAL_URL) {
+          IdentityManager.registerToken({
+            server: this.PORTAL_URL,
+            token: this.TOKEN
+          });
+        }
       }
 
       this.setState({ status: 'Fetching features...' });
