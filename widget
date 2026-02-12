@@ -1,1 +1,231 @@
-Error: SyntaxError: Unexpected token '<', "<html lang"... is not valid JSON
+/** @jsx jsx */
+import { React, AllWidgetProps, jsx, css } from 'jimu-core';
+import maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+
+export default class Widget extends React.PureComponent<AllWidgetProps<any>, any> {
+  mapContainer: HTMLDivElement;
+  map: maplibregl.Map;
+
+  constructor(props) {
+    super(props);
+    this.state = {
+      status: 'Initializing...',
+      error: null,
+      count: 0,
+      token: null
+    };
+  }
+
+  componentDidMount() {
+    this.initMap();
+  }
+
+  getOauthToken = async () => {
+    try {
+      const response = await fetch("https://abc.dev.ebc.com/web/sharing/oauth2/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          f: "json",
+          referer: window.location.origin,
+          client_id: "clientid",
+          client_secret: "clientsecret",
+          grant_type: "client_credentials"
+        }),
+        credentials: "include"
+      });
+
+      if (!response.ok) {
+        throw new Error(`Response status: ${response.status}`);
+      }
+      const result = await response.json();
+      console.log(result.access_token);
+      return result.access_token;
+
+    } catch (error) {
+      console.error("Error fetching token:", error);
+      this.setState({
+        status: 'Token failed',
+        error: `Token Error: ${error.message}`
+      });
+      return null;
+    }
+  }
+
+  initMap = () => {
+    this.setState({ status: 'Loading basemap...' });
+
+    this.map = new maplibregl.Map({
+      container: this.mapContainer,
+      style: 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+      center: [0, 0],
+      zoom: 2
+    });
+
+    this.map.on('load', async () => {
+      this.setState({ status: 'Basemap loaded, requesting token...' });
+      const token = await this.getOauthToken();
+      if (token) {
+        this.setState({ token: token });
+        this.loadData(token);
+      }
+    });
+  }
+
+  loadData = async (token: string) => {
+    try {
+      const url = `https://abc.dev.ebc.com/arcgissecure/rest/services/ABC/IQ_aw/FeatureServer/2?token=${token}`;
+
+      console.log('Fetching:', url);
+      this.setState({ status: 'Fetching features...' });
+
+      const res = await fetch(url);
+      const json = await res.json();
+
+      console.log('Response:', json);
+
+      if (json.error) {
+        this.setState({
+          status: 'Error',
+          error: `ArcGIS Error: ${json.error.message || JSON.stringify(json.error)}`
+        });
+        return;
+      }
+
+      if (!json.features || json.features.length === 0) {
+        this.setState({
+          status: 'No features found',
+          error: 'Layer returned 0 features.'
+        });
+        return;
+      }
+
+      this.setState({
+        status: `Loading ${json.features.length} features...`,
+        count: json.features.length
+      });
+
+      this.map.addSource('data', {
+        type: 'geojson',
+        data: json
+      });
+
+      const geomType = json.features[0].geometry.type.toLowerCase();
+
+      if (geomType.includes('point')) {
+        this.map.addLayer({
+          id: 'layer',
+          type: 'circle',
+          source: 'data',
+          paint: {
+            'circle-radius': 6,
+            'circle-color': '#e74c3c',
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#fff'
+          }
+        });
+      } else if (geomType.includes('line')) {
+        this.map.addLayer({
+          id: 'layer',
+          type: 'line',
+          source: 'data',
+          paint: {
+            'line-color': '#3498db',
+            'line-width': 3
+          }
+        });
+      } else if (geomType.includes('polygon')) {
+        this.map.addLayer({
+          id: 'layer',
+          type: 'fill',
+          source: 'data',
+          paint: {
+            'fill-color': '#2ecc71',
+            'fill-opacity': 0.6
+          }
+        });
+        this.map.addLayer({
+          id: 'outline',
+          type: 'line',
+          source: 'data',
+          paint: {
+            'line-color': '#27ae60',
+            'line-width': 2
+          }
+        });
+      }
+
+      const bounds = new maplibregl.LngLatBounds();
+
+      json.features.forEach(feature => {
+        const geom = feature.geometry;
+        if (geom.type === 'Point') {
+          bounds.extend(geom.coordinates);
+        } else if (geom.type === 'LineString') {
+          geom.coordinates.forEach(coord => bounds.extend(coord));
+        } else if (geom.type === 'Polygon') {
+          geom.coordinates[0].forEach(coord => bounds.extend(coord));
+        } else if (geom.type === 'MultiPolygon') {
+          geom.coordinates.forEach(polygon => {
+            polygon[0].forEach(coord => bounds.extend(coord));
+          });
+        }
+      });
+
+      if (!bounds.isEmpty()) {
+        this.map.fitBounds(bounds, { padding: 50, maxZoom: 15 });
+      }
+
+      this.setState({
+        status: `✓ Loaded ${json.features.length} features`,
+        error: null
+      });
+
+    } catch (err) {
+      console.error('Error:', err);
+      this.setState({
+        status: 'Failed to load',
+        error: err.message
+      });
+    }
+  }
+
+  componentWillUnmount() {
+    if (this.map) this.map.remove();
+  }
+
+  render() {
+    return (
+      <div css={css`width: 100%; height: 100%; position: relative;`}>
+        <div ref={el => this.mapContainer = el} css={css`width: 100%; height: 100%;`} />
+
+        <div css={css`
+          position: absolute;
+          top: 10px;
+          left: 10px;
+          background: white;
+          padding: 10px 15px;
+          border-radius: 4px;
+          box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+          font-size: 13px;
+          z-index: 1;
+          min-width: 200px;
+        `}>
+          <div><strong>Status:</strong> {this.state.status}</div>
+          {this.state.token && (
+            <div><strong>Token:</strong> ✓ Acquired</div>
+          )}
+          {this.state.count > 0 && (
+            <div><strong>Features:</strong> {this.state.count}</div>
+          )}
+          {this.state.error && (
+            <div css={css`color: #d32f2f; margin-top: 8px; font-size: 12px;`}>
+              <strong>Error:</strong><br/>{this.state.error}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+}
