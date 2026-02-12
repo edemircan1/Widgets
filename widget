@@ -7,13 +7,16 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   mapContainer: HTMLDivElement;
   map: maplibregl.Map;
 
+  FEATURE_SERVER_URL = 'https://abc.dev.ebc.com/arcgissecure/rest/services/ABC/IQ_aw/FeatureServer/2';
+
   constructor(props) {
     super(props);
     this.state = {
       status: 'Initializing...',
       error: null,
       count: 0,
-      token: null
+      token: null,
+      method: null
     };
   }
 
@@ -45,10 +48,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     } catch (error) {
       console.error("Error fetching token:", error);
-      this.setState({
-        status: 'Token failed',
-        error: `Token Error: ${error.message}`
-      });
       return null;
     }
   }
@@ -63,39 +62,88 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       zoom: 2
     });
 
-    this.map.on('load', async () => {
-      this.setState({ status: 'Basemap loaded, requesting token...' });
-      const token = await this.getOauthToken();
-      if (token) {
-        this.setState({ token: token });
-        this.loadData(token);
-      }
+    this.map.on('load', () => {
+      this.setState({ status: 'Basemap loaded. Pick a method.' });
     });
   }
 
-  loadData = async (token: string) => {
+  // Method 1: Token as URL param (arkadaşının yöntemi)
+  tryMethod1 = async () => {
+    this.clearMap();
+    this.setState({ status: 'Method 1: Getting token...', method: 1, error: null });
+    const token = await this.getOauthToken();
+    if (!token) {
+      this.setState({ status: 'Method 1: Token failed', error: 'Could not get token' });
+      return;
+    }
+    this.setState({ token: token });
+    const url = `${this.FEATURE_SERVER_URL}/query?f=geojson&where=1=1&outFields=*&returnGeometry=true&outSR=4326&token=${token}`;
+    console.log('Method 1 Fetching:', url);
+    this.fetchAndRender(url, {});
+  }
+
+  // Method 2: Token as Bearer header
+  tryMethod2 = async () => {
+    this.clearMap();
+    this.setState({ status: 'Method 2: Getting token...', method: 2, error: null });
+    const token = await this.getOauthToken();
+    if (!token) {
+      this.setState({ status: 'Method 2: Token failed', error: 'Could not get token' });
+      return;
+    }
+    this.setState({ token: token });
+    const url = `${this.FEATURE_SERVER_URL}/query?f=geojson&where=1=1&outFields=*&returnGeometry=true&outSR=4326`;
+    console.log('Method 2 Fetching:', url);
+    this.fetchAndRender(url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+  }
+
+  // Method 3: No token, session cookie only
+  tryMethod3 = async () => {
+    this.clearMap();
+    this.setState({ status: 'Method 3: Using session cookie...', method: 3, error: null, token: null });
+    const url = `${this.FEATURE_SERVER_URL}/query?f=geojson&where=1=1&outFields=*&returnGeometry=true&outSR=4326`;
+    console.log('Method 3 Fetching:', url);
+    this.fetchAndRender(url, {
+      credentials: 'include'
+    });
+  }
+
+  fetchAndRender = async (url: string, fetchOptions: any) => {
     try {
-      const url = `https://abc.dev.ebc.com/arcgissecure/rest/services/ABC/IQ_aw/FeatureServer/2?token=${token}`;
+      this.setState({ status: `${this.state.status} → Fetching features...` });
 
-      console.log('Fetching:', url);
-      this.setState({ status: 'Fetching features...' });
+      const res = await fetch(url, fetchOptions);
 
-      const res = await fetch(url);
-      const json = await res.json();
+      const contentType = res.headers.get('content-type');
+      console.log('Response content-type:', contentType);
 
+      const text = await res.text();
+      console.log('Raw response (first 500 chars):', text.substring(0, 500));
+
+      if (text.startsWith('<')) {
+        this.setState({
+          status: `Method ${this.state.method}: Got HTML, not JSON`,
+          error: `Server returned HTML instead of JSON. Likely a redirect or auth page.`
+        });
+        return;
+      }
+
+      const json = JSON.parse(text);
       console.log('Response:', json);
 
       if (json.error) {
         this.setState({
-          status: 'Error',
-          error: `ArcGIS Error: ${json.error.message || JSON.stringify(json.error)}`
+          status: `Method ${this.state.method}: ArcGIS Error`,
+          error: `${json.error.message || JSON.stringify(json.error)}`
         });
         return;
       }
 
       if (!json.features || json.features.length === 0) {
         this.setState({
-          status: 'No features found',
+          status: `Method ${this.state.method}: No features`,
           error: 'Layer returned 0 features.'
         });
         return;
@@ -178,17 +226,24 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       }
 
       this.setState({
-        status: `✓ Loaded ${json.features.length} features`,
+        status: `✓ Method ${this.state.method}: Loaded ${json.features.length} features`,
         error: null
       });
 
     } catch (err) {
       console.error('Error:', err);
       this.setState({
-        status: 'Failed to load',
+        status: `Method ${this.state.method}: Failed`,
         error: err.message
       });
     }
+  }
+
+  clearMap = () => {
+    if (this.map.getLayer('layer')) this.map.removeLayer('layer');
+    if (this.map.getLayer('outline')) this.map.removeLayer('outline');
+    if (this.map.getSource('data')) this.map.removeSource('data');
+    this.setState({ count: 0 });
   }
 
   componentWillUnmount() {
@@ -205,13 +260,24 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
           top: 10px;
           left: 10px;
           background: white;
-          padding: 10px 15px;
+          padding: 12px 15px;
           border-radius: 4px;
           box-shadow: 0 2px 4px rgba(0,0,0,0.3);
           font-size: 13px;
           z-index: 1;
-          min-width: 200px;
+          min-width: 250px;
         `}>
+          <div css={css`margin-bottom: 10px; display: flex; gap: 6px;`}>
+            <button onClick={this.tryMethod1} css={css`padding: 5px 10px; cursor: pointer; font-size: 12px;`}>
+              1: Token URL
+            </button>
+            <button onClick={this.tryMethod2} css={css`padding: 5px 10px; cursor: pointer; font-size: 12px;`}>
+              2: Bearer Header
+            </button>
+            <button onClick={this.tryMethod3} css={css`padding: 5px 10px; cursor: pointer; font-size: 12px;`}>
+              3: Session Cookie
+            </button>
+          </div>
           <div><strong>Status:</strong> {this.state.status}</div>
           {this.state.token && (
             <div><strong>Token:</strong> ✓ Acquired</div>
