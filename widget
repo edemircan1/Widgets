@@ -143,20 +143,22 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     const north = bounds.getNorth();
 
     const strategy = this.getStrategy(zoom);
-    const fetchBbox = this.getFetchBbox(west, south, east, north, strategy.viewportRatio);
+    const fetchBbox = this.getFetchBbox(west, south, east, north, strategy.ratio);
 
-    this.setState({ status: `Loading (zoom ${Math.floor(zoom)}, ${strategy.grid}x${strategy.grid} grid)...` });
+    const ratioPercent = Math.round(strategy.ratio * 100);
+    this.setState({ status: `Loading (zoom ${zoom.toFixed(1)}, ${strategy.grid}x${strategy.grid}, ${ratioPercent}% viewport)...` });
 
     try {
+      let features: any[];
+
       if (strategy.grid === 1) {
-        const features = await this.fetchBbox(fetchBbox, token, signal);
-        if (signal.aborted) return;
-        this.renderFeatures(this.dedup(features));
+        features = await this.fetchBbox(fetchBbox, token, signal);
       } else {
-        const features = await this.fetchGridded(fetchBbox, token, signal, strategy.grid);
-        if (signal.aborted) return;
-        this.renderFeatures(this.dedup(features));
+        features = await this.fetchGridded(fetchBbox, token, signal, strategy.grid);
       }
+
+      if (signal.aborted) return;
+      this.renderFeatures(this.dedup(features));
     } catch (err) {
       if (err.name === 'AbortError') return;
       console.error('Load error:', err);
@@ -164,12 +166,21 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
   }
 
-  getStrategy = (zoom: number): { grid: number, viewportRatio: number } => {
-    if (zoom >= 14) return { grid: 1, viewportRatio: 1.0 };
-    if (zoom >= 13) return { grid: 3, viewportRatio: 1.0 };
-    if (zoom >= 12) return { grid: 4, viewportRatio: 0.75 };
-    // zoom 11-12
-    return { grid: 5, viewportRatio: 0.5 };
+  getStrategy = (zoom: number): { grid: number, ratio: number } => {
+    // Zoom 13+: full viewport, minimal grid
+    if (zoom >= 13) {
+      if (zoom >= 14) return { grid: 1, ratio: 1.0 };
+      return { grid: 3, ratio: 1.0 };
+    }
+
+    // Zoom 11 to 13: linear interpolation
+    // ratio: 0.5 at zoom 11 → 1.0 at zoom 13
+    // grid: 5 at zoom 11 → 3 at zoom 13
+    const t = (zoom - 11) / 2; // 0.0 at zoom 11, 1.0 at zoom 13
+    const ratio = Math.min(0.5 + (t * 0.5), 1.0);
+    const grid = Math.round(5 - (t * 2)); // 5 at zoom 11, 3 at zoom 13
+
+    return { grid: Math.max(grid, 3), ratio };
   }
 
   getFetchBbox = (west: number, south: number, east: number, north: number, ratio: number) => {
@@ -394,7 +405,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
           box-shadow: 0 2px 4px rgba(0,0,0,0.3);
           font-size: 13px;
           z-index: 1;
-          min-width: 250px;
+          min-width: 280px;
         `}>
           <div css={css`margin-bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap;`}>
             {!this.state.dynamicLoading ? (
