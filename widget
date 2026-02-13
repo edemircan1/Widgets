@@ -130,8 +130,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     const zoom = this.map.getZoom();
 
-    if (zoom < 12) {
-      this.setState({ status: `Zoom in to 12+ to load features (current: ${Math.floor(zoom)})`, count: 0 });
+    if (zoom < 11) {
+      this.setState({ status: `Zoom in to 11+ to load features (current: ${Math.floor(zoom)})`, count: 0 });
       this.clearMap();
       return;
     }
@@ -142,22 +142,17 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     const east = bounds.getEast();
     const north = bounds.getNorth();
 
-    // Get strategy based on zoom
     const strategy = this.getStrategy(zoom);
-
-    // Calculate the fetch area (center-cropped for lower zooms, full for high zooms)
     const fetchBbox = this.getFetchBbox(west, south, east, north, strategy.viewportRatio);
 
     this.setState({ status: `Loading (zoom ${Math.floor(zoom)}, ${strategy.grid}x${strategy.grid} grid)...` });
 
     try {
       if (strategy.grid === 1) {
-        // Single query
         const features = await this.fetchBbox(fetchBbox, token, signal);
         if (signal.aborted) return;
         this.renderFeatures(this.dedup(features));
       } else {
-        // Grid-based parallel fetch
         const features = await this.fetchGridded(fetchBbox, token, signal, strategy.grid);
         if (signal.aborted) return;
         this.renderFeatures(this.dedup(features));
@@ -169,16 +164,14 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
   }
 
-  // Strategy per zoom level
   getStrategy = (zoom: number): { grid: number, viewportRatio: number } => {
-    // viewportRatio: 1.0 = full viewport, 0.5 = center 50% of viewport
     if (zoom >= 14) return { grid: 1, viewportRatio: 1.0 };
     if (zoom >= 13) return { grid: 3, viewportRatio: 1.0 };
-    // zoom 12
-    return { grid: 4, viewportRatio: 0.6 };
+    if (zoom >= 12) return { grid: 4, viewportRatio: 0.75 };
+    // zoom 11-12
+    return { grid: 5, viewportRatio: 0.5 };
   }
 
-  // Crop viewport to center portion based on ratio
   getFetchBbox = (west: number, south: number, east: number, north: number, ratio: number) => {
     if (ratio >= 1.0) {
       return { xmin: west, ymin: south, xmax: east, ymax: north };
@@ -213,7 +206,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     return `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&resultRecordCount=${this.MAX_RECORDS}&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
   }
 
-  // Fetch a single bbox, returns features array
   fetchBbox = async (bbox: any, token: string, signal: AbortSignal): Promise<any[]> => {
     if (signal.aborted) return [];
 
@@ -243,7 +235,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
   }
 
-  // Grid-based parallel fetch
   fetchGridded = async (bbox: any, token: string, signal: AbortSignal, gridSize: number): Promise<any[]> => {
     const cellWidth = (bbox.xmax - bbox.xmin) / gridSize;
     const cellHeight = (bbox.ymax - bbox.ymin) / gridSize;
@@ -285,7 +276,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     return allFeatures;
   }
 
-  // Deduplicate by feature ID
   dedup = (features: any[]): any[] => {
     const seen = new Set<string>();
     return features.filter(f => {
