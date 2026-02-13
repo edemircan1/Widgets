@@ -1755,6 +1755,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       setActiveResultIndex(optimizationResultsArray.length)
       setShowResultsPanel(true)
 
+      // Clear the drawing state so input controls hide and read-only display shows
+      setOptimizationBounds(null)
+      optimizationBoundsRef.current = null
+      setOptimizationStatus('idle')
+
       console.log('[Optimization] Results loaded successfully, added to array:', newResult.id)
     } catch (error) {
       console.error('[Optimization] Failed to fetch results:', error)
@@ -1855,6 +1860,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       setOptimizationResultsArray((prev: OptimizationResult[]) => [...prev, newResult])
       setActiveResultIndex(optimizationResultsArray.length)
       setShowResultsPanel(true)
+
+      // Clear the drawing state so input controls don't show
+      setOptimizationBounds(null)
+      optimizationBoundsRef.current = null
+      setOptimizationStatus('idle')
 
       // Clear and hide recall form
       setRecallForm({ sessionId: '', jobId: '', error: null, loading: false })
