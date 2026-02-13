@@ -450,12 +450,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     loading: false
   })
 
-  // Comparison View
-  const [comparisonMode, setComparisonMode] = React.useState<boolean>(false)
-  const [selectedComparisonIndices, setSelectedComparisonIndices] = React.useState<[number, number]>([0, 1])
 
   // Bounding Box Visualization
   const [visibleBoundingBoxes, setVisibleBoundingBoxes] = React.useState<Set<string>>(new Set())
+  const [loadedResultsMinimized, setLoadedResultsMinimized] = React.useState<boolean>(false)
 
   // Optimization Hyperparameters
   const DEFAULT_HYPERPARAMETERS = React.useMemo(() => ({
@@ -3265,218 +3263,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           >
             {showApiControls ? '▼ ' : '▶ '}Map Layers
           </button>
-
-          <button
-            type="button"
-            onClick={() => setRecallFormVisible(!recallFormVisible)}
-            style={{
-              padding: '6px 10px',
-              borderRadius: 4,
-              border: '1px solid rgba(255,255,255,0.35)',
-              background: recallFormVisible ? 'rgba(138,43,226,0.4)' : 'rgba(138,43,226,0.25)',
-              color: '#fff',
-              cursor: 'pointer',
-              fontWeight: 500,
-              fontSize: 12,
-              transition: 'all 0.2s',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6
-            }}
-            title="Recall existing optimization results"
-          >
-            <span>🔍</span>
-            <span>Recall Results</span>
-          </button>
-
-          {recallFormVisible && (
-            <div style={{
-              position: 'absolute',
-              top: 90,
-              left: 8,
-              zIndex: 1000,
-              background: 'rgba(0,0,0,0.85)',
-              color: '#fff',
-              padding: 16,
-              borderRadius: 6,
-              width: 320,
-              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-              border: '1px solid rgba(138,43,226,0.5)'
-            }}>
-              <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <strong style={{ fontSize: 13 }}>Recall Optimization Results</strong>
-                <button
-                  type="button"
-                  onClick={() => setRecallFormVisible(false)}
-                  style={{
-                    background: 'rgba(255,0,0,0.3)',
-                    border: '1px solid rgba(255,255,255,0.3)',
-                    color: '#fff',
-                    width: 20,
-                    height: 20,
-                    borderRadius: 3,
-                    cursor: 'pointer',
-                    fontSize: 14,
-                    fontWeight: 'bold'
-                  }}
-                >
-                  ×
-                </button>
-              </div>
-
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Session ID:</label>
-                <input
-                  type="text"
-                  value={recallForm.sessionId}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRecallForm((prev: RecallFormState) => ({ ...prev, sessionId: e.target.value }))}
-                  placeholder="Enter session ID"
-                  style={{
-                    width: '100%',
-                    padding: '6px 8px',
-                    fontSize: 11,
-                    borderRadius: 3,
-                    border: '1px solid rgba(255,255,255,0.35)',
-                    background: 'rgba(0,0,0,0.7)',
-                    color: '#fff'
-                  }}
-                />
-              </div>
-
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Job ID:</label>
-                <input
-                  type="text"
-                  value={recallForm.jobId}
-                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRecallForm((prev: RecallFormState) => ({ ...prev, jobId: e.target.value }))}
-                  placeholder="Enter job ID"
-                  style={{
-                    width: '100%',
-                    padding: '6px 8px',
-                    fontSize: 11,
-                    borderRadius: 3,
-                    border: '1px solid rgba(255,255,255,0.35)',
-                    background: 'rgba(0,0,0,0.7)',
-                    color: '#fff'
-                  }}
-                />
-              </div>
-
-              {recallForm.error && (
-                <div style={{
-                  marginBottom: 10,
-                  padding: '6px 8px',
-                  background: 'rgba(255,0,0,0.2)',
-                  border: '1px solid rgba(255,0,0,0.5)',
-                  borderRadius: 3,
-                  fontSize: 10,
-                  color: '#ffb3b3'
-                }}>
-                  {recallForm.error}
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={() => recallOptimizationResult(recallForm.sessionId, recallForm.jobId)}
-                disabled={recallForm.loading || !recallForm.sessionId.trim() || !recallForm.jobId.trim()}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  fontSize: 12,
-                  fontWeight: 'bold',
-                  borderRadius: 3,
-                  border: '1px solid rgba(255,255,255,0.35)',
-                  background: recallForm.loading ? 'rgba(138,43,226,0.3)' : 'rgba(138,43,226,0.5)',
-                  color: '#fff',
-                  cursor: recallForm.loading ? 'not-allowed' : 'pointer',
-                  opacity: recallForm.loading || !recallForm.sessionId.trim() || !recallForm.jobId.trim() ? 0.5 : 1
-                }}
-              >
-                {recallForm.loading ? 'Loading...' : 'Recall Results'}
-              </button>
-            </div>
-          )}
-
-          {!optimizationBounds && (
-            <button
-              type="button"
-              onClick={() => setOptimizationDrawEnabled(true)}
-              style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid rgba(255,255,255,0.35)', background: optimizationDrawEnabled ? 'rgba(0,255,0,0.4)' : 'rgba(100,200,255,0.3)', color: '#fff', cursor: 'pointer', fontWeight: 500, fontSize: 12, transition: 'all 0.2s', display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'center' }}
-              title="Draw optimization bounding box"
-            >
-              {optimizationDrawEnabled ? (
-                <>
-                  <span>✏️</span>
-                  <span>Drawing...</span>
-                </>
-              ) : (
-                <>
-                  <img src={cubeIcon} alt="Submit Optimization Request" style={{ width: 16, height: 16 }} />
-                  <span>Submit Optimization Request</span>
-                </>
-              )}
-            </button>
-          )}
-          {optimizationBounds && (
-            <button
-              type="button"
-              onClick={() => {
-                // Clear the optimization state - useEffect will handle map cleanup
-                if (pollingTimerRef.current) {
-                  window.clearTimeout(pollingTimerRef.current)
-                  pollingTimerRef.current = null
-                }
-                setOptimizationStatus('idle')
-                setOptimizationBounds(null)
-                optimizationBoundsRef.current = null
-                setOptimizationSectors([])
-                setSelectedOptimizationSector(null)
-                setOptimizationError(null)
-                setOptimizationJobStatus('idle')
-                setOptimizationJobError(null)
-                setStatusMessage('')
-                setStatusDetails(null)
-                setSubmissionResponse(null)
-                setPollingCount(0)
-                setSessionId('')
-                setJobId('')
-                setOptimizationResults(null)
-                setShowResultsView(false)
-                setResultsError(null)
-                setOptimizationLayerType('none')
-                setOptimizationLayerData(null)
-                setOptimizationLayerStatus('idle')
-                setOptimizationLayerError(null)
-                clearOverlay('optimization-layer')
-
-                // Clear multi-result state
-                setOptimizationResultsArray([])
-                setActiveResultIndex(null)
-                setShowResultsPanel(false)
-
-                // Clear recall form
-                setRecallFormVisible(false)
-                setRecallForm({ sessionId: '', jobId: '', error: null, loading: false })
-
-                // Clear comparison mode
-                setComparisonMode(false)
-                setSelectedComparisonIndices([0, 1])
-
-                // Clear visibility
-                setVisibleBoundingBoxes(new Set())
-
-                // Clear per-result layer data
-                setResultLayerTypes({})
-                resultLayerDataRef.current = {}
-                resultLayerStatusRef.current = {}
-              }}
-              style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid rgba(255,0,0,0.5)', background: 'rgba(255,0,0,0.3)', color: '#fff', cursor: 'pointer', fontWeight: 500, fontSize: 12, transition: 'all 0.2s' }}
-              title="Clear optimization box and start over"
-            >
-              🗑️ Clear Optimization
-            </button>
-          )}
         </div>
 
         {showApiControls && (
@@ -3521,6 +3307,249 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
             </div>
           </div>
         )}
+
+        {/* Optimization Section */}
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.15)' }}>
+          <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <img src={cubeIcon} alt="Optimization" style={{ width: 16, height: 16 }} />
+            <strong style={{ fontSize: 12 }}>Optimization</strong>
+          </div>
+
+          {!optimizationBounds ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {/* Option 1: Submit Optimization Request */}
+              <div style={{
+                background: 'rgba(100,200,255,0.15)',
+                border: '1px solid rgba(100,200,255,0.4)',
+                borderRadius: 4,
+                padding: 8
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 'bold', marginBottom: 6, color: '#8ec5fc' }}>
+                  Option 1: Submit New Request
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setOptimizationDrawEnabled(true)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 4,
+                    border: '1px solid rgba(255,255,255,0.35)',
+                    background: optimizationDrawEnabled ? 'rgba(0,255,0,0.4)' : 'rgba(100,200,255,0.3)',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontWeight: 500,
+                    fontSize: 12,
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    justifyContent: 'center'
+                  }}
+                  title="Draw optimization bounding box on map"
+                >
+                  {optimizationDrawEnabled ? (
+                    <>
+                      <span>✏️</span>
+                      <span>Drawing on Map...</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>📐</span>
+                      <span>Draw Area & Submit</span>
+                    </>
+                  )}
+                </button>
+              </div>
+
+              {/* Option 2: Recall Existing Results */}
+              <div style={{
+                background: 'rgba(138,43,226,0.15)',
+                border: '1px solid rgba(138,43,226,0.4)',
+                borderRadius: 4,
+                padding: 8
+              }}>
+                <div style={{ fontSize: 11, fontWeight: 'bold', marginBottom: 6, color: '#c78ef0' }}>
+                  Option 2: Recall Existing Results
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRecallFormVisible(!recallFormVisible)}
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 4,
+                    border: '1px solid rgba(255,255,255,0.35)',
+                    background: recallFormVisible ? 'rgba(138,43,226,0.5)' : 'rgba(138,43,226,0.3)',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    fontWeight: 500,
+                    fontSize: 12,
+                    transition: 'all 0.2s',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    justifyContent: 'center'
+                  }}
+                  title="Recall existing optimization results"
+                >
+                  <span>🔍</span>
+                  <span>{recallFormVisible ? 'Hide Form' : 'Enter Session & Job ID'}</span>
+                </button>
+
+                {recallFormVisible && (
+                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(138,43,226,0.3)' }}>
+                    <div style={{ marginBottom: 8 }}>
+                      <label style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Session ID:</label>
+                      <input
+                        type="text"
+                        value={recallForm.sessionId}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRecallForm((prev: RecallFormState) => ({ ...prev, sessionId: e.target.value }))}
+                        placeholder="Enter session ID"
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          fontSize: 11,
+                          borderRadius: 3,
+                          border: '1px solid rgba(255,255,255,0.35)',
+                          background: 'rgba(0,0,0,0.7)',
+                          color: '#fff'
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: 8 }}>
+                      <label style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>Job ID:</label>
+                      <input
+                        type="text"
+                        value={recallForm.jobId}
+                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRecallForm((prev: RecallFormState) => ({ ...prev, jobId: e.target.value }))}
+                        placeholder="Enter job ID"
+                        style={{
+                          width: '100%',
+                          padding: '6px 8px',
+                          fontSize: 11,
+                          borderRadius: 3,
+                          border: '1px solid rgba(255,255,255,0.35)',
+                          background: 'rgba(0,0,0,0.7)',
+                          color: '#fff'
+                        }}
+                      />
+                    </div>
+
+                    {recallForm.error && (
+                      <div style={{
+                        marginBottom: 8,
+                        padding: '6px 8px',
+                        background: 'rgba(255,0,0,0.2)',
+                        border: '1px solid rgba(255,0,0,0.5)',
+                        borderRadius: 3,
+                        fontSize: 10,
+                        color: '#ffb3b3'
+                      }}>
+                        {recallForm.error}
+                      </div>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => recallOptimizationResult(recallForm.sessionId, recallForm.jobId)}
+                      disabled={recallForm.loading || !recallForm.sessionId.trim() || !recallForm.jobId.trim()}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        fontSize: 12,
+                        fontWeight: 'bold',
+                        borderRadius: 3,
+                        border: '1px solid rgba(255,255,255,0.35)',
+                        background: recallForm.loading ? 'rgba(138,43,226,0.3)' : 'rgba(138,43,226,0.5)',
+                        color: '#fff',
+                        cursor: recallForm.loading ? 'not-allowed' : 'pointer',
+                        opacity: recallForm.loading || !recallForm.sessionId.trim() || !recallForm.jobId.trim() ? 0.5 : 1
+                      }}
+                    >
+                      {recallForm.loading ? 'Loading...' : 'Recall Results'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                // Clear the optimization state - useEffect will handle map cleanup
+                if (pollingTimerRef.current) {
+                  window.clearTimeout(pollingTimerRef.current)
+                  pollingTimerRef.current = null
+                }
+                setOptimizationStatus('idle')
+                setOptimizationBounds(null)
+                optimizationBoundsRef.current = null
+                setOptimizationSectors([])
+                setSelectedOptimizationSector(null)
+                setOptimizationError(null)
+                setOptimizationJobStatus('idle')
+                setOptimizationJobError(null)
+                setStatusMessage('')
+                setStatusDetails(null)
+                setSubmissionResponse(null)
+                setPollingCount(0)
+                setSessionId('')
+                setJobId('')
+                setOptimizationResults(null)
+                setShowResultsView(false)
+                setResultsError(null)
+                setOptimizationLayerType('none')
+                setOptimizationLayerData(null)
+                setOptimizationLayerStatus('idle')
+                setOptimizationLayerError(null)
+                clearOverlay('optimization-layer')
+
+                // Clear all result-specific layers before clearing the array
+                optimizationResultsArray.forEach((result: OptimizationResult) => {
+                  clearOverlay(`optimization-layer-${result.id}`)
+                })
+
+                // Clear multi-result state
+                setOptimizationResultsArray([])
+                setActiveResultIndex(null)
+                setShowResultsPanel(false)
+
+                // Clear recall form
+                setRecallFormVisible(false)
+                setRecallForm({ sessionId: '', jobId: '', error: null, loading: false })
+
+                // Clear visibility
+                setVisibleBoundingBoxes(new Set())
+
+                // Clear per-result layer data
+                setResultLayerTypes({})
+                resultLayerDataRef.current = {}
+                resultLayerStatusRef.current = {}
+              }}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                borderRadius: 4,
+                border: '1px solid rgba(255,0,0,0.5)',
+                background: 'rgba(255,0,0,0.3)',
+                color: '#fff',
+                cursor: 'pointer',
+                fontWeight: 500,
+                fontSize: 12,
+                transition: 'all 0.2s',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 6
+              }}
+              title="Clear optimization box and start over"
+            >
+              🗑️ Clear Optimization
+            </button>
+          )}
+        </div>
 
         {optimizationStatus !== 'idle' && optimizationBounds && (
           <div style={{ marginTop: 8, maxWidth: 340 }}>
@@ -3894,36 +3923,36 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       {optimizationResultsArray.length > 0 && (
         <div style={{
           position: 'absolute',
-          top: 8,
-          left: 360,
+          bottom: 8,
+          left: '50%',
+          transform: 'translateX(-50%)',
           zIndex: 999,
           background: 'rgba(0,0,0,0.75)',
           color: '#fff',
           padding: 10,
           borderRadius: 6,
           width: 280,
-          maxHeight: 'calc(100vh - 16px)',
-          overflow: 'auto',
+          maxHeight: loadedResultsMinimized ? 'auto' : 'calc(50vh - 16px)',
+          overflow: loadedResultsMinimized ? 'visible' : 'auto',
           boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
         }}>
-          <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ marginBottom: loadedResultsMinimized ? 0 : 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <strong style={{ fontSize: 12 }}>Loaded Results ({optimizationResultsArray.length})</strong>
             <button
               type="button"
-              onClick={() => setComparisonMode(!comparisonMode)}
-              disabled={optimizationResultsArray.length < 2}
+              onClick={() => setLoadedResultsMinimized(!loadedResultsMinimized)}
               style={{
                 padding: '4px 8px',
                 fontSize: 10,
                 borderRadius: 3,
                 border: '1px solid rgba(255,255,255,0.35)',
-                background: comparisonMode ? 'rgba(0,200,100,0.4)' : 'rgba(100,100,100,0.3)',
+                background: 'rgba(100,100,100,0.3)',
                 color: '#fff',
-                cursor: optimizationResultsArray.length < 2 ? 'not-allowed' : 'pointer',
-                opacity: optimizationResultsArray.length < 2 ? 0.5 : 1
+                cursor: 'pointer'
               }}
+              title={loadedResultsMinimized ? 'Maximize' : 'Minimize'}
             >
-              {comparisonMode ? '✓ Compare' : 'Compare'}
+              {loadedResultsMinimized ? '▲' : '▼'}
             </button>
           </div>
 
@@ -3982,7 +4011,48 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                     type="button"
                     onClick={(e: React.MouseEvent) => {
                       e.stopPropagation()
+
+                      // Remove bounding box visualization layers from map
+                      if (mapRef.current) {
+                        const map = mapRef.current
+                        const sourceId = `map-widget-optimization-result-${result.id}-src`
+                        const fillLayerId = `map-widget-optimization-result-${result.id}-fill`
+                        const lineLayerId = `map-widget-optimization-result-${result.id}-line`
+
+                        if (map.getLayer(lineLayerId)) {
+                          map.removeLayer(lineLayerId)
+                        }
+                        if (map.getLayer(fillLayerId)) {
+                          map.removeLayer(fillLayerId)
+                        }
+                        if (map.getSource(sourceId)) {
+                          map.removeSource(sourceId)
+                        }
+                      }
+
+                      // Remove from visible bounding boxes
+                      setVisibleBoundingBoxes((prev: Set<string>) => {
+                        const newSet = new Set(prev)
+                        newSet.delete(result.id)
+                        return newSet
+                      })
+
+                      // Clear result-specific overlay layer
+                      clearOverlay(`optimization-layer-${result.id}`)
+
+                      // Remove from result layer tracking
+                      setResultLayerTypes((prev: Record<string, OptimizationLayerType>) => {
+                        const newTypes = { ...prev }
+                        delete newTypes[result.id]
+                        return newTypes
+                      })
+                      delete resultLayerDataRef.current[result.id]
+                      delete resultLayerStatusRef.current[result.id]
+
+                      // Remove from results array
                       setOptimizationResultsArray((prev: OptimizationResult[]) => prev.filter((r: OptimizationResult) => r.id !== result.id))
+
+                      // Update active index
                       if (activeResultIndex === idx) {
                         setActiveResultIndex(optimizationResultsArray.length > 1 ? 0 : null)
                       }
@@ -4019,7 +4089,32 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       {(showResultsPanel && activeResultData) && (
         <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000, background: 'rgba(0,0,0,0.65)', color: '#fff', padding: 12, borderRadius: 6, width: 420, maxHeight: 'calc(100vh - 16px)', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12, position: 'sticky', top: 0, background: 'transparent', padding: '0 0 12px 0', margin: '0', borderBottom: '1px solid rgba(255,255,255,0.15)', zIndex: 1 }}>
-            <strong style={{ fontSize: 11 }}>Optimization Results</strong>
+            <div style={{ flex: 1 }}>
+              <strong style={{ fontSize: 11 }}>Optimization Results</strong>
+              {activeResultIndex !== null && optimizationResultsArray[activeResultIndex] && (
+                <div style={{
+                  marginTop: 4,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 8px',
+                  background: 'rgba(0,128,255,0.2)',
+                  borderRadius: 3,
+                  border: `1px solid ${optimizationResultsArray[activeResultIndex].color}`
+                }}>
+                  <div style={{
+                    width: 10,
+                    height: 10,
+                    background: optimizationResultsArray[activeResultIndex].color,
+                    borderRadius: 2,
+                    flexShrink: 0
+                  }} />
+                  <span style={{ fontSize: 10, fontWeight: 'bold' }}>
+                    Viewing: {optimizationResultsArray[activeResultIndex].label}
+                  </span>
+                </div>
+              )}
+            </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               {activeResultData?.results?.['optimized tilt settings'] && Array.isArray(activeResultData.results['optimized tilt settings']) && (
                 <button
