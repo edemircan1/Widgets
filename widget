@@ -1515,7 +1515,17 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       return
     }
 
-    if (!sessionId || !jobId) {
+    // Get session/job IDs from active result instead of component state
+    let activeSessionId = sessionId
+    let activeJobId = jobId
+
+    if (activeResultIndex !== null && optimizationResultsArray[activeResultIndex]) {
+      const activeResult = optimizationResultsArray[activeResultIndex]
+      activeSessionId = activeResult.sessionId
+      activeJobId = activeResult.jobId
+    }
+
+    if (!activeSessionId || !activeJobId) {
       setOptimizationLayerError('Session ID and Job ID are required')
       return
     }
@@ -1543,7 +1553,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       return
     }
 
-    const requestUrl = `https://rhea.web.abc.com/oauth21/api/optimization/tile/${encodeURIComponent(sessionId)}/${encodeURIComponent(jobId)}/${layerPath}/style.json`
+    const requestUrl = `https://rhea.web.abc.com/oauth21/api/optimization/tile/${encodeURIComponent(activeSessionId)}/${encodeURIComponent(activeJobId)}/${layerPath}/style.json`
 
     setOptimizationLayerStatus('loading')
     setOptimizationLayerError(null)
@@ -1576,7 +1586,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           : 'Unknown error'
       setOptimizationLayerError(message)
     }
-  }, [sessionId, jobId, clearOverlay])
+  }, [sessionId, jobId, activeResultIndex, optimizationResultsArray, clearOverlay])
 
   const fetchOptimizationResults = React.useCallback(async () => {
     const token = authTokenRef.current
