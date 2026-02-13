@@ -13,7 +13,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   featureBuffer: any[] = [];
 
   FEATURE_SERVER_URL = 'https://url/arcgissecure/rest/services/On_Air_MGRS_100m_Single_Layer/FeatureServer/0';
-  MAX_RECORDS = 4000;
+  MAX_RECORDS = 2000;
 
   constructor(props) {
     super(props);
@@ -147,10 +147,10 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     const grid = this.getGridSize(zoom);
 
-    // Reset buffer, ensure source
+    // Reset buffer, ensure source exists
     this.featureBuffer = [];
     this.ensureSourceExists();
-    this.pushToMap(); // Clear visual immediately
+    this.pushToMap();
 
     if (grid === 1) {
       this.setState({ status: 'Loading...' });
@@ -170,13 +170,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   }
 
   getGridSize = (zoom: number): number => {
-    // With 4000 max records per request:
-    // zoom 12: ~38K features in viewport → 3x3=9 cells → 36K cap, close fit
-    // zoom 13: ~9.6K features → 2x2=4 cells → 16K cap, plenty
-    // zoom 14+: ~2.4K features → single request enough
-    if (zoom >= 14) return 1;
-    if (zoom >= 13) return 2;
-    return 3; // zoom 12
+    // With 2000 max records, need more cells to cover dense areas
+    // Key: each cell must contain < 2000 features to avoid truncation
+    if (zoom >= 15) return 1;
+    if (zoom >= 14) return 2;   // 4 cells  = 8K cap
+    if (zoom >= 13) return 4;   // 16 cells = 32K cap
+    return 6;                    // 36 cells = 72K cap for zoom 12
   }
 
   // ─── FETCH HELPERS ─────────────────────────────────────────────────
@@ -202,8 +201,11 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     try {
       const res = await fetch(url, { signal });
+      if (!res.ok) {
+        console.warn(`HTTP ${res.status} for cell, skipping`);
+        return [];
+      }
       const text = await res.text();
-
       if (text.startsWith('<')) return [];
 
       const json = JSON.parse(text);
@@ -238,36 +240,34 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     const seen = new Set<string>();
     let completed = 0;
+    const total = cells.length;
 
     try {
-      // Fire ALL requests at once — max cells is 9, all parallel
-      const allPromises = cells.map(cell => this.fetchBbox(cell, token, signal));
-      
-      // Process as they resolve
-      const results = await Promise.all(
-        allPromises.map((p, idx) =>
-          p.then(features => {
-            if (signal.aborted) return;
+      // Fire all requests at once — browser will manage concurrency (6 parallel)
+      const promises = cells.map(cell =>
+        this.fetchBbox(cell, token, signal).then(features => {
+          if (signal.aborted) return;
 
-            for (const f of features) {
-              const id = f.id || f.properties?.OBJECTID || f.properties?.objectid;
-              if (id != null) {
-                const key = String(id);
-                if (seen.has(key)) continue;
-                seen.add(key);
-              }
-              this.featureBuffer.push(f);
+          for (const f of features) {
+            const id = f.id || f.properties?.OBJECTID || f.properties?.objectid;
+            if (id != null) {
+              const key = String(id);
+              if (seen.has(key)) continue;
+              seen.add(key);
             }
+            this.featureBuffer.push(f);
+          }
 
-            completed++;
-            this.pushToMap();
-            this.setState({
-              status: `Loading ${completed}/${cells.length}... (${this.featureBuffer.length.toLocaleString()})`,
-              count: this.featureBuffer.length
-            });
-          })
-        )
+          completed++;
+          this.pushToMap();
+          this.setState({
+            status: `Loading ${completed}/${total}... (${this.featureBuffer.length.toLocaleString()})`,
+            count: this.featureBuffer.length
+          });
+        })
       );
+
+      await Promise.all(promises);
 
       if (!signal.aborted) {
         this.setState({
