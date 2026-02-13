@@ -504,6 +504,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   const [optimizationLayerStatus, setOptimizationLayerStatus] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [optimizationLayerError, setOptimizationLayerError] = React.useState<string | null>(null)
 
+  // Per-result optimization layer tracking
+  const [resultLayerTypes, setResultLayerTypes] = React.useState<Record<string, OptimizationLayerType>>({})
+  const resultLayerDataRef = React.useRef<Record<string, any>>({})
+  const resultLayerStatusRef = React.useRef<Record<string, 'idle' | 'loading' | 'success' | 'error'>>({})
+
   const [tokenStatus, setTokenStatus] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle')
   const [tokenError, setTokenError] = React.useState<string | null>(null)
   const [lastTokenUrlTried, setLastTokenUrlTried] = React.useState<string | null>(null)
@@ -1573,10 +1578,29 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       }
 
       const body = await response.json()
+
+      // Store data per result if we have an active result
+      if (activeResultIndex !== null && optimizationResultsArray[activeResultIndex]) {
+        const resultId = optimizationResultsArray[activeResultIndex].id
+        resultLayerDataRef.current[resultId] = body
+        resultLayerStatusRef.current[resultId] = 'success'
+
+        // Apply overlay with result-specific key
+        applyOverlayStyle(`optimization-layer-${resultId}`, body)
+      }
+
+      // Also update global state for backward compatibility
       setOptimizationLayerData(body)
       setOptimizationLayerStatus('success')
     } catch (error) {
       console.error('Failed to load optimization layer', error)
+
+      // Update per-result status if we have an active result
+      if (activeResultIndex !== null && optimizationResultsArray[activeResultIndex]) {
+        const resultId = optimizationResultsArray[activeResultIndex].id
+        resultLayerStatusRef.current[resultId] = 'error'
+      }
+
       setOptimizationLayerData(null)
       setOptimizationLayerStatus('error')
       const message = error instanceof TypeError
@@ -1586,7 +1610,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           : 'Unknown error'
       setOptimizationLayerError(message)
     }
-  }, [sessionId, jobId, activeResultIndex, optimizationResultsArray, clearOverlay])
+  }, [sessionId, jobId, activeResultIndex, optimizationResultsArray, clearOverlay, applyOverlayStyle])
 
   const fetchOptimizationResults = React.useCallback(async () => {
     const token = authTokenRef.current
@@ -2863,6 +2887,37 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     }
   }, [mapReady, activeResultIndex, optimizationResultsArray])
 
+  // Manage optimization layer visibility when switching results
+  React.useEffect(() => {
+    if (!mapReady || !mapRef.current) {
+      return
+    }
+
+    const map = mapRef.current
+
+    // Hide all optimization layers except for active result
+    optimizationResultsArray.forEach((result: OptimizationResult, idx: number) => {
+      const overlayKey = `optimization-layer-${result.id}`
+      const overlay = overlayRef.current[overlayKey]
+
+      if (!overlay || !overlay.layerIds) {
+        return
+      }
+
+      const shouldShow = idx === activeResultIndex
+
+      overlay.layerIds.forEach((layerId: string) => {
+        if (map.getLayer(layerId)) {
+          try {
+            map.setLayoutProperty(layerId, 'visibility', shouldShow ? 'visible' : 'none')
+          } catch (error) {
+            console.error('[Layer Visibility] Failed to set visibility for layer:', layerId, error)
+          }
+        }
+      })
+    })
+  }, [mapReady, activeResultIndex, optimizationResultsArray])
+
   React.useEffect(() => {
     if (!mapReady || !mapRef.current) {
       return
@@ -3410,6 +3465,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
                 // Clear visibility
                 setVisibleBoundingBoxes(new Set())
+
+                // Clear per-result layer data
+                setResultLayerTypes({})
+                resultLayerDataRef.current = {}
+                resultLayerStatusRef.current = {}
               }}
               style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid rgba(255,0,0,0.5)', background: 'rgba(255,0,0,0.3)', color: '#fff', cursor: 'pointer', fontWeight: 500, fontSize: 12, transition: 'all 0.2s' }}
               title="Clear optimization box and start over"
@@ -3987,15 +4047,33 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
             <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
               <div style={{ marginBottom: 6 }}><strong style={{ fontSize: 11 }}>Visualization Layer:</strong></div>
               <select
-                value={optimizationLayerType}
+                value={(() => {
+                  // Get layer type for active result
+                  if (activeResultIndex !== null && optimizationResultsArray[activeResultIndex]) {
+                    const resultId = optimizationResultsArray[activeResultIndex].id
+                    return resultLayerTypes[resultId] || 'none'
+                  }
+                  return optimizationLayerType
+                })()}
                 onChange={(e) => {
                   const newType = e.target.value as OptimizationLayerType
+
+                  // Store layer type for current result
+                  if (activeResultIndex !== null && optimizationResultsArray[activeResultIndex]) {
+                    const resultId = optimizationResultsArray[activeResultIndex].id
+                    setResultLayerTypes((prev: Record<string, OptimizationLayerType>) => ({
+                      ...prev,
+                      [resultId]: newType
+                    }))
+                  }
+
+                  // Also update global state for backward compatibility
                   setOptimizationLayerType(newType)
-                  
+
                   // Immediately apply visibility change
                   if (newType !== 'none') {
                     setCoverageVisible(false)
-                    
+
                     // Force immediate update of coverage layer visibility
                     if (mapRef.current) {
                       const overlay = overlayRef.current['coverage']
@@ -4008,7 +4086,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                       }
                     }
                   }
-                  
+
                   const token = authTokenRef.current
                   if (token) {
                     void fetchOptimizationLayer(token, newType)
@@ -4189,7 +4267,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       )}
 
       {/* Tilt Table Modal */}
-      {showTiltTableModal && optimizationResults?.results?.['optimized tilt settings'] && (
+      {showTiltTableModal && activeResultData?.results?.['optimized tilt settings'] && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10000, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div style={{ background: '#1a1a1a', color: '#fff', borderRadius: 8, maxWidth: 1000, width: '100%', maxHeight: '90vh', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
             <div style={{ padding: '16px 20px', borderBottom: '1px solid rgba(255,255,255,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', position: 'sticky', top: 0, background: '#1a1a1a', zIndex: 1 }}>
