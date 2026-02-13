@@ -1,1 +1,8 @@
-///
+1) as we add/ recall stuff, they show up on additional map layers. such as Optimization layer 'job id' etc. do not add anything to that layer section. and keep it as is. 
+2) when user recall an optimization job and visualize the layers, and then remove it from the results tab, the visualization still stays on the map. removing the recalled 
+optimization should also remove the visualization layers from the map.
+3) let's say user draw 2 new optimizations, as soon as user adds the new optimization, we cannot see what was the selection user has made from the left bar. so we want to show user
+the left bar that they selected, such as frequency, network, optimization hyperparameters and the session, job ids. and as user switch between the two drawn optimizations
+this menu should be updated accordingly. 
+you can do it like this. the input section should gone as user submits a new drawn optimization request, but you can save the selections (the payload) and show that to the user
+these selections below RHEA Optimization section. session ID's can be still copied. and shwould be changed as user switch between them. so user can see what was the payload and what is the related session/job id before they close the tool. 
