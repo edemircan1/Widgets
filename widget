@@ -75,6 +75,27 @@ interface BBoxBounds {
   maxLat: number
 }
 
+interface OptimizationResult {
+  id: string
+  sessionId: string
+  jobId: string
+  bounds: BBoxBounds
+  data: any
+  timestamp: number
+  label: string
+  color: string
+  source: 'submitted' | 'recalled'
+}
+
+interface RecallFormState {
+  sessionId: string
+  jobId: string
+  error: string | null
+  loading: boolean
+}
+
+const RESULT_COLORS = ['#00ff00', '#0080ff', '#ff8000', '#ff00ff', '#ffff00', '#00ffff']
+
 const clampLngLat = (lng: number, lat: number): [number, number] => {
   const clampedLng = Math.max(-180, Math.min(180, lng))
   const clampedLat = Math.max(-85, Math.min(85, lat))
@@ -130,6 +151,29 @@ const looksLikeAggregatedLayer = (layer: any): boolean => {
   // Heuristic: blended/aggregated coverage is commonly a heatmap.
   const type = String(layer.type ?? '').toLowerCase()
   return type === 'heatmap'
+}
+
+// Helper to extract bounding box from optimization results data
+const extractBoundsFromResults = (data: any): BBoxBounds | null => {
+  // Try to extract bounds from various possible locations in the API response
+  if (data?.metadata?.bounds) {
+    const b = data.metadata.bounds
+    if (typeof b.minLng === 'number' && typeof b.minLat === 'number' &&
+        typeof b.maxLng === 'number' && typeof b.maxLat === 'number') {
+      return b
+    }
+  }
+
+  if (data?.bounds) {
+    const b = data.bounds
+    if (typeof b.minLng === 'number' && typeof b.minLat === 'number' &&
+        typeof b.maxLng === 'number' && typeof b.maxLat === 'number') {
+      return b
+    }
+  }
+
+  // Could add more extraction logic based on actual API response structure
+  return null
 }
 
 ;(maplibregl as typeof maplibregl & { workerClass?: typeof Worker }).workerClass = MapLibreWorker as typeof Worker
@@ -391,6 +435,27 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   const [showJsonDetails, setShowJsonDetails] = React.useState<boolean>(false)
   const [showTiltTableModal, setShowTiltTableModal] = React.useState<boolean>(false)
   const pollingTimerRef = React.useRef<number | null>(null)
+
+  // Multi-Result Management (New)
+  const [optimizationResultsArray, setOptimizationResultsArray] = React.useState<OptimizationResult[]>([])
+  const [activeResultIndex, setActiveResultIndex] = React.useState<number | null>(null)
+  const [showResultsPanel, setShowResultsPanel] = React.useState<boolean>(false)
+
+  // Recall Functionality
+  const [recallFormVisible, setRecallFormVisible] = React.useState<boolean>(false)
+  const [recallForm, setRecallForm] = React.useState<RecallFormState>({
+    sessionId: '',
+    jobId: '',
+    error: null,
+    loading: false
+  })
+
+  // Comparison View
+  const [comparisonMode, setComparisonMode] = React.useState<boolean>(false)
+  const [selectedComparisonIndices, setSelectedComparisonIndices] = React.useState<[number, number]>([0, 1])
+
+  // Bounding Box Visualization
+  const [visibleBoundingBoxes, setVisibleBoundingBoxes] = React.useState<Set<string>>(new Set())
 
   // Optimization Hyperparameters
   const DEFAULT_HYPERPARAMETERS = React.useMemo(() => ({
@@ -1548,9 +1613,32 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         throw new Error(`Results fetch failed: ${errorMsg}`)
       }
 
+      // Dual-write: Keep old state for backward compatibility
       setOptimizationResults(body)
       setShowResultsView(true)
-      console.log('[Optimization] Results loaded successfully')
+
+      // New: Add to results array
+      const bounds: BBoxBounds = optimizationBoundsRef.current || { minLng: 0, minLat: 0, maxLng: 0, maxLat: 0 }
+      const colorIndex = optimizationResultsArray.length % RESULT_COLORS.length
+      const color = RESULT_COLORS[colorIndex]
+
+      const newResult: OptimizationResult = {
+        id: generateUniqueId(),
+        sessionId,
+        jobId,
+        bounds,
+        data: body,
+        timestamp: Date.now(),
+        label: `Submitted: ${new Date().toLocaleString()}`,
+        color,
+        source: 'submitted'
+      }
+
+      setOptimizationResultsArray((prev: OptimizationResult[]) => [...prev, newResult])
+      setActiveResultIndex(optimizationResultsArray.length)
+      setShowResultsPanel(true)
+
+      console.log('[Optimization] Results loaded successfully, added to array:', newResult.id)
     } catch (error) {
       console.error('[Optimization] Failed to fetch results:', error)
       const message = error instanceof TypeError
@@ -1561,6 +1649,99 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       setResultsError(message)
     }
   }, [sessionId, jobId])
+
+  const recallOptimizationResult = React.useCallback(async (recallSessionId: string, recallJobId: string) => {
+    const token = authTokenRef.current
+
+    if (!token) {
+      setRecallForm((prev: RecallFormState) => ({ ...prev, error: 'No authentication token available', loading: false }))
+      return
+    }
+
+    const trimmedSessionId = recallSessionId.trim()
+    const trimmedJobId = recallJobId.trim()
+
+    if (!trimmedSessionId || !trimmedJobId) {
+      setRecallForm((prev: RecallFormState) => ({ ...prev, error: 'Session ID and Job ID are required', loading: false }))
+      return
+    }
+
+    setRecallForm((prev: RecallFormState) => ({ ...prev, loading: true, error: null }))
+
+    const resultsUrl = `https://rhea.web.abc.com/oauth21/api/optimization/tile/${encodeURIComponent(trimmedSessionId)}/${encodeURIComponent(trimmedJobId)}/data.json`
+    console.log('[Recall] Fetching results from:', resultsUrl)
+
+    try {
+      const response = await fetch(resultsUrl, {
+        method: 'GET',
+        cache: 'no-store',
+        headers: {
+          Accept: 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      })
+
+      console.log('[Recall] Response:', response.status, response.statusText)
+
+      if (!response.ok) {
+        let body: any = {}
+        try {
+          const bodyText = await response.text()
+          body = JSON.parse(bodyText)
+        } catch {
+          // Ignore parse errors
+        }
+        const errorMsg = body?.message || body?.error || `HTTP ${response.status}: ${response.statusText}`
+        throw new Error(`Failed to recall results: ${errorMsg}`)
+      }
+
+      const data = await response.json()
+      console.log('[Recall] Results loaded successfully')
+
+      // Extract bounding box from results data if available, otherwise use placeholder
+      const bounds: BBoxBounds = extractBoundsFromResults(data) || {
+        minLng: 0,
+        minLat: 0,
+        maxLng: 0,
+        maxLat: 0
+      }
+
+      // Assign color from palette based on current array length
+      const colorIndex = optimizationResultsArray.length % RESULT_COLORS.length
+      const color = RESULT_COLORS[colorIndex]
+
+      const newResult: OptimizationResult = {
+        id: generateUniqueId(),
+        sessionId: trimmedSessionId,
+        jobId: trimmedJobId,
+        bounds,
+        data,
+        timestamp: Date.now(),
+        label: `Recalled: ${new Date().toLocaleString()}`,
+        color,
+        source: 'recalled'
+      }
+
+      // Add to results array and set as active
+      setOptimizationResultsArray((prev: OptimizationResult[]) => [...prev, newResult])
+      setActiveResultIndex(optimizationResultsArray.length)
+      setShowResultsPanel(true)
+
+      // Clear and hide recall form
+      setRecallForm({ sessionId: '', jobId: '', error: null, loading: false })
+      setRecallFormVisible(false)
+
+      console.log('[Recall] Result added to array:', newResult.id)
+    } catch (error) {
+      console.error('[Recall] Failed to fetch results:', error)
+      const message = error instanceof TypeError
+        ? 'Network or CORS error reaching results endpoint'
+        : error instanceof Error
+          ? error.message
+          : 'Unknown error'
+      setRecallForm((prev: RecallFormState) => ({ ...prev, error: message, loading: false }))
+    }
+  }, [optimizationResultsArray])
 
   const fetchVisualizationStyle = React.useCallback(async (activeToken: string) => {
     const requestUrl = DEFAULT_VISUALIZATION_STYLE_URL
@@ -2512,6 +2693,127 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     }
   }, [mapReady, optimizationDrawEnabled, optimizationBounds, fetchOptimizationSectors])
 
+  // Multi-bounding box visualization effect
+  React.useEffect(() => {
+    if (!mapReady || !mapRef.current) {
+      return
+    }
+
+    const map = mapRef.current
+
+    // Clean up all result layers first
+    optimizationResultsArray.forEach((result: OptimizationResult) => {
+      const sourceId = `map-widget-optimization-result-${result.id}-src`
+      const fillLayerId = `map-widget-optimization-result-${result.id}-fill`
+      const lineLayerId = `map-widget-optimization-result-${result.id}-line`
+
+      if (map.getLayer(lineLayerId)) {
+        map.removeLayer(lineLayerId)
+      }
+      if (map.getLayer(fillLayerId)) {
+        map.removeLayer(fillLayerId)
+      }
+      if (map.getSource(sourceId)) {
+        map.removeSource(sourceId)
+      }
+    })
+
+    // Re-add visible result layers
+    optimizationResultsArray.forEach((result: OptimizationResult, index: number) => {
+      if (!visibleBoundingBoxes.has(result.id)) {
+        return
+      }
+
+      // Skip if bounds are all zeros (placeholder)
+      if (result.bounds.minLng === 0 && result.bounds.minLat === 0 &&
+          result.bounds.maxLng === 0 && result.bounds.maxLat === 0) {
+        return
+      }
+
+      const sourceId = `map-widget-optimization-result-${result.id}-src`
+      const fillLayerId = `map-widget-optimization-result-${result.id}-fill`
+      const lineLayerId = `map-widget-optimization-result-${result.id}-line`
+
+      // Create GeoJSON feature
+      const ring = [
+        [result.bounds.minLng, result.bounds.minLat],
+        [result.bounds.maxLng, result.bounds.minLat],
+        [result.bounds.maxLng, result.bounds.maxLat],
+        [result.bounds.minLng, result.bounds.maxLat],
+        [result.bounds.minLng, result.bounds.minLat]
+      ]
+
+      // Add source
+      map.addSource(sourceId, {
+        type: 'geojson',
+        data: {
+          type: 'FeatureCollection',
+          features: [{
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [ring] },
+            properties: { resultId: result.id }
+          }]
+        }
+      } as any)
+
+      // Add fill layer (transparent with tint)
+      map.addLayer({
+        id: fillLayerId,
+        type: 'fill',
+        source: sourceId,
+        paint: {
+          'fill-color': result.color,
+          'fill-opacity': 0.05
+        }
+      } as any)
+
+      // Add line layer (colored border, solid for active, dashed for inactive)
+      const isActive = activeResultIndex === index
+      map.addLayer({
+        id: lineLayerId,
+        type: 'line',
+        source: sourceId,
+        paint: {
+          'line-color': result.color,
+          'line-width': isActive ? 3 : 2,
+          'line-dasharray': isActive ? [1] : [3, 3]
+        }
+      } as any)
+    })
+
+    return () => {
+      // Cleanup on unmount
+      optimizationResultsArray.forEach((result: OptimizationResult) => {
+        const sourceId = `map-widget-optimization-result-${result.id}-src`
+        const fillLayerId = `map-widget-optimization-result-${result.id}-fill`
+        const lineLayerId = `map-widget-optimization-result-${result.id}-line`
+
+        if (map.getLayer(lineLayerId)) {
+          map.removeLayer(lineLayerId)
+        }
+        if (map.getLayer(fillLayerId)) {
+          map.removeLayer(fillLayerId)
+        }
+        if (map.getSource(sourceId)) {
+          map.removeSource(sourceId)
+        }
+      })
+    }
+  }, [mapReady, optimizationResultsArray, visibleBoundingBoxes, activeResultIndex])
+
+  // Auto-initialize visibility for new results
+  React.useEffect(() => {
+    setVisibleBoundingBoxes((prev: Set<string>) => {
+      const newSet = new Set(prev)
+      optimizationResultsArray.forEach((result: OptimizationResult) => {
+        if (!newSet.has(result.id)) {
+          newSet.add(result.id) // Show new boxes by default
+        }
+      })
+      return newSet
+    })
+  }, [optimizationResultsArray])
+
   React.useEffect(() => {
     if (!mapReady || !mapRef.current) {
       return
@@ -2859,6 +3161,139 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           >
             {showApiControls ? '▼ ' : '▶ '}Map Layers
           </button>
+
+          <button
+            type="button"
+            onClick={() => setRecallFormVisible(!recallFormVisible)}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 4,
+              border: '1px solid rgba(255,255,255,0.35)',
+              background: recallFormVisible ? 'rgba(138,43,226,0.4)' : 'rgba(138,43,226,0.25)',
+              color: '#fff',
+              cursor: 'pointer',
+              fontWeight: 500,
+              fontSize: 12,
+              transition: 'all 0.2s',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6
+            }}
+            title="Recall existing optimization results"
+          >
+            <span>🔍</span>
+            <span>Recall Results</span>
+          </button>
+
+          {recallFormVisible && (
+            <div style={{
+              position: 'absolute',
+              top: 90,
+              left: 8,
+              zIndex: 1000,
+              background: 'rgba(0,0,0,0.85)',
+              color: '#fff',
+              padding: 16,
+              borderRadius: 6,
+              width: 320,
+              boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+              border: '1px solid rgba(138,43,226,0.5)'
+            }}>
+              <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ fontSize: 13 }}>Recall Optimization Results</strong>
+                <button
+                  type="button"
+                  onClick={() => setRecallFormVisible(false)}
+                  style={{
+                    background: 'rgba(255,0,0,0.3)',
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    color: '#fff',
+                    width: 20,
+                    height: 20,
+                    borderRadius: 3,
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    fontWeight: 'bold'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
+
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Session ID:</label>
+                <input
+                  type="text"
+                  value={recallForm.sessionId}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRecallForm((prev: RecallFormState) => ({ ...prev, sessionId: e.target.value }))}
+                  placeholder="Enter session ID"
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    fontSize: 11,
+                    borderRadius: 3,
+                    border: '1px solid rgba(255,255,255,0.35)',
+                    background: 'rgba(0,0,0,0.7)',
+                    color: '#fff'
+                  }}
+                />
+              </div>
+
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Job ID:</label>
+                <input
+                  type="text"
+                  value={recallForm.jobId}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setRecallForm((prev: RecallFormState) => ({ ...prev, jobId: e.target.value }))}
+                  placeholder="Enter job ID"
+                  style={{
+                    width: '100%',
+                    padding: '6px 8px',
+                    fontSize: 11,
+                    borderRadius: 3,
+                    border: '1px solid rgba(255,255,255,0.35)',
+                    background: 'rgba(0,0,0,0.7)',
+                    color: '#fff'
+                  }}
+                />
+              </div>
+
+              {recallForm.error && (
+                <div style={{
+                  marginBottom: 10,
+                  padding: '6px 8px',
+                  background: 'rgba(255,0,0,0.2)',
+                  border: '1px solid rgba(255,0,0,0.5)',
+                  borderRadius: 3,
+                  fontSize: 10,
+                  color: '#ffb3b3'
+                }}>
+                  {recallForm.error}
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={() => recallOptimizationResult(recallForm.sessionId, recallForm.jobId)}
+                disabled={recallForm.loading || !recallForm.sessionId.trim() || !recallForm.jobId.trim()}
+                style={{
+                  width: '100%',
+                  padding: '8px 12px',
+                  fontSize: 12,
+                  fontWeight: 'bold',
+                  borderRadius: 3,
+                  border: '1px solid rgba(255,255,255,0.35)',
+                  background: recallForm.loading ? 'rgba(138,43,226,0.3)' : 'rgba(138,43,226,0.5)',
+                  color: '#fff',
+                  cursor: recallForm.loading ? 'not-allowed' : 'pointer',
+                  opacity: recallForm.loading || !recallForm.sessionId.trim() || !recallForm.jobId.trim() ? 0.5 : 1
+                }}
+              >
+                {recallForm.loading ? 'Loading...' : 'Recall Results'}
+              </button>
+            </div>
+          )}
+
           {!optimizationBounds && (
             <button
               type="button"
@@ -2910,6 +3345,22 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                 setOptimizationLayerStatus('idle')
                 setOptimizationLayerError(null)
                 clearOverlay('optimization-layer')
+
+                // Clear multi-result state
+                setOptimizationResultsArray([])
+                setActiveResultIndex(null)
+                setShowResultsPanel(false)
+
+                // Clear recall form
+                setRecallFormVisible(false)
+                setRecallForm({ sessionId: '', jobId: '', error: null, loading: false })
+
+                // Clear comparison mode
+                setComparisonMode(false)
+                setSelectedComparisonIndices([0, 1])
+
+                // Clear visibility
+                setVisibleBoundingBoxes(new Set())
               }}
               style={{ padding: '6px 10px', borderRadius: 4, border: '1px solid rgba(255,0,0,0.5)', background: 'rgba(255,0,0,0.3)', color: '#fff', cursor: 'pointer', fontWeight: 500, fontSize: 12, transition: 'all 0.2s' }}
               title="Clear optimization box and start over"
@@ -3273,6 +3724,132 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           </div>
         )}
       </div>
+
+      {/* Results List & Management Panel */}
+      {optimizationResultsArray.length > 0 && (
+        <div style={{
+          position: 'absolute',
+          top: 8,
+          left: 360,
+          zIndex: 999,
+          background: 'rgba(0,0,0,0.75)',
+          color: '#fff',
+          padding: 10,
+          borderRadius: 6,
+          width: 280,
+          maxHeight: 'calc(100vh - 16px)',
+          overflow: 'auto',
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)'
+        }}>
+          <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <strong style={{ fontSize: 12 }}>Loaded Results ({optimizationResultsArray.length})</strong>
+            <button
+              type="button"
+              onClick={() => setComparisonMode(!comparisonMode)}
+              disabled={optimizationResultsArray.length < 2}
+              style={{
+                padding: '4px 8px',
+                fontSize: 10,
+                borderRadius: 3,
+                border: '1px solid rgba(255,255,255,0.35)',
+                background: comparisonMode ? 'rgba(0,200,100,0.4)' : 'rgba(100,100,100,0.3)',
+                color: '#fff',
+                cursor: optimizationResultsArray.length < 2 ? 'not-allowed' : 'pointer',
+                opacity: optimizationResultsArray.length < 2 ? 0.5 : 1
+              }}
+            >
+              {comparisonMode ? '✓ Compare' : 'Compare'}
+            </button>
+          </div>
+
+          {/* Result Cards */}
+          {optimizationResultsArray.map((result: OptimizationResult, idx: number) => (
+            <div
+              key={result.id}
+              style={{
+                marginBottom: 8,
+                padding: 8,
+                borderRadius: 4,
+                background: activeResultIndex === idx ? 'rgba(0,128,255,0.3)' : 'rgba(0,0,0,0.3)',
+                border: `2px solid ${result.color}`,
+                cursor: 'pointer',
+                transition: 'all 0.2s'
+              }}
+              onClick={() => {
+                setActiveResultIndex(idx)
+                setShowResultsPanel(true)
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <span style={{ fontSize: 11, fontWeight: 'bold' }}>{result.label}</span>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {/* Toggle Bounding Box Visibility */}
+                  <button
+                    type="button"
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation()
+                      setVisibleBoundingBoxes((prev: Set<string>) => {
+                        const newSet = new Set(prev)
+                        if (newSet.has(result.id)) {
+                          newSet.delete(result.id)
+                        } else {
+                          newSet.add(result.id)
+                        }
+                        return newSet
+                      })
+                    }}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: 9,
+                      borderRadius: 2,
+                      border: 'none',
+                      background: visibleBoundingBoxes.has(result.id) ? 'rgba(0,255,0,0.3)' : 'rgba(255,0,0,0.3)',
+                      color: '#fff',
+                      cursor: 'pointer'
+                    }}
+                    title={visibleBoundingBoxes.has(result.id) ? 'Hide box' : 'Show box'}
+                  >
+                    {visibleBoundingBoxes.has(result.id) ? '👁️' : '🚫'}
+                  </button>
+
+                  {/* Delete Result */}
+                  <button
+                    type="button"
+                    onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation()
+                      setOptimizationResultsArray((prev: OptimizationResult[]) => prev.filter((r: OptimizationResult) => r.id !== result.id))
+                      if (activeResultIndex === idx) {
+                        setActiveResultIndex(optimizationResultsArray.length > 1 ? 0 : null)
+                      }
+                    }}
+                    style={{
+                      padding: '2px 6px',
+                      fontSize: 9,
+                      borderRadius: 2,
+                      border: 'none',
+                      background: 'rgba(255,0,0,0.3)',
+                      color: '#fff',
+                      cursor: 'pointer'
+                    }}
+                    title="Delete result"
+                  >
+                    🗑️
+                  </button>
+                </div>
+              </div>
+
+              <div style={{ fontSize: 9, opacity: 0.7 }}>
+                <div>Session: {result.sessionId.substring(0, 12)}...</div>
+                <div>Job: {result.jobId.substring(0, 12)}...</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
+                  <div style={{ width: 12, height: 12, background: result.color, borderRadius: 2 }} />
+                  <span>{result.source === 'submitted' ? 'Submitted' : 'Recalled'}</span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {showResultsView && optimizationResults && (
         <div style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000, background: 'rgba(0,0,0,0.65)', color: '#fff', padding: 12, borderRadius: 6, width: 420, maxHeight: 'calc(100vh - 16px)', overflow: 'auto', boxShadow: '0 4px 20px rgba(0,0,0,0.5)' }}>
