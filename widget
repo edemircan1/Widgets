@@ -137,24 +137,24 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
 
     const bounds = this.map.getBounds();
-    const west = bounds.getWest();
-    const south = bounds.getSouth();
-    const east = bounds.getEast();
-    const north = bounds.getNorth();
+    const bbox = {
+      xmin: bounds.getWest(),
+      ymin: bounds.getSouth(),
+      xmax: bounds.getEast(),
+      ymax: bounds.getNorth()
+    };
 
-    const strategy = this.getStrategy(zoom);
-    const fetchBbox = this.getFetchBbox(west, south, east, north, strategy.ratio);
+    const grid = this.getGridSize(zoom);
 
-    const ratioPercent = Math.round(strategy.ratio * 100);
-    this.setState({ status: `Loading (zoom ${zoom.toFixed(1)}, ${strategy.grid}x${strategy.grid}, ${ratioPercent}% viewport)...` });
+    this.setState({ status: `Loading (zoom ${zoom.toFixed(1)}, ${grid}x${grid} grid)...` });
 
     try {
       let features: any[];
 
-      if (strategy.grid === 1) {
-        features = await this.fetchBbox(fetchBbox, token, signal);
+      if (grid === 1) {
+        features = await this.fetchBbox(bbox, token, signal);
       } else {
-        features = await this.fetchGridded(fetchBbox, token, signal, strategy.grid);
+        features = await this.fetchGridded(bbox, token, signal, grid);
       }
 
       if (signal.aborted) return;
@@ -166,39 +166,13 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
   }
 
-  getStrategy = (zoom: number): { grid: number, ratio: number } => {
-    // Zoom 13+: full viewport, minimal grid
-    if (zoom >= 13) {
-      if (zoom >= 14) return { grid: 1, ratio: 1.0 };
-      return { grid: 3, ratio: 1.0 };
-    }
-
-    // Zoom 11 to 13: linear interpolation
-    // ratio: 0.5 at zoom 11 → 1.0 at zoom 13
-    // grid: 5 at zoom 11 → 3 at zoom 13
-    const t = (zoom - 11) / 2; // 0.0 at zoom 11, 1.0 at zoom 13
-    const ratio = Math.min(0.5 + (t * 0.5), 1.0);
-    const grid = Math.round(5 - (t * 2)); // 5 at zoom 11, 3 at zoom 13
-
-    return { grid: Math.max(grid, 3), ratio };
-  }
-
-  getFetchBbox = (west: number, south: number, east: number, north: number, ratio: number) => {
-    if (ratio >= 1.0) {
-      return { xmin: west, ymin: south, xmax: east, ymax: north };
-    }
-
-    const cx = (west + east) / 2;
-    const cy = (south + north) / 2;
-    const halfW = ((east - west) / 2) * ratio;
-    const halfH = ((north - south) / 2) * ratio;
-
-    return {
-      xmin: cx - halfW,
-      ymin: cy - halfH,
-      xmax: cx + halfW,
-      ymax: cy + halfH
-    };
+  // Always full viewport, just vary grid density
+  getGridSize = (zoom: number): number => {
+    if (zoom >= 15) return 1;   // ~600 features, single query enough
+    if (zoom >= 14) return 2;   // 4 cells, ~2400 features
+    if (zoom >= 13) return 3;   // 9 cells, ~9600 features
+    if (zoom >= 12) return 5;   // 25 cells, ~38K features
+    return 5;                    // zoom 11, 25 cells, ~50K features
   }
 
   // ─── FETCH HELPERS ─────────────────────────────────────────────────
