@@ -113,7 +113,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
     this.debounceTimeout = setTimeout(() => {
       this.loadCurrentViewport();
-    }, 300);
+    }, 500);
   }
 
   // ─── CORE LOADING LOGIC ────────────────────────────────────────────
@@ -147,9 +147,10 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     const grid = this.getGridSize(zoom);
 
-    // Reset buffer for progressive rendering
+    // Reset buffer, ensure source
     this.featureBuffer = [];
     this.ensureSourceExists();
+    this.pushToMap(); // Clear visual immediately
 
     if (grid === 1) {
       this.setState({ status: 'Loading...' });
@@ -164,16 +165,18 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
         this.setState({ status: 'Failed', error: err.message });
       }
     } else {
-      this.setState({ status: `Loading (${grid}x${grid})...` });
       await this.fetchGriddedProgressive(bbox, token, signal, grid);
     }
   }
 
   getGridSize = (zoom: number): number => {
-    if (zoom >= 15) return 1;
-    if (zoom >= 14) return 2;
-    if (zoom >= 13) return 3;
-    return 4; // zoom 12
+    // With 4000 max records per request:
+    // zoom 12: ~38K features in viewport → 3x3=9 cells → 36K cap, close fit
+    // zoom 13: ~9.6K features → 2x2=4 cells → 16K cap, plenty
+    // zoom 14+: ~2.4K features → single request enough
+    if (zoom >= 14) return 1;
+    if (zoom >= 13) return 2;
+    return 3; // zoom 12
   }
 
   // ─── FETCH HELPERS ─────────────────────────────────────────────────
@@ -189,7 +192,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       spatialReference: { wkid: 4326 }
     }));
 
-    // Only fetch fields we need for rendering — dramatically reduces payload
     return `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=OBJECTID,rsrp&resultRecordCount=${this.MAX_RECORDS}&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
   }
 
@@ -202,13 +204,9 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       const res = await fetch(url, { signal });
       const text = await res.text();
 
-      if (text.startsWith('<')) {
-        console.warn('HTML response, skipping');
-        return [];
-      }
+      if (text.startsWith('<')) return [];
 
       const json = JSON.parse(text);
-
       if (json.error) {
         console.warn('ArcGIS error:', json.error.message);
         return [];
@@ -222,7 +220,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
   }
 
-  // Progressive: render after each batch of concurrent requests completes
   fetchGriddedProgressive = async (bbox: any, token: string, signal: AbortSignal, gridSize: number) => {
     const cellWidth = (bbox.xmax - bbox.xmin) / gridSize;
     const cellHeight = (bbox.ymax - bbox.ymin) / gridSize;
@@ -239,43 +236,38 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       }
     }
 
-    const concurrency = 6;
-    let completed = 0;
-    const total = cells.length;
     const seen = new Set<string>();
+    let completed = 0;
 
     try {
-      for (let i = 0; i < cells.length; i += concurrency) {
-        if (signal.aborted) return;
+      // Fire ALL requests at once — max cells is 9, all parallel
+      const allPromises = cells.map(cell => this.fetchBbox(cell, token, signal));
+      
+      // Process as they resolve
+      const results = await Promise.all(
+        allPromises.map((p, idx) =>
+          p.then(features => {
+            if (signal.aborted) return;
 
-        const batch = cells.slice(i, i + concurrency);
-        const results = await Promise.all(
-          batch.map(cell => this.fetchBbox(cell, token, signal))
-        );
-
-        if (signal.aborted) return;
-
-        // Deduplicate and add to buffer
-        for (const features of results) {
-          for (const f of features) {
-            const id = f.id || f.properties?.OBJECTID || f.properties?.objectid;
-            if (id != null) {
-              const key = String(id);
-              if (seen.has(key)) continue;
-              seen.add(key);
+            for (const f of features) {
+              const id = f.id || f.properties?.OBJECTID || f.properties?.objectid;
+              if (id != null) {
+                const key = String(id);
+                if (seen.has(key)) continue;
+                seen.add(key);
+              }
+              this.featureBuffer.push(f);
             }
-            this.featureBuffer.push(f);
-          }
-          completed++;
-        }
 
-        // Push current buffer to map immediately
-        this.pushToMap();
-        this.setState({
-          status: `Loading cells ${completed}/${total}... (${this.featureBuffer.length.toLocaleString()} features)`,
-          count: this.featureBuffer.length
-        });
-      }
+            completed++;
+            this.pushToMap();
+            this.setState({
+              status: `Loading ${completed}/${cells.length}... (${this.featureBuffer.length.toLocaleString()})`,
+              count: this.featureBuffer.length
+            });
+          })
+        )
+      );
 
       if (!signal.aborted) {
         this.setState({
@@ -301,7 +293,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       data: { type: 'FeatureCollection', features: [] }
     });
 
-    // Add layers once — they stay, only data updates
     this.map.addLayer({
       id: 'layer-fill',
       type: 'fill',
@@ -326,31 +317,21 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       id: 'layer-outline',
       type: 'line',
       source: 'data',
-      paint: {
-        'line-color': '#ffffff',
-        'line-width': 0.5
-      }
+      paint: { 'line-color': '#ffffff', 'line-width': 0.5 }
     });
   }
 
   pushToMap = () => {
     const source = this.map.getSource('data') as any;
     if (source) {
-      source.setData({
-        type: 'FeatureCollection',
-        features: this.featureBuffer
-      });
+      source.setData({ type: 'FeatureCollection', features: this.featureBuffer });
     }
   }
-
-  // ─── CLEANUP ───────────────────────────────────────────────────────
 
   clearMap = () => {
     this.featureBuffer = [];
     if (this.map.getLayer('layer-fill')) this.map.removeLayer('layer-fill');
     if (this.map.getLayer('layer-outline')) this.map.removeLayer('layer-outline');
-    if (this.map.getLayer('layer')) this.map.removeLayer('layer');
-    if (this.map.getLayer('outline')) this.map.removeLayer('outline');
     if (this.map.getSource('data')) this.map.removeSource('data');
     this.setState({ count: 0 });
   }
@@ -360,8 +341,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     if (this.fetchController) this.fetchController.abort();
     if (this.map) this.map.remove();
   }
-
-  // ─── RENDER ────────────────────────────────────────────────────────
 
   render() {
     return (
@@ -380,7 +359,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
           z-index: 1;
           min-width: 280px;
         `}>
-          <div css={css`margin-bottom: 10px; display: flex; gap: 6px; flex-wrap: wrap;`}>
+          <div css={css`margin-bottom: 10px;`}>
             {!this.state.dynamicLoading ? (
               <button onClick={this.enableDynamicLoading} css={css`padding: 5px 10px; cursor: pointer; font-size: 12px;`}>
                 Enable Dynamic Loading
@@ -392,7 +371,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
             )}
           </div>
           <div><strong>Status:</strong> {this.state.status}</div>
-          {this.state.token && <div><strong>Token:</strong> ✓ Acquired</div>}
+          {this.state.token && <div><strong>Token:</strong> ✓</div>}
           {this.state.count > 0 && <div><strong>Features:</strong> {this.state.count.toLocaleString()}</div>}
           {this.state.error && (
             <div css={css`color: #d32f2f; margin-top: 8px; font-size: 12px;`}>
