@@ -3630,130 +3630,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               <strong>RHEA Optimization</strong>
             </div>
 
-            {/* Show read-only display when viewing a submitted result, otherwise show inputs */}
-            {activeResultIndex !== null && optimizationResultsArray[activeResultIndex] && optimizationResultsArray[activeResultIndex].source === 'submitted' ? (
+            {/* Show inputs when actively drawing/configuring, otherwise show read-only for submitted results */}
+            {optimizationStatus === 'success' && optimizationSectors.length > 0 && optimizationBounds ? (
               <div style={{ marginTop: 8 }}>
-                {/* Read-Only Parameter Display */}
-                <div style={{ padding: '8px 10px', background: 'rgba(0,100,200,0.15)', borderRadius: 4, border: '1px solid rgba(0,150,255,0.3)' }}>
-                  <div style={{ marginBottom: 8, fontSize: 10, fontWeight: 'bold', color: '#64B5F6' }}>Submitted Parameters:</div>
-
-                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 9, opacity: 0.7, marginBottom: 2 }}>Frequency:</div>
-                      <div style={{ fontSize: 11, fontWeight: 'bold', color: '#fff' }}>
-                        {optimizationResultsArray[activeResultIndex].frequency ?? 'N/A'}
-                      </div>
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 9, opacity: 0.7, marginBottom: 2 }}>Network:</div>
-                      <div style={{ fontSize: 11, fontWeight: 'bold', color: '#fff' }}>
-                        {optimizationResultsArray[activeResultIndex].networkType ?? 'N/A'}
-                      </div>
-                    </div>
-                  </div>
-
-                  {optimizationResultsArray[activeResultIndex].hyperparameters && (
-                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
-                      <div style={{ fontSize: 9, opacity: 0.7, marginBottom: 4 }}>Hyperparameters:</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 4, fontSize: 9 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>RSRP Threshold:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.rsrp_threshold} dBm</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>SINR Threshold:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.sinr_threshold} dBm</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>Alpha Condition Change:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.alpha_condition_change}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>Alpha Bin to Bin:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.alpha_bin_to_bin}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>Condition Change Multiplier:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.condition_change_multiplier}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>RSRP Bin to Bin Loss Tol.:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.rsrp_bin_to_bin_loss_tolerance}%</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>RSRP Cond. Change Loss Tol.:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.rsrp_condition_change_loss_tolerance}%</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>Use User Density Cache:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.use_user_density_cache ? '✓ Yes' : '✗ No'}</span>
-                        </div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span style={{ opacity: 0.8 }}>Use Default Antenna Patterns:</span>
-                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.use_default_antenna_pabcerns_only ? '✓ Yes' : '✗ No'}</span>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {/* Session/Job IDs for the active result */}
-                <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(100,100,255,0.15)', borderRadius: 3, fontSize: 9, border: '1px solid rgba(100,100,255,0.3)' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                    <strong style={{ fontSize: 9, minWidth: 60 }}>Session ID:</strong>
-                    <code style={{ flex: 1, fontSize: 8, background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {optimizationResultsArray[activeResultIndex].sessionId}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(optimizationResultsArray[activeResultIndex].sessionId)
-                        console.log('Session ID copied:', optimizationResultsArray[activeResultIndex].sessionId)
-                      }}
-                      style={{
-                        padding: '2px 6px',
-                        fontSize: 9,
-                        borderRadius: 2,
-                        border: '1px solid rgba(255,255,255,0.3)',
-                        background: 'rgba(100,150,255,0.3)',
-                        color: '#fff',
-                        cursor: 'pointer'
-                      }}
-                      title="Copy Session ID"
-                    >
-                      📋
-                    </button>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <strong style={{ fontSize: 9, minWidth: 60 }}>Job ID:</strong>
-                    <code style={{ flex: 1, fontSize: 8, background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {optimizationResultsArray[activeResultIndex].jobId}
-                    </code>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(optimizationResultsArray[activeResultIndex].jobId)
-                        console.log('Job ID copied:', optimizationResultsArray[activeResultIndex].jobId)
-                      }}
-                      style={{
-                        padding: '2px 6px',
-                        fontSize: 9,
-                        borderRadius: 2,
-                        border: '1px solid rgba(255,255,255,0.3)',
-                        background: 'rgba(100,150,255,0.3)',
-                        color: '#fff',
-                        cursor: 'pointer'
-                      }}
-                      title="Copy Job ID"
-                    >
-                      📋
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ) : optimizationStatus === 'success' && optimizationSectors.length > 0 ? (
-              <div style={{ marginTop: 8 }}>
-                {/* Input Controls - shown when drawing new optimization */}
+                {/* Input Controls - shown when drawing/configuring new optimization */}
                 <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                   <div style={{ flex: 1 }}>
                     <div style={{ marginBottom: 4, fontSize: 11, fontWeight: 'bold' }}>Frequency:</div>
@@ -4166,6 +4046,126 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                     )}
                   </div>
                 )}
+              </div>
+            ) : activeResultIndex !== null && optimizationResultsArray[activeResultIndex] && optimizationResultsArray[activeResultIndex].source === 'submitted' ? (
+              <div style={{ marginTop: 8 }}>
+                {/* Read-Only Parameter Display - shown when viewing submitted result */}
+                <div style={{ padding: '8px 10px', background: 'rgba(0,100,200,0.15)', borderRadius: 4, border: '1px solid rgba(0,150,255,0.3)' }}>
+                  <div style={{ marginBottom: 8, fontSize: 10, fontWeight: 'bold', color: '#64B5F6' }}>Submitted Parameters:</div>
+
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 9, opacity: 0.7, marginBottom: 2 }}>Frequency:</div>
+                      <div style={{ fontSize: 11, fontWeight: 'bold', color: '#fff' }}>
+                        {optimizationResultsArray[activeResultIndex].frequency ?? 'N/A'}
+                      </div>
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 9, opacity: 0.7, marginBottom: 2 }}>Network:</div>
+                      <div style={{ fontSize: 11, fontWeight: 'bold', color: '#fff' }}>
+                        {optimizationResultsArray[activeResultIndex].networkType ?? 'N/A'}
+                      </div>
+                    </div>
+                  </div>
+
+                  {optimizationResultsArray[activeResultIndex].hyperparameters && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                      <div style={{ fontSize: 9, opacity: 0.7, marginBottom: 4 }}>Hyperparameters:</div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 4, fontSize: 9 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>RSRP Threshold:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.rsrp_threshold} dBm</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>SINR Threshold:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.sinr_threshold} dBm</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>Alpha Condition Change:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.alpha_condition_change}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>Alpha Bin to Bin:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.alpha_bin_to_bin}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>Condition Change Multiplier:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.condition_change_multiplier}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>RSRP Bin to Bin Loss Tol.:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.rsrp_bin_to_bin_loss_tolerance}%</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>RSRP Cond. Change Loss Tol.:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.rsrp_condition_change_loss_tolerance}%</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>Use User Density Cache:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.use_user_density_cache ? '✓ Yes' : '✗ No'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ opacity: 0.8 }}>Use Default Antenna Patterns:</span>
+                          <span style={{ fontWeight: 'bold' }}>{optimizationResultsArray[activeResultIndex].hyperparameters.use_default_antenna_pabcerns_only ? '✓ Yes' : '✗ No'}</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Session/Job IDs for the active result */}
+                <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(100,100,255,0.15)', borderRadius: 3, fontSize: 9, border: '1px solid rgba(100,100,255,0.3)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <strong style={{ fontSize: 9, minWidth: 60 }}>Session ID:</strong>
+                    <code style={{ flex: 1, fontSize: 8, background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {optimizationResultsArray[activeResultIndex].sessionId}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(optimizationResultsArray[activeResultIndex].sessionId)
+                        console.log('Session ID copied:', optimizationResultsArray[activeResultIndex].sessionId)
+                      }}
+                      style={{
+                        padding: '2px 6px',
+                        fontSize: 9,
+                        borderRadius: 2,
+                        border: '1px solid rgba(255,255,255,0.3)',
+                        background: 'rgba(100,150,255,0.3)',
+                        color: '#fff',
+                        cursor: 'pointer'
+                      }}
+                      title="Copy Session ID"
+                    >
+                      📋
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <strong style={{ fontSize: 9, minWidth: 60 }}>Job ID:</strong>
+                    <code style={{ flex: 1, fontSize: 8, background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {optimizationResultsArray[activeResultIndex].jobId}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(optimizationResultsArray[activeResultIndex].jobId)
+                        console.log('Job ID copied:', optimizationResultsArray[activeResultIndex].jobId)
+                      }}
+                      style={{
+                        padding: '2px 6px',
+                        fontSize: 9,
+                        borderRadius: 2,
+                        border: '1px solid rgba(255,255,255,0.3)',
+                        background: 'rgba(100,150,255,0.3)',
+                        color: '#fff',
+                        cursor: 'pointer'
+                      }}
+                      title="Copy Job ID"
+                    >
+                      📋
+                    </button>
+                  </div>
+                </div>
               </div>
             ) : null}
 
