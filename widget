@@ -12,8 +12,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   fetchController: AbortController = null;
 
   FEATURE_SERVER_URL = 'https://url/arcgissecure/rest/services/On_Air_MGRS_100m_Single_Layer/FeatureServer/0';
-  MAX_RECORD_COUNT = 2000;
-  MAX_DEPTH = 5; // Max quadtree subdivision depth
 
   constructor(props) {
     super(props);
@@ -22,9 +20,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       error: null,
       count: 0,
       token: null,
-      dynamicLoading: false,
-      cellsProcessed: 0,
-      cellsTotal: 0
+      dynamicLoading: false
     };
   }
 
@@ -133,166 +129,36 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     const zoom = this.map.getZoom();
 
-    if (zoom < 7) {
-      this.setState({ status: `Zoom in to 7+ to load features (current: ${Math.floor(zoom)})`, count: 0 });
+    if (zoom < 12) {
+      this.setState({ status: `Zoom in to 12+ to load features (current: ${Math.floor(zoom)})`, count: 0 });
       this.clearMap();
       return;
     }
 
     const bounds = this.map.getBounds();
-    const bbox = {
-      xmin: bounds.getWest(),
-      ymin: bounds.getSouth(),
-      xmax: bounds.getEast(),
-      ymax: bounds.getNorth()
-    };
 
-    const initialGrid = this.getInitialGrid(zoom);
-    const maxOffset = this.getMaxOffset(zoom);
-
-    // Split viewport into initial grid cells
-    const initialCells = this.splitBbox(bbox, initialGrid.cols, initialGrid.rows);
-
-    this.setState({
-      status: `Loading (zoom ${Math.floor(zoom)}, ${initialCells.length} cells)...`,
-      cellsProcessed: 0,
-      cellsTotal: initialCells.length
-    });
-
-    try {
-      const allFeatures = await this.processAllCells(initialCells, token, signal, maxOffset, 0);
-
-      if (signal.aborted) return;
-
-      const uniqueFeatures = this.deduplicateFeatures(allFeatures);
-      this.renderFeatures(uniqueFeatures);
-
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.error('Load error:', err);
-      this.setState({ status: 'Failed', error: err.message });
+    if (zoom >= 14) {
+      // High zoom: single query
+      this.setState({ status: 'Loading viewport...' });
+      await this.fetchSingleBbox(bounds, token, signal, null);
+    } else {
+      // Zoom 12-13: grid-based parallel fetching
+      const gridConfig = this.getGridConfig(zoom);
+      this.setState({ status: `Loading (${gridConfig.cols}x${gridConfig.rows} grid, zoom ${Math.floor(zoom)})...` });
+      await this.fetchGridded(bounds, token, signal, gridConfig, zoom);
     }
   }
 
-  getInitialGrid = (zoom: number): { rows: number, cols: number } => {
-    if (zoom >= 13) return { rows: 1, cols: 1 };
-    if (zoom >= 11) return { rows: 2, cols: 2 };
-    if (zoom >= 9)  return { rows: 3, cols: 3 };
-    return { rows: 4, cols: 4 }; // zoom 7-8
-  }
-
-  getMaxOffset = (zoom: number): number | null => {
-    if (zoom >= 13) return null;
-    if (zoom >= 11) return 0.0005;
-    if (zoom >= 9)  return 0.001;
-    return 0.005;
-  }
-
-  // Split a bbox into cols x rows smaller bboxes
-  splitBbox = (bbox: any, cols: number, rows: number): any[] => {
-    const cellWidth = (bbox.xmax - bbox.xmin) / cols;
-    const cellHeight = (bbox.ymax - bbox.ymin) / rows;
-    const cells = [];
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        cells.push({
-          xmin: bbox.xmin + c * cellWidth,
-          ymin: bbox.ymin + r * cellHeight,
-          xmax: bbox.xmin + (c + 1) * cellWidth,
-          ymax: bbox.ymin + (r + 1) * cellHeight
-        });
-      }
-    }
-    return cells;
-  }
-
-  // Process a batch of cells with concurrency control
-  processAllCells = async (cells: any[], token: string, signal: AbortSignal, maxOffset: number | null, depth: number): Promise<any[]> => {
-    const allFeatures: any[] = [];
-    const concurrency = 6;
-
-    for (let i = 0; i < cells.length; i += concurrency) {
-      if (signal.aborted) return allFeatures;
-
-      const batch = cells.slice(i, i + concurrency);
-      const batchResults = await Promise.all(
-        batch.map(cell => this.fetchCell(cell, token, signal, maxOffset, depth))
-      );
-
-      for (const features of batchResults) {
-        allFeatures.push(...features);
-      }
-    }
-
-    return allFeatures;
-  }
-
-  // Fetch a single cell. If it returns exactly MAX_RECORD_COUNT, subdivide into 4 and recurse.
-  fetchCell = async (bbox: any, token: string, signal: AbortSignal, maxOffset: number | null, depth: number): Promise<any[]> => {
-    if (signal.aborted) return [];
-
-    const url = this.buildQueryUrl(bbox, token, maxOffset);
-
-    try {
-      const res = await fetch(url, { signal });
-      const text = await res.text();
-
-      if (text.startsWith('<')) {
-        console.warn('HTML response, skipping cell');
-        this.incrementProcessed();
-        return [];
-      }
-
-      const json = JSON.parse(text);
-
-      if (json.error) {
-        console.warn('ArcGIS error:', json.error.message);
-        this.incrementProcessed();
-        return [];
-      }
-
-      if (!json.features || json.features.length === 0) {
-        this.incrementProcessed();
-        return [];
-      }
-
-      const count = json.features.length;
-
-      // If we got exactly the limit, this cell is incomplete — subdivide
-      if (count >= this.MAX_RECORD_COUNT && depth < this.MAX_DEPTH) {
-        console.log(`Cell hit limit (${count}) at depth ${depth}, subdividing into 4...`);
-
-        // Update cell count: this cell becomes 4 sub-cells
-        this.setState(prev => ({ cellsTotal: prev.cellsTotal + 3 }));
-
-        const subCells = this.splitBbox(bbox, 2, 2);
-        return await this.processAllCells(subCells, token, signal, maxOffset, depth + 1);
-      }
-
-      // Cell is fully loaded
-      this.incrementProcessed();
-      console.log(`Cell done: ${count} features (depth ${depth})`);
-      return json.features;
-
-    } catch (err) {
-      if (err.name === 'AbortError') return [];
-      console.warn('Fetch error for cell:', err.message);
-      this.incrementProcessed();
-      return [];
+  getGridConfig = (zoom: number): { rows: number, cols: number, maxOffset: number } => {
+    if (zoom >= 13) {
+      return { rows: 2, cols: 2, maxOffset: 0.0005 };   // 4 cells
+    } else {
+      // zoom 12
+      return { rows: 3, cols: 3, maxOffset: 0.001 };     // 9 cells
     }
   }
 
-  incrementProcessed = () => {
-    this.setState(prev => {
-      const newProcessed = prev.cellsProcessed + 1;
-      return {
-        cellsProcessed: newProcessed,
-        status: `Loading cells ${newProcessed}/${prev.cellsTotal}...`
-      };
-    });
-  }
-
-  buildQueryUrl = (bbox: any, token: string, maxOffset: number | null): string => {
+  buildQueryUrl = (bbox: { xmin: number, ymin: number, xmax: number, ymax: number }, token: string, maxOffset: number | null): string => {
     let tokenParam = encodeURIComponent(token);
     if (token.endsWith('.')) {
       tokenParam = tokenParam.slice(0, -1) + '%2E';
@@ -303,7 +169,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       spatialReference: { wkid: 4326 }
     }));
 
-    let url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&resultRecordCount=${this.MAX_RECORD_COUNT}&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
+    let url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&resultRecordCount=2000&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
 
     if (maxOffset !== null) {
       url += `&maxAllowableOffset=${maxOffset}`;
@@ -312,18 +178,140 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     return url;
   }
 
-  deduplicateFeatures = (features: any[]): any[] => {
-    const seen = new Set<string>();
-    return features.filter(f => {
-      const id = f.id || f.properties?.OBJECTID || f.properties?.objectid || f.properties?.FID;
-      if (id !== undefined && id !== null) {
-        const key = String(id);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
+  // Fetch all pages for a single bbox
+  fetchAllPages = async (bbox: { xmin: number, ymin: number, xmax: number, ymax: number }, token: string, signal: AbortSignal, maxOffset: number | null): Promise<any[]> => {
+    let allFeatures: any[] = [];
+    let offset = 0;
+    const limit = 2000;
+
+    while (true) {
+      if (signal.aborted) return allFeatures;
+
+      let url = this.buildQueryUrl(bbox, token, maxOffset);
+      if (offset > 0) {
+        url += `&resultOffset=${offset}`;
       }
-      return true;
-    });
+
+      const res = await fetch(url, { signal });
+      const text = await res.text();
+
+      if (text.startsWith('<')) {
+        console.warn('Got HTML response, skipping');
+        break;
+      }
+
+      const json = JSON.parse(text);
+
+      if (json.error) {
+        console.warn('ArcGIS error:', json.error.message);
+        break;
+      }
+
+      if (!json.features || json.features.length === 0) break;
+
+      allFeatures = allFeatures.concat(json.features);
+
+      if (json.features.length < limit) break;
+
+      offset += limit;
+
+      // Safety cap: max 5 pages per cell
+      if (offset >= limit * 5) {
+        console.warn('Hit pagination cap, moving on');
+        break;
+      }
+    }
+
+    return allFeatures;
+  }
+
+  // Single bbox fetch (zoom 14+)
+  fetchSingleBbox = async (mapBounds: maplibregl.LngLatBounds, token: string, signal: AbortSignal, maxOffset: number | null) => {
+    const bbox = {
+      xmin: mapBounds.getWest(),
+      ymin: mapBounds.getSouth(),
+      xmax: mapBounds.getEast(),
+      ymax: mapBounds.getNorth()
+    };
+
+    try {
+      const features = await this.fetchAllPages(bbox, token, signal, maxOffset);
+      if (signal.aborted) return;
+      this.renderFeatures(features);
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      console.error('Fetch error:', err);
+      this.setState({ status: 'Failed', error: err.message });
+    }
+  }
+
+  // Grid-based parallel fetch (zoom 12-13)
+  fetchGridded = async (mapBounds: maplibregl.LngLatBounds, token: string, signal: AbortSignal, config: { rows: number, cols: number, maxOffset: number }, zoom: number) => {
+    const west = mapBounds.getWest();
+    const south = mapBounds.getSouth();
+    const east = mapBounds.getEast();
+    const north = mapBounds.getNorth();
+
+    const cellWidth = (east - west) / config.cols;
+    const cellHeight = (north - south) / config.rows;
+
+    const cells: { xmin: number, ymin: number, xmax: number, ymax: number }[] = [];
+    for (let r = 0; r < config.rows; r++) {
+      for (let c = 0; c < config.cols; c++) {
+        cells.push({
+          xmin: west + c * cellWidth,
+          ymin: south + r * cellHeight,
+          xmax: west + (c + 1) * cellWidth,
+          ymax: south + (r + 1) * cellHeight
+        });
+      }
+    }
+
+    try {
+      let completedCells = 0;
+      const totalCells = cells.length;
+      const allFeatures: any[] = [];
+      const concurrency = 6;
+
+      for (let i = 0; i < cells.length; i += concurrency) {
+        if (signal.aborted) return;
+
+        const batch = cells.slice(i, i + concurrency);
+        const batchResults = await Promise.all(
+          batch.map(cell => this.fetchAllPages(cell, token, signal, config.maxOffset))
+        );
+
+        for (const features of batchResults) {
+          allFeatures.push(...features);
+          completedCells++;
+        }
+
+        if (!signal.aborted) {
+          this.setState({ status: `Loading cells ${completedCells}/${totalCells}...` });
+        }
+      }
+
+      if (signal.aborted) return;
+
+      const seen = new Set<string>();
+      const uniqueFeatures = allFeatures.filter(f => {
+        const id = f.id || f.properties?.OBJECTID || f.properties?.objectid || f.properties?.FID;
+        if (id !== undefined && id !== null) {
+          const key = String(id);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }
+        return true;
+      });
+
+      this.renderFeatures(uniqueFeatures);
+
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      console.error('Grid fetch error:', err);
+      this.setState({ status: 'Failed', error: err.message });
+    }
   }
 
   // ─── RENDERING ─────────────────────────────────────────────────────
