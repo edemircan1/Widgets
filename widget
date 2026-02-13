@@ -9,6 +9,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   debounceTimeout: any = null;
   currentToken: string = null;
   tokenExpiresAt: number = null;
+  fetchController: AbortController = null;
 
   FEATURE_SERVER_URL = 'https://url/arcgissecure/rest/services/On_Air_MGRS_100m_Single_Layer/FeatureServer/0';
 
@@ -19,7 +20,6 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       error: null,
       count: 0,
       token: null,
-      method: null,
       dynamicLoading: false
     };
   }
@@ -27,7 +27,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   componentDidMount() {
     this.initMap();
   }
-  
+
+  // ─── TOKEN MANAGEMENT ───────────────────────────────────────────────
 
   getOauthToken = async () => {
     try {
@@ -35,23 +36,13 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
         method: "GET",
         mode: 'cors'
       });
-
-      if (!response.ok) {
-        throw new Error(`Response status: ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`Response status: ${response.status}`);
       const result = await response.json();
       const rawToken = result.access_token;
-      const expiresIn = result.expires_in || 7200; // Default to 7200 seconds (2 hours)
-      
-      // Store token and calculate expiration time (with 60 second buffer)
+      const expiresIn = result.expires_in || 7200;
       this.currentToken = rawToken;
       this.tokenExpiresAt = Date.now() + ((expiresIn - 60) * 1000);
-      
-      console.log('Raw token from API:', rawToken);
-      console.log('Token expires in:', expiresIn, 'seconds');
-      console.log('Token ends with period:', rawToken.endsWith('.'));
       return rawToken;
-
     } catch (error) {
       console.error("Error fetching token:", error);
       return null;
@@ -59,23 +50,19 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   }
 
   isTokenValid = () => {
-    if (!this.currentToken || !this.tokenExpiresAt) {
-      return false;
-    }
-    return Date.now() < this.tokenExpiresAt;
+    return this.currentToken && this.tokenExpiresAt && Date.now() < this.tokenExpiresAt;
   }
 
   ensureValidToken = async () => {
     if (!this.isTokenValid()) {
-      console.log('Token expired or missing, fetching new token...');
       const token = await this.getOauthToken();
-      if (token) {
-        this.setState({ token: token });
-      }
+      if (token) this.setState({ token });
       return token;
     }
     return this.currentToken;
   }
+
+  // ─── MAP INIT ───────────────────────────────────────────────────────
 
   initMap = () => {
     this.setState({ status: 'Loading basemap...' });
@@ -91,52 +78,50 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       this.setState({ status: 'Basemap loaded. Ready.' });
     });
 
-    // Add listeners for dynamic loading
     this.map.on('moveend', () => {
-      if (this.state.dynamicLoading) {
-        this.debouncedLoadViewport();
-      }
+      if (this.state.dynamicLoading) this.debouncedLoadViewport();
     });
 
     this.map.on('zoomend', () => {
-      if (this.state.dynamicLoading) {
-        this.debouncedLoadViewport();
-      }
+      if (this.state.dynamicLoading) this.debouncedLoadViewport();
     });
   }
 
-  // Enable dynamic loading
+  // ─── DYNAMIC LOADING CONTROLS ──────────────────────────────────────
+
   enableDynamicLoading = async () => {
     this.clearMap();
-    this.setState({ status: 'Getting token...', method: 'dynamic', error: null });
+    this.setState({ status: 'Getting token...', error: null });
     const token = await this.ensureValidToken();
     if (!token) {
       this.setState({ status: 'Token failed', error: 'Could not get token' });
       return;
     }
-    this.setState({ token: token, dynamicLoading: true, status: 'Dynamic loading enabled' });
-    // Load initial viewport
+    this.setState({ token, dynamicLoading: true, status: 'Dynamic loading enabled' });
     this.loadCurrentViewport();
   }
 
   disableDynamicLoading = () => {
     this.setState({ dynamicLoading: false, status: 'Dynamic loading disabled' });
-    if (this.debounceTimeout) {
-      clearTimeout(this.debounceTimeout);
-    }
+    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
+    if (this.fetchController) this.fetchController.abort();
   }
 
   debouncedLoadViewport = () => {
-    if (this.debounceTimeout) {
-      clearTimeout(this.debounceTimeout);
-    }
+    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
     this.debounceTimeout = setTimeout(() => {
       this.loadCurrentViewport();
-    }, 500); // Wait 500ms after user stops moving
+    }, 500);
   }
 
+  // ─── CORE LOADING LOGIC ────────────────────────────────────────────
+
   loadCurrentViewport = async () => {
-    // Ensure we have a valid token before loading
+    // Cancel any in-flight requests
+    if (this.fetchController) this.fetchController.abort();
+    this.fetchController = new AbortController();
+    const signal = this.fetchController.signal;
+
     const token = await this.ensureValidToken();
     if (!token) {
       this.setState({ status: 'Token expired', error: 'Failed to refresh token' });
@@ -144,198 +129,289 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
 
     const zoom = this.map.getZoom();
-    console.log('Current zoom level:', zoom);
 
-    // Only fetch data at zoom level 15 or higher
-    if (zoom < 13) {
-      this.setState({ 
-        status: `Zoom in to level 15+ to load features (current: ${Math.floor(zoom)})`,
-        count: 0 
-      });
+    if (zoom < 7) {
+      this.setState({ status: `Zoom in to 7+ to load features (current: ${Math.floor(zoom)})`, count: 0 });
       this.clearMap();
       return;
     }
 
     const bounds = this.map.getBounds();
-    const bbox = {
-      xmin: bounds.getWest(),
-      ymin: bounds.getSouth(),
-      xmax: bounds.getEast(),
-      ymax: bounds.getNorth(),
-      spatialReference: { wkid: 4326 }
-    };
 
-    // Encode the token, then replace any trailing period with %2E
+    if (zoom >= 13) {
+      // High zoom: single query, no simplification
+      this.setState({ status: 'Loading viewport...' });
+      await this.fetchSingleBbox(bounds, token, signal, null);
+    } else {
+      // Zoom 7-12: grid-based parallel fetching
+      const gridConfig = this.getGridConfig(zoom);
+      this.setState({ status: `Loading (${gridConfig.cols}x${gridConfig.rows} grid, zoom ${Math.floor(zoom)})...` });
+      await this.fetchGridded(bounds, token, signal, gridConfig, zoom);
+    }
+  }
+
+  // Determine grid size and maxAllowableOffset based on zoom
+  getGridConfig = (zoom: number): { rows: number, cols: number, maxOffset: number } => {
+    if (zoom >= 11) {
+      return { rows: 2, cols: 2, maxOffset: 0.0005 };   // 4 cells
+    } else if (zoom >= 9) {
+      return { rows: 3, cols: 3, maxOffset: 0.001 };     // 9 cells
+    } else {
+      // zoom 7-8
+      return { rows: 4, cols: 4, maxOffset: 0.005 };     // 16 cells
+    }
+  }
+
+  // Build query URL for a given bbox
+  buildQueryUrl = (bbox: { xmin: number, ymin: number, xmax: number, ymax: number }, token: string, maxOffset: number | null, offset: number = 0): string => {
     let tokenParam = encodeURIComponent(token);
     if (token.endsWith('.')) {
       tokenParam = tokenParam.slice(0, -1) + '%2E';
     }
 
-    const geometryFilter = encodeURIComponent(JSON.stringify(bbox));
-    const url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&resultRecordCount=2000&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
-    
-    console.log('Loading viewport at zoom', zoom, ':', bbox);
-    this.fetchAndRender(url, {});
+    const geometryFilter = encodeURIComponent(JSON.stringify({
+      ...bbox,
+      spatialReference: { wkid: 4326 }
+    }));
+
+    let url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&resultRecordCount=2000&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
+
+    if (maxOffset !== null) {
+      url += `&maxAllowableOffset=${maxOffset}`;
+    }
+
+    if (offset > 0) {
+      url += `&resultOffset=${offset}`;
+    }
+
+    return url;
   }
 
-  fetchAndRender = async (url: string, fetchOptions: any) => {
-    try {
-      const statusPrefix = this.state.dynamicLoading ? 'Loading viewport...' : `${this.state.status} → Fetching features...`;
-      this.setState({ status: statusPrefix });
+  // Fetch all pages for a single bbox (handles pagination)
+  fetchAllPages = async (bbox: { xmin: number, ymin: number, xmax: number, ymax: number }, token: string, signal: AbortSignal, maxOffset: number | null): Promise<any[]> => {
+    let allFeatures: any[] = [];
+    let offset = 0;
+    const limit = 2000;
 
-      const res = await fetch(url, fetchOptions);
+    while (true) {
+      if (signal.aborted) return allFeatures;
 
-      const contentType = res.headers.get('content-type');
-      console.log('Response content-type:', contentType);
-
+      const url = this.buildQueryUrl(bbox, token, maxOffset, offset);
+      const res = await fetch(url, { signal });
       const text = await res.text();
-      console.log('Raw response (first 500 chars):', text.substring(0, 500));
 
       if (text.startsWith('<')) {
-        this.setState({
-          status: `Got HTML, not JSON`,
-          error: `Server returned HTML instead of JSON. Likely a redirect or auth page.`
-        });
-        return;
+        console.warn('Got HTML response, skipping this cell');
+        break;
       }
 
       const json = JSON.parse(text);
-      console.log('Response:', json);
 
       if (json.error) {
-        this.setState({
-          status: `ArcGIS Error`,
-          error: `${json.error.message || JSON.stringify(json.error)}`
-        });
-        return;
+        console.warn('ArcGIS error for cell:', json.error.message);
+        break;
       }
 
-      if (!json.features || json.features.length === 0) {
-        this.setState({
-          status: this.state.dynamicLoading ? 'No features in viewport' : 'No features',
-          error: null,
-          count: 0
-        });
-        this.clearMap();
-        return;
+      if (!json.features || json.features.length === 0) break;
+
+      allFeatures = allFeatures.concat(json.features);
+
+      // If we got less than the limit, we have all data for this cell
+      if (json.features.length < limit) break;
+
+      // Otherwise paginate
+      offset += limit;
+
+      // Safety cap: max 5 pages per cell (10,000 features)
+      if (offset >= limit * 5) {
+        console.warn('Hit pagination cap for cell, moving on');
+        break;
       }
+    }
 
-      this.setState({
-        status: `Loading ${json.features.length} features...`,
-        count: json.features.length
-      });
+    return allFeatures;
+  }
 
-      // Debug: Check RSRP values
-      const rsrpValues = json.features.slice(0, 10).map(f => f.properties?.rsrp);
-      console.log('Sample RSRP values:', rsrpValues);
-      console.log('Sample feature properties:', json.features[0]?.properties);
+  // Single bbox fetch (zoom 13+)
+  fetchSingleBbox = async (mapBounds: maplibregl.LngLatBounds, token: string, signal: AbortSignal, maxOffset: number | null) => {
+    const bbox = {
+      xmin: mapBounds.getWest(),
+      ymin: mapBounds.getSouth(),
+      xmax: mapBounds.getEast(),
+      ymax: mapBounds.getNorth()
+    };
 
-      // Clear existing data if present
-      if (this.map.getSource('data')) {
-        // Update existing source
-        const source: any = this.map.getSource('data');
-        source.setData(json);
-      } else {
-        // Add new source and layers
-        this.map.addSource('data', {
-          type: 'geojson',
-          data: json
-        });
-
-        const geomType = json.features[0].geometry.type.toLowerCase();
-
-        if (geomType.includes('point')) {
-          this.map.addLayer({
-            id: 'layer',
-            type: 'circle',
-            source: 'data',
-            paint: {
-              'circle-radius': 6,
-              'circle-color': '#e74c3c',
-              'circle-stroke-width': 2,
-              'circle-stroke-color': '#fff'
-            }
-          });
-        } else if (geomType.includes('line')) {
-          this.map.addLayer({
-            id: 'layer',
-            type: 'line',
-            source: 'data',
-            paint: {
-              'line-color': '#3498db',
-              'line-width': 3
-            }
-          });
-        } else if (geomType.includes('polygon')) {
-          this.map.addLayer({
-            id: 'layer',
-            type: 'fill',
-            source: 'data',
-            paint: {
-              'fill-color': [
-                'step',
-                ['get', 'rsrp'],
-                '#9c27b0',      // < -118: purple (worst signal)
-                -118, '#f44336',  // -118 to -115: red
-                -115, '#ff9800',  // -115 to -110: orange
-                -110, '#ffeb3b',  // -110 to -105: yellow
-                -105, '#80deea',  // -105 to -95: turquoise/cyan
-                -95, '#2196f3',   // -95 to -85: blue
-                -85, '#4caf50'    // > -85: green (best signal)
-              ],
-              'fill-opacity': 0.7
-            }
-          });
-          this.map.addLayer({
-            id: 'outline',
-            type: 'line',
-            source: 'data',
-            paint: {
-              'line-color': '#ffffff',
-              'line-width': 1
-            }
-          });
-        }
-      }
-
-      // Only fit bounds if not in dynamic loading mode
-      if (!this.state.dynamicLoading) {
-        const bounds = new maplibregl.LngLatBounds();
-
-        json.features.forEach(feature => {
-          const geom = feature.geometry;
-          if (geom.type === 'Point') {
-            bounds.extend(geom.coordinates);
-          } else if (geom.type === 'LineString') {
-            geom.coordinates.forEach(coord => bounds.extend(coord));
-          } else if (geom.type === 'Polygon') {
-            geom.coordinates[0].forEach(coord => bounds.extend(coord));
-          } else if (geom.type === 'MultiPolygon') {
-            geom.coordinates.forEach(polygon => {
-              polygon[0].forEach(coord => bounds.extend(coord));
-            });
-          }
-        });
-
-        if (!bounds.isEmpty()) {
-          this.map.fitBounds(bounds, { padding: 50, maxZoom: 15 });
-        }
-      }
-
-      this.setState({
-        status: this.state.dynamicLoading ? `Viewport: ${json.features.length} features` : `✓ Loaded ${json.features.length} features`,
-        count: json.features.length,
-        error: null
-      });
-
+    try {
+      const features = await this.fetchAllPages(bbox, token, signal, maxOffset);
+      if (signal.aborted) return;
+      this.renderFeatures(features);
     } catch (err) {
-      console.error('Error:', err);
-      this.setState({
-        status: `Failed`,
-        error: err.message
-      });
+      if (err.name === 'AbortError') return;
+      console.error('Fetch error:', err);
+      this.setState({ status: 'Failed', error: err.message });
     }
   }
+
+  // Grid-based parallel fetch (zoom 7-12)
+  fetchGridded = async (mapBounds: maplibregl.LngLatBounds, token: string, signal: AbortSignal, config: { rows: number, cols: number, maxOffset: number }, zoom: number) => {
+    const west = mapBounds.getWest();
+    const south = mapBounds.getSouth();
+    const east = mapBounds.getEast();
+    const north = mapBounds.getNorth();
+
+    const cellWidth = (east - west) / config.cols;
+    const cellHeight = (north - south) / config.rows;
+
+    // Build grid cells
+    const cells: { xmin: number, ymin: number, xmax: number, ymax: number }[] = [];
+    for (let r = 0; r < config.rows; r++) {
+      for (let c = 0; c < config.cols; c++) {
+        cells.push({
+          xmin: west + c * cellWidth,
+          ymin: south + r * cellHeight,
+          xmax: west + (c + 1) * cellWidth,
+          ymax: south + (r + 1) * cellHeight
+        });
+      }
+    }
+
+    try {
+      let completedCells = 0;
+      const totalCells = cells.length;
+
+      // Fetch all cells in parallel (with concurrency limit)
+      const allFeatures: any[] = [];
+      const concurrency = 6; // Max parallel requests
+
+      for (let i = 0; i < cells.length; i += concurrency) {
+        if (signal.aborted) return;
+
+        const batch = cells.slice(i, i + concurrency);
+        const batchResults = await Promise.all(
+          batch.map(cell => this.fetchAllPages(cell, token, signal, config.maxOffset))
+        );
+
+        for (const features of batchResults) {
+          allFeatures.push(...features);
+          completedCells++;
+        }
+
+        if (!signal.aborted) {
+          this.setState({ status: `Loading cells ${completedCells}/${totalCells}...` });
+        }
+      }
+
+      if (signal.aborted) return;
+
+      // Deduplicate features by ObjectID (grid cells may overlap slightly)
+      const seen = new Set<string>();
+      const uniqueFeatures = allFeatures.filter(f => {
+        const id = f.id || f.properties?.OBJECTID || f.properties?.objectid || f.properties?.FID;
+        if (id !== undefined && id !== null) {
+          const key = String(id);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }
+        return true; // Keep features without IDs
+      });
+
+      this.renderFeatures(uniqueFeatures);
+
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      console.error('Grid fetch error:', err);
+      this.setState({ status: 'Failed', error: err.message });
+    }
+  }
+
+  // ─── RENDERING ─────────────────────────────────────────────────────
+
+  renderFeatures = (features: any[]) => {
+    if (features.length === 0) {
+      this.setState({ status: 'No features in viewport', error: null, count: 0 });
+      this.clearMap();
+      return;
+    }
+
+    const geojson: any = {
+      type: 'FeatureCollection',
+      features: features
+    };
+
+    // Update or create source
+    if (this.map.getSource('data')) {
+      (this.map.getSource('data') as any).setData(geojson);
+    } else {
+      this.map.addSource('data', {
+        type: 'geojson',
+        data: geojson
+      });
+
+      const geomType = features[0].geometry.type.toLowerCase();
+
+      if (geomType.includes('point')) {
+        this.map.addLayer({
+          id: 'layer',
+          type: 'circle',
+          source: 'data',
+          paint: {
+            'circle-radius': 6,
+            'circle-color': '#e74c3c',
+            'circle-stroke-width': 2,
+            'circle-stroke-color': '#fff'
+          }
+        });
+      } else if (geomType.includes('line')) {
+        this.map.addLayer({
+          id: 'layer',
+          type: 'line',
+          source: 'data',
+          paint: {
+            'line-color': '#3498db',
+            'line-width': 3
+          }
+        });
+      } else if (geomType.includes('polygon')) {
+        this.map.addLayer({
+          id: 'layer',
+          type: 'fill',
+          source: 'data',
+          paint: {
+            'fill-color': [
+              'step',
+              ['get', 'rsrp'],
+              '#9c27b0',
+              -118, '#f44336',
+              -115, '#ff9800',
+              -110, '#ffeb3b',
+              -105, '#80deea',
+              -95, '#2196f3',
+              -85, '#4caf50'
+            ],
+            'fill-opacity': 0.7
+          }
+        });
+        this.map.addLayer({
+          id: 'outline',
+          type: 'line',
+          source: 'data',
+          paint: {
+            'line-color': '#ffffff',
+            'line-width': 0.5
+          }
+        });
+      }
+    }
+
+    this.setState({
+      status: `✓ ${features.length} features loaded`,
+      count: features.length,
+      error: null
+    });
+  }
+
+  // ─── CLEANUP ───────────────────────────────────────────────────────
 
   clearMap = () => {
     if (this.map.getLayer('layer')) this.map.removeLayer('layer');
@@ -345,11 +421,12 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   }
 
   componentWillUnmount() {
-    if (this.debounceTimeout) {
-      clearTimeout(this.debounceTimeout);
-    }
+    if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
+    if (this.fetchController) this.fetchController.abort();
     if (this.map) this.map.remove();
   }
+
+  // ─── RENDER ────────────────────────────────────────────────────────
 
   render() {
     return (
@@ -380,12 +457,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
             )}
           </div>
           <div><strong>Status:</strong> {this.state.status}</div>
-          {this.state.token && (
-            <div><strong>Token:</strong> ✓ Acquired</div>
-          )}
-          {this.state.count > 0 && (
-            <div><strong>Features:</strong> {this.state.count}</div>
-          )}
+          {this.state.token && <div><strong>Token:</strong> ✓ Acquired</div>}
+          {this.state.count > 0 && <div><strong>Features:</strong> {this.state.count.toLocaleString()}</div>}
           {this.state.error && (
             <div css={css`color: #d32f2f; margin-top: 8px; font-size: 12px;`}>
               <strong>Error:</strong><br/>{this.state.error}
