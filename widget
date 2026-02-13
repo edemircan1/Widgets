@@ -12,6 +12,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   fetchController: AbortController = null;
 
   FEATURE_SERVER_URL = 'https://url/arcgissecure/rest/services/On_Air_MGRS_100m_Single_Layer/FeatureServer/0';
+  MAX_RECORDS = 2000;
 
   constructor(props) {
     super(props);
@@ -136,29 +137,69 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
 
     const bounds = this.map.getBounds();
+    const west = bounds.getWest();
+    const south = bounds.getSouth();
+    const east = bounds.getEast();
+    const north = bounds.getNorth();
 
-    if (zoom >= 14) {
-      // High zoom: single query
-      this.setState({ status: 'Loading viewport...' });
-      await this.fetchSingleBbox(bounds, token, signal, null);
-    } else {
-      // Zoom 12-13: grid-based parallel fetching
-      const gridConfig = this.getGridConfig(zoom);
-      this.setState({ status: `Loading (${gridConfig.cols}x${gridConfig.rows} grid, zoom ${Math.floor(zoom)})...` });
-      await this.fetchGridded(bounds, token, signal, gridConfig, zoom);
+    // Get strategy based on zoom
+    const strategy = this.getStrategy(zoom);
+
+    // Calculate the fetch area (center-cropped for lower zooms, full for high zooms)
+    const fetchBbox = this.getFetchBbox(west, south, east, north, strategy.viewportRatio);
+
+    this.setState({ status: `Loading (zoom ${Math.floor(zoom)}, ${strategy.grid}x${strategy.grid} grid)...` });
+
+    try {
+      if (strategy.grid === 1) {
+        // Single query
+        const features = await this.fetchBbox(fetchBbox, token, signal);
+        if (signal.aborted) return;
+        this.renderFeatures(this.dedup(features));
+      } else {
+        // Grid-based parallel fetch
+        const features = await this.fetchGridded(fetchBbox, token, signal, strategy.grid);
+        if (signal.aborted) return;
+        this.renderFeatures(this.dedup(features));
+      }
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      console.error('Load error:', err);
+      this.setState({ status: 'Failed', error: err.message });
     }
   }
 
-  getGridConfig = (zoom: number): { rows: number, cols: number, maxOffset: number } => {
-    if (zoom >= 13) {
-      return { rows: 2, cols: 2, maxOffset: 0.0005 };   // 4 cells
-    } else {
-      // zoom 12
-      return { rows: 3, cols: 3, maxOffset: 0.001 };     // 9 cells
-    }
+  // Strategy per zoom level
+  getStrategy = (zoom: number): { grid: number, viewportRatio: number } => {
+    // viewportRatio: 1.0 = full viewport, 0.5 = center 50% of viewport
+    if (zoom >= 14) return { grid: 1, viewportRatio: 1.0 };
+    if (zoom >= 13) return { grid: 3, viewportRatio: 1.0 };
+    // zoom 12
+    return { grid: 4, viewportRatio: 0.6 };
   }
 
-  buildQueryUrl = (bbox: { xmin: number, ymin: number, xmax: number, ymax: number }, token: string, maxOffset: number | null): string => {
+  // Crop viewport to center portion based on ratio
+  getFetchBbox = (west: number, south: number, east: number, north: number, ratio: number) => {
+    if (ratio >= 1.0) {
+      return { xmin: west, ymin: south, xmax: east, ymax: north };
+    }
+
+    const cx = (west + east) / 2;
+    const cy = (south + north) / 2;
+    const halfW = ((east - west) / 2) * ratio;
+    const halfH = ((north - south) / 2) * ratio;
+
+    return {
+      xmin: cx - halfW,
+      ymin: cy - halfH,
+      xmax: cx + halfW,
+      ymax: cy + halfH
+    };
+  }
+
+  // ─── FETCH HELPERS ─────────────────────────────────────────────────
+
+  buildQueryUrl = (bbox: any, token: string): string => {
     let tokenParam = encodeURIComponent(token);
     if (token.endsWith('.')) {
       tokenParam = tokenParam.slice(0, -1) + '%2E';
@@ -169,149 +210,93 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       spatialReference: { wkid: 4326 }
     }));
 
-    let url = `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&resultRecordCount=2000&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
-
-    if (maxOffset !== null) {
-      url += `&maxAllowableOffset=${maxOffset}`;
-    }
-
-    return url;
+    return `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&resultRecordCount=${this.MAX_RECORDS}&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
   }
 
-  // Fetch all pages for a single bbox
-  fetchAllPages = async (bbox: { xmin: number, ymin: number, xmax: number, ymax: number }, token: string, signal: AbortSignal, maxOffset: number | null): Promise<any[]> => {
-    let allFeatures: any[] = [];
-    let offset = 0;
-    const limit = 2000;
+  // Fetch a single bbox, returns features array
+  fetchBbox = async (bbox: any, token: string, signal: AbortSignal): Promise<any[]> => {
+    if (signal.aborted) return [];
 
-    while (true) {
-      if (signal.aborted) return allFeatures;
+    const url = this.buildQueryUrl(bbox, token);
 
-      let url = this.buildQueryUrl(bbox, token, maxOffset);
-      if (offset > 0) {
-        url += `&resultOffset=${offset}`;
-      }
-
+    try {
       const res = await fetch(url, { signal });
       const text = await res.text();
 
       if (text.startsWith('<')) {
-        console.warn('Got HTML response, skipping');
-        break;
+        console.warn('HTML response, skipping');
+        return [];
       }
 
       const json = JSON.parse(text);
 
       if (json.error) {
         console.warn('ArcGIS error:', json.error.message);
-        break;
+        return [];
       }
 
-      if (!json.features || json.features.length === 0) break;
+      return json.features || [];
+    } catch (err) {
+      if (err.name === 'AbortError') return [];
+      console.warn('Fetch error:', err.message);
+      return [];
+    }
+  }
 
-      allFeatures = allFeatures.concat(json.features);
+  // Grid-based parallel fetch
+  fetchGridded = async (bbox: any, token: string, signal: AbortSignal, gridSize: number): Promise<any[]> => {
+    const cellWidth = (bbox.xmax - bbox.xmin) / gridSize;
+    const cellHeight = (bbox.ymax - bbox.ymin) / gridSize;
 
-      if (json.features.length < limit) break;
+    const cells: any[] = [];
+    for (let r = 0; r < gridSize; r++) {
+      for (let c = 0; c < gridSize; c++) {
+        cells.push({
+          xmin: bbox.xmin + c * cellWidth,
+          ymin: bbox.ymin + r * cellHeight,
+          xmax: bbox.xmin + (c + 1) * cellWidth,
+          ymax: bbox.ymin + (r + 1) * cellHeight
+        });
+      }
+    }
 
-      offset += limit;
+    const allFeatures: any[] = [];
+    const concurrency = 6;
+    let completed = 0;
 
-      // Safety cap: max 5 pages per cell
-      if (offset >= limit * 5) {
-        console.warn('Hit pagination cap, moving on');
-        break;
+    for (let i = 0; i < cells.length; i += concurrency) {
+      if (signal.aborted) return allFeatures;
+
+      const batch = cells.slice(i, i + concurrency);
+      const results = await Promise.all(
+        batch.map(cell => this.fetchBbox(cell, token, signal))
+      );
+
+      for (const features of results) {
+        allFeatures.push(...features);
+        completed++;
+      }
+
+      if (!signal.aborted) {
+        this.setState({ status: `Loading cells ${completed}/${cells.length}...` });
       }
     }
 
     return allFeatures;
   }
 
-  // Single bbox fetch (zoom 14+)
-  fetchSingleBbox = async (mapBounds: maplibregl.LngLatBounds, token: string, signal: AbortSignal, maxOffset: number | null) => {
-    const bbox = {
-      xmin: mapBounds.getWest(),
-      ymin: mapBounds.getSouth(),
-      xmax: mapBounds.getEast(),
-      ymax: mapBounds.getNorth()
-    };
-
-    try {
-      const features = await this.fetchAllPages(bbox, token, signal, maxOffset);
-      if (signal.aborted) return;
-      this.renderFeatures(features);
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.error('Fetch error:', err);
-      this.setState({ status: 'Failed', error: err.message });
-    }
-  }
-
-  // Grid-based parallel fetch (zoom 12-13)
-  fetchGridded = async (mapBounds: maplibregl.LngLatBounds, token: string, signal: AbortSignal, config: { rows: number, cols: number, maxOffset: number }, zoom: number) => {
-    const west = mapBounds.getWest();
-    const south = mapBounds.getSouth();
-    const east = mapBounds.getEast();
-    const north = mapBounds.getNorth();
-
-    const cellWidth = (east - west) / config.cols;
-    const cellHeight = (north - south) / config.rows;
-
-    const cells: { xmin: number, ymin: number, xmax: number, ymax: number }[] = [];
-    for (let r = 0; r < config.rows; r++) {
-      for (let c = 0; c < config.cols; c++) {
-        cells.push({
-          xmin: west + c * cellWidth,
-          ymin: south + r * cellHeight,
-          xmax: west + (c + 1) * cellWidth,
-          ymax: south + (r + 1) * cellHeight
-        });
+  // Deduplicate by feature ID
+  dedup = (features: any[]): any[] => {
+    const seen = new Set<string>();
+    return features.filter(f => {
+      const id = f.id || f.properties?.OBJECTID || f.properties?.objectid || f.properties?.FID;
+      if (id != null) {
+        const key = String(id);
+        if (seen.has(key)) return false;
+        seen.add(key);
       }
-    }
-
-    try {
-      let completedCells = 0;
-      const totalCells = cells.length;
-      const allFeatures: any[] = [];
-      const concurrency = 6;
-
-      for (let i = 0; i < cells.length; i += concurrency) {
-        if (signal.aborted) return;
-
-        const batch = cells.slice(i, i + concurrency);
-        const batchResults = await Promise.all(
-          batch.map(cell => this.fetchAllPages(cell, token, signal, config.maxOffset))
-        );
-
-        for (const features of batchResults) {
-          allFeatures.push(...features);
-          completedCells++;
-        }
-
-        if (!signal.aborted) {
-          this.setState({ status: `Loading cells ${completedCells}/${totalCells}...` });
-        }
-      }
-
-      if (signal.aborted) return;
-
-      const seen = new Set<string>();
-      const uniqueFeatures = allFeatures.filter(f => {
-        const id = f.id || f.properties?.OBJECTID || f.properties?.objectid || f.properties?.FID;
-        if (id !== undefined && id !== null) {
-          const key = String(id);
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        }
-        return true;
-      });
-
-      this.renderFeatures(uniqueFeatures);
-
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.error('Grid fetch error:', err);
-      this.setState({ status: 'Failed', error: err.message });
-    }
+      return true;
+    });
   }
 
   // ─── RENDERING ─────────────────────────────────────────────────────
@@ -323,10 +308,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       return;
     }
 
-    const geojson: any = {
-      type: 'FeatureCollection',
-      features: features
-    };
+    const geojson: any = { type: 'FeatureCollection', features };
 
     if (this.map.getSource('data')) {
       (this.map.getSource('data') as any).setData(geojson);
