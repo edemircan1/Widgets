@@ -10,9 +10,10 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
   currentToken: string = null;
   tokenExpiresAt: number = null;
   fetchController: AbortController = null;
+  featureBuffer: any[] = [];
 
   FEATURE_SERVER_URL = 'https://url/arcgissecure/rest/services/On_Air_MGRS_100m_Single_Layer/FeatureServer/0';
-  MAX_RECORDS = 2000;
+  MAX_RECORDS = 4000;
 
   constructor(props) {
     super(props);
@@ -112,7 +113,7 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     if (this.debounceTimeout) clearTimeout(this.debounceTimeout);
     this.debounceTimeout = setTimeout(() => {
       this.loadCurrentViewport();
-    }, 500);
+    }, 300);
   }
 
   // ─── CORE LOADING LOGIC ────────────────────────────────────────────
@@ -130,8 +131,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     const zoom = this.map.getZoom();
 
-    if (zoom < 11) {
-      this.setState({ status: `Zoom in to 11+ to load features (current: ${Math.floor(zoom)})`, count: 0 });
+    if (zoom < 12) {
+      this.setState({ status: `Zoom in to 12+ to load features (current: ${Math.floor(zoom)})`, count: 0 });
       this.clearMap();
       return;
     }
@@ -146,33 +147,33 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
 
     const grid = this.getGridSize(zoom);
 
-    this.setState({ status: `Loading (zoom ${zoom.toFixed(1)}, ${grid}x${grid} grid)...` });
+    // Reset buffer for progressive rendering
+    this.featureBuffer = [];
+    this.ensureSourceExists();
 
-    try {
-      let features: any[];
-
-      if (grid === 1) {
-        features = await this.fetchBbox(bbox, token, signal);
-      } else {
-        features = await this.fetchGridded(bbox, token, signal, grid);
+    if (grid === 1) {
+      this.setState({ status: 'Loading...' });
+      try {
+        const features = await this.fetchBbox(bbox, token, signal);
+        if (signal.aborted) return;
+        this.featureBuffer = features;
+        this.pushToMap();
+        this.setState({ status: `✓ ${features.length.toLocaleString()} features`, count: features.length, error: null });
+      } catch (err) {
+        if (err.name === 'AbortError') return;
+        this.setState({ status: 'Failed', error: err.message });
       }
-
-      if (signal.aborted) return;
-      this.renderFeatures(this.dedup(features));
-    } catch (err) {
-      if (err.name === 'AbortError') return;
-      console.error('Load error:', err);
-      this.setState({ status: 'Failed', error: err.message });
+    } else {
+      this.setState({ status: `Loading (${grid}x${grid})...` });
+      await this.fetchGriddedProgressive(bbox, token, signal, grid);
     }
   }
 
-  // Always full viewport, just vary grid density
   getGridSize = (zoom: number): number => {
-    if (zoom >= 15) return 1;   // ~600 features, single query enough
-    if (zoom >= 14) return 2;   // 4 cells, ~2400 features
-    if (zoom >= 13) return 3;   // 9 cells, ~9600 features
-    if (zoom >= 12) return 5;   // 25 cells, ~38K features
-    return 5;                    // zoom 11, 25 cells, ~50K features
+    if (zoom >= 15) return 1;
+    if (zoom >= 14) return 2;
+    if (zoom >= 13) return 3;
+    return 4; // zoom 12
   }
 
   // ─── FETCH HELPERS ─────────────────────────────────────────────────
@@ -188,7 +189,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       spatialReference: { wkid: 4326 }
     }));
 
-    return `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=*&resultRecordCount=${this.MAX_RECORDS}&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
+    // Only fetch fields we need for rendering — dramatically reduces payload
+    return `${this.FEATURE_SERVER_URL}/query?where=1=1&outFields=OBJECTID,rsrp&resultRecordCount=${this.MAX_RECORDS}&geometry=${geometryFilter}&geometryType=esriGeometryEnvelope&spatialRel=esriSpatialRelIntersects&f=geoJson&returnGeometry=true&outSR=4326&token=${tokenParam}`;
   }
 
   fetchBbox = async (bbox: any, token: string, signal: AbortSignal): Promise<any[]> => {
@@ -220,7 +222,8 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
     }
   }
 
-  fetchGridded = async (bbox: any, token: string, signal: AbortSignal, gridSize: number): Promise<any[]> => {
+  // Progressive: render after each batch of concurrent requests completes
+  fetchGriddedProgressive = async (bbox: any, token: string, signal: AbortSignal, gridSize: number) => {
     const cellWidth = (bbox.xmax - bbox.xmin) / gridSize;
     const cellHeight = (bbox.ymax - bbox.ymin) / gridSize;
 
@@ -236,120 +239,116 @@ export default class Widget extends React.PureComponent<AllWidgetProps<any>, any
       }
     }
 
-    const allFeatures: any[] = [];
     const concurrency = 6;
     let completed = 0;
+    const total = cells.length;
+    const seen = new Set<string>();
 
-    for (let i = 0; i < cells.length; i += concurrency) {
-      if (signal.aborted) return allFeatures;
+    try {
+      for (let i = 0; i < cells.length; i += concurrency) {
+        if (signal.aborted) return;
 
-      const batch = cells.slice(i, i + concurrency);
-      const results = await Promise.all(
-        batch.map(cell => this.fetchBbox(cell, token, signal))
-      );
+        const batch = cells.slice(i, i + concurrency);
+        const results = await Promise.all(
+          batch.map(cell => this.fetchBbox(cell, token, signal))
+        );
 
-      for (const features of results) {
-        allFeatures.push(...features);
-        completed++;
+        if (signal.aborted) return;
+
+        // Deduplicate and add to buffer
+        for (const features of results) {
+          for (const f of features) {
+            const id = f.id || f.properties?.OBJECTID || f.properties?.objectid;
+            if (id != null) {
+              const key = String(id);
+              if (seen.has(key)) continue;
+              seen.add(key);
+            }
+            this.featureBuffer.push(f);
+          }
+          completed++;
+        }
+
+        // Push current buffer to map immediately
+        this.pushToMap();
+        this.setState({
+          status: `Loading cells ${completed}/${total}... (${this.featureBuffer.length.toLocaleString()} features)`,
+          count: this.featureBuffer.length
+        });
       }
 
       if (!signal.aborted) {
-        this.setState({ status: `Loading cells ${completed}/${cells.length}...` });
+        this.setState({
+          status: `✓ ${this.featureBuffer.length.toLocaleString()} features loaded`,
+          count: this.featureBuffer.length,
+          error: null
+        });
       }
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      console.error('Grid fetch error:', err);
+      this.setState({ status: 'Failed', error: err.message });
     }
-
-    return allFeatures;
   }
 
-  dedup = (features: any[]): any[] => {
-    const seen = new Set<string>();
-    return features.filter(f => {
-      const id = f.id || f.properties?.OBJECTID || f.properties?.objectid || f.properties?.FID;
-      if (id != null) {
-        const key = String(id);
-        if (seen.has(key)) return false;
-        seen.add(key);
+  // ─── MAP SOURCE & RENDERING ────────────────────────────────────────
+
+  ensureSourceExists = () => {
+    if (this.map.getSource('data')) return;
+
+    this.map.addSource('data', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+
+    // Add layers once — they stay, only data updates
+    this.map.addLayer({
+      id: 'layer-fill',
+      type: 'fill',
+      source: 'data',
+      paint: {
+        'fill-color': [
+          'step',
+          ['get', 'rsrp'],
+          '#9c27b0',
+          -118, '#f44336',
+          -115, '#ff9800',
+          -110, '#ffeb3b',
+          -105, '#80deea',
+          -95, '#2196f3',
+          -85, '#4caf50'
+        ],
+        'fill-opacity': 0.7
       }
-      return true;
+    });
+
+    this.map.addLayer({
+      id: 'layer-outline',
+      type: 'line',
+      source: 'data',
+      paint: {
+        'line-color': '#ffffff',
+        'line-width': 0.5
+      }
     });
   }
 
-  // ─── RENDERING ─────────────────────────────────────────────────────
-
-  renderFeatures = (features: any[]) => {
-    if (features.length === 0) {
-      this.setState({ status: 'No features in viewport', error: null, count: 0 });
-      this.clearMap();
-      return;
+  pushToMap = () => {
+    const source = this.map.getSource('data') as any;
+    if (source) {
+      source.setData({
+        type: 'FeatureCollection',
+        features: this.featureBuffer
+      });
     }
-
-    const geojson: any = { type: 'FeatureCollection', features };
-
-    if (this.map.getSource('data')) {
-      (this.map.getSource('data') as any).setData(geojson);
-    } else {
-      this.map.addSource('data', { type: 'geojson', data: geojson });
-
-      const geomType = features[0].geometry.type.toLowerCase();
-
-      if (geomType.includes('point')) {
-        this.map.addLayer({
-          id: 'layer',
-          type: 'circle',
-          source: 'data',
-          paint: {
-            'circle-radius': 6,
-            'circle-color': '#e74c3c',
-            'circle-stroke-width': 2,
-            'circle-stroke-color': '#fff'
-          }
-        });
-      } else if (geomType.includes('line')) {
-        this.map.addLayer({
-          id: 'layer',
-          type: 'line',
-          source: 'data',
-          paint: { 'line-color': '#3498db', 'line-width': 3 }
-        });
-      } else if (geomType.includes('polygon')) {
-        this.map.addLayer({
-          id: 'layer',
-          type: 'fill',
-          source: 'data',
-          paint: {
-            'fill-color': [
-              'step',
-              ['get', 'rsrp'],
-              '#9c27b0',
-              -118, '#f44336',
-              -115, '#ff9800',
-              -110, '#ffeb3b',
-              -105, '#80deea',
-              -95, '#2196f3',
-              -85, '#4caf50'
-            ],
-            'fill-opacity': 0.7
-          }
-        });
-        this.map.addLayer({
-          id: 'outline',
-          type: 'line',
-          source: 'data',
-          paint: { 'line-color': '#ffffff', 'line-width': 0.5 }
-        });
-      }
-    }
-
-    this.setState({
-      status: `✓ ${features.length.toLocaleString()} features loaded`,
-      count: features.length,
-      error: null
-    });
   }
 
   // ─── CLEANUP ───────────────────────────────────────────────────────
 
   clearMap = () => {
+    this.featureBuffer = [];
+    if (this.map.getLayer('layer-fill')) this.map.removeLayer('layer-fill');
+    if (this.map.getLayer('layer-outline')) this.map.removeLayer('layer-outline');
     if (this.map.getLayer('layer')) this.map.removeLayer('layer');
     if (this.map.getLayer('outline')) this.map.removeLayer('outline');
     if (this.map.getSource('data')) this.map.removeSource('data');
