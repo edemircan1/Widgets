@@ -85,6 +85,21 @@ interface OptimizationResult {
   label: string
   color: string
   source: 'submitted' | 'recalled'
+  // Optimization parameters specific to this result
+  frequency?: number
+  networkType?: string
+  hyperparameters?: {
+    rsrp_threshold: number
+    sinr_threshold: number
+    alpha_condition_change: number
+    alpha_bin_to_bin: number
+    condition_change_multiplier: number
+    rsrp_bin_to_bin_loss_tolerance: number
+    rsrp_condition_change_loss_tolerance: number
+    use_user_density_cache: boolean
+    use_default_antenna_pabcerns_only: boolean
+  }
+  availableFrequencies?: number[]
 }
 
 interface RecallFormState {
@@ -172,7 +187,34 @@ const extractBoundsFromResults = (data: any): BBoxBounds | null => {
     }
   }
 
-  // Could add more extraction logic based on actual API response structure
+  // Try to extract from MapLibre style sources (for recalled optimizations)
+  if (data?.sources && typeof data.sources === 'object') {
+    for (const sourceValue of Object.values(data.sources)) {
+      const source = sourceValue as any
+      // Vector tile sources often have bounds in [west, south, east, north] format
+      if (source?.bounds && Array.isArray(source.bounds) && source.bounds.length === 4) {
+        const [west, south, east, north] = source.bounds
+        if (typeof west === 'number' && typeof south === 'number' &&
+            typeof east === 'number' && typeof north === 'number') {
+          return {
+            minLng: west,
+            minLat: south,
+            maxLng: east,
+            maxLat: north
+          }
+        }
+      }
+      // Also check for bounds in minLng/maxLng format
+      if (source?.bounds && typeof source.bounds === 'object') {
+        const b = source.bounds
+        if (typeof b.minLng === 'number' && typeof b.minLat === 'number' &&
+            typeof b.maxLng === 'number' && typeof b.maxLat === 'number') {
+          return b
+        }
+      }
+    }
+  }
+
   return null
 }
 
@@ -1671,7 +1713,18 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         timestamp: Date.now(),
         label: `Submitted: ${new Date().toLocaleString()}`,
         color,
-        source: 'submitted'
+        source: 'submitted',
+        // Store optimization parameters with this result
+        frequency: selectedOptimizationSector,
+        networkType: selectedNetworkType,
+        hyperparameters: { ...hyperparameters },
+        availableFrequencies: [...optimizationSectors]
+      }
+
+      // Check if we've reached the limit of 2 results
+      if (optimizationResultsArray.length >= 2) {
+        console.warn('[Optimization] Maximum of 2 results reached')
+        return
       }
 
       setOptimizationResultsArray((prev: OptimizationResult[]) => [...prev, newResult])
@@ -1760,6 +1813,18 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         label: `Recalled: ${new Date().toLocaleString()}`,
         color,
         source: 'recalled'
+        // Recalled results don't have parameters stored initially
+        // They will be extracted from data if available
+      }
+
+      // Check if we've reached the limit of 2 results
+      if (optimizationResultsArray.length >= 2) {
+        setRecallForm((prev: RecallFormState) => ({
+          ...prev,
+          error: 'Maximum of 2 optimization results reached. Please remove one before adding another.',
+          loading: false
+        }))
+        return
       }
 
       // Add to results array and set as active
@@ -2885,6 +2950,43 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     }
   }, [mapReady, activeResultIndex, optimizationResultsArray])
 
+  // Load result-specific parameters when switching between results
+  React.useEffect(() => {
+    if (activeResultIndex === null || !optimizationResultsArray[activeResultIndex]) {
+      return
+    }
+
+    const activeResult = optimizationResultsArray[activeResultIndex]
+
+    // Only load parameters for submitted results that have them stored
+    if (activeResult.source === 'submitted') {
+      // Load frequency/optimization sector
+      if (activeResult.frequency !== undefined) {
+        setSelectedOptimizationSector(activeResult.frequency)
+      }
+
+      // Load network type
+      if (activeResult.networkType) {
+        setSelectedNetworkType(activeResult.networkType)
+      }
+
+      // Load hyperparameters
+      if (activeResult.hyperparameters) {
+        setHyperparameters({ ...activeResult.hyperparameters })
+      }
+
+      // Load available frequencies
+      if (activeResult.availableFrequencies) {
+        setOptimizationSectors([...activeResult.availableFrequencies])
+      }
+
+      console.log('[Parameter Switch] Loaded parameters for result:', activeResult.id, {
+        frequency: activeResult.frequency,
+        networkType: activeResult.networkType
+      })
+    }
+  }, [activeResultIndex, optimizationResultsArray])
+
   // Note: All optimization layers stay visible - we only move the camera when switching results
   // This effect is intentionally removed to keep all visualization layers visible
 
@@ -3293,23 +3395,25 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               <button
                 type="button"
                 onClick={() => setOptimizationDrawEnabled(true)}
+                disabled={optimizationResultsArray.length >= 2}
                 style={{
                   flex: 1,
                   padding: '6px 8px',
                   borderRadius: 4,
                   border: '1px solid rgba(255,255,255,0.35)',
-                  background: optimizationDrawEnabled ? 'rgba(0,255,0,0.4)' : 'rgba(100,200,255,0.3)',
+                  background: optimizationResultsArray.length >= 2 ? 'rgba(100,100,100,0.2)' : (optimizationDrawEnabled ? 'rgba(0,255,0,0.4)' : 'rgba(100,200,255,0.3)'),
                   color: '#fff',
-                  cursor: 'pointer',
+                  cursor: optimizationResultsArray.length >= 2 ? 'not-allowed' : 'pointer',
                   fontWeight: 500,
                   fontSize: 11,
                   transition: 'all 0.2s',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 4,
-                  justifyContent: 'center'
+                  justifyContent: 'center',
+                  opacity: optimizationResultsArray.length >= 2 ? 0.5 : 1
                 }}
-                title="Draw new optimization area"
+                title={optimizationResultsArray.length >= 2 ? 'Maximum 2 optimizations reached' : 'Draw new optimization area'}
               >
                 <span>📐</span>
                 <span>{optimizationDrawEnabled ? 'Drawing...' : 'Draw New'}</span>
@@ -3318,28 +3422,45 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               <button
                 type="button"
                 onClick={() => setRecallFormVisible(!recallFormVisible)}
+                disabled={optimizationResultsArray.length >= 2}
                 style={{
                   flex: 1,
                   padding: '6px 8px',
                   borderRadius: 4,
                   border: '1px solid rgba(255,255,255,0.35)',
-                  background: recallFormVisible ? 'rgba(138,43,226,0.5)' : 'rgba(138,43,226,0.3)',
+                  background: optimizationResultsArray.length >= 2 ? 'rgba(100,100,100,0.2)' : (recallFormVisible ? 'rgba(138,43,226,0.5)' : 'rgba(138,43,226,0.3)'),
                   color: '#fff',
-                  cursor: 'pointer',
+                  cursor: optimizationResultsArray.length >= 2 ? 'not-allowed' : 'pointer',
                   fontWeight: 500,
                   fontSize: 11,
                   transition: 'all 0.2s',
                   display: 'flex',
                   alignItems: 'center',
                   gap: 4,
-                  justifyContent: 'center'
+                  justifyContent: 'center',
+                  opacity: optimizationResultsArray.length >= 2 ? 0.5 : 1
                 }}
-                title="Recall existing optimization"
+                title={optimizationResultsArray.length >= 2 ? 'Maximum 2 optimizations reached' : 'Recall existing optimization'}
               >
                 <span>🔍</span>
                 <span>Recall</span>
               </button>
             </div>
+
+            {/* Show message when at limit */}
+            {optimizationResultsArray.length >= 2 && (
+              <div style={{
+                padding: '6px 8px',
+                background: 'rgba(255,165,0,0.2)',
+                border: '1px solid rgba(255,165,0,0.4)',
+                borderRadius: 3,
+                fontSize: 10,
+                color: '#ffcc80',
+                textAlign: 'center'
+              }}>
+                Maximum 2 optimizations reached. Remove one to add another.
+              </div>
+            )}
 
             {recallFormVisible && (
               <div style={{
@@ -3732,14 +3853,79 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                 </div>
 
                 <div style={{ marginTop: 6 }}>
-                  <button
-                    type="button"
-                    onClick={() => { void submitOptimizationJob() }}
-                    style={{ width: '100%', padding: '5px 10px', fontSize: 12, fontWeight: 'bold', borderRadius: 3, border: '1px solid rgba(255,255,255,0.35)', background: optimizationJobStatus === 'completed' ? 'rgba(0,200,100,0.5)' : (optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling') ? 'rgba(255,165,0,0.6)' : 'rgba(0,128,0,0.3)', color: '#fff', cursor: (sessionId.trim() && jobId.trim() && selectedOptimizationSector && optimizationJobStatus === 'idle') ? 'pointer' : 'not-allowed', opacity: (sessionId.trim() && jobId.trim() && selectedOptimizationSector && optimizationJobStatus === 'idle') ? 1 : 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                    disabled={!sessionId.trim() || !jobId.trim() || !selectedOptimizationSector || optimizationJobStatus !== 'idle'}
-                  >
-                    <span>{(optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling') ? 'Running...' : optimizationJobStatus === 'completed' ? '✓ Complete' : 'Submit Job'}</span>
-                  </button>
+                  {/* Show different buttons when drawing second optimization */}
+                  {optimizationResultsArray.length === 1 && optimizationBounds ? (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        onClick={() => { void submitOptimizationJob() }}
+                        style={{
+                          flex: 1,
+                          padding: '5px 10px',
+                          fontSize: 12,
+                          fontWeight: 'bold',
+                          borderRadius: 3,
+                          border: '1px solid rgba(0,255,0,0.5)',
+                          background: (optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling') ? 'rgba(255,165,0,0.6)' : 'rgba(0,200,100,0.4)',
+                          color: '#fff',
+                          cursor: (sessionId.trim() && jobId.trim() && selectedOptimizationSector && optimizationJobStatus === 'idle') ? 'pointer' : 'not-allowed',
+                          opacity: (sessionId.trim() && jobId.trim() && selectedOptimizationSector && optimizationJobStatus === 'idle') ? 1 : 0.5,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6
+                        }}
+                        disabled={!sessionId.trim() || !jobId.trim() || !selectedOptimizationSector || optimizationJobStatus !== 'idle'}
+                      >
+                        <span>➕</span>
+                        <span>{(optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling') ? 'Running...' : 'Run New'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          // Clear the newly drawn optimization box
+                          setOptimizationBounds(null)
+                          optimizationBoundsRef.current = null
+                          setOptimizationStatus('idle')
+                          setOptimizationSectors([])
+                          setSelectedOptimizationSector(null)
+                          setSessionId('')
+                          setJobId('')
+                          setOptimizationJobStatus('idle')
+                          setOptimizationJobError(null)
+                          clearOverlay('optimization-layer')
+                        }}
+                        style={{
+                          flex: 1,
+                          padding: '5px 10px',
+                          fontSize: 12,
+                          fontWeight: 'bold',
+                          borderRadius: 3,
+                          border: '1px solid rgba(255,100,100,0.5)',
+                          background: 'rgba(255,50,50,0.3)',
+                          color: '#fff',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6
+                        }}
+                        title="Discard this drawn area"
+                      >
+                        <span>✖️</span>
+                        <span>Clear</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => { void submitOptimizationJob() }}
+                      style={{ width: '100%', padding: '5px 10px', fontSize: 12, fontWeight: 'bold', borderRadius: 3, border: '1px solid rgba(255,255,255,0.35)', background: optimizationJobStatus === 'completed' ? 'rgba(0,200,100,0.5)' : (optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling') ? 'rgba(255,165,0,0.6)' : 'rgba(0,128,0,0.3)', color: '#fff', cursor: (sessionId.trim() && jobId.trim() && selectedOptimizationSector && optimizationJobStatus === 'idle') ? 'pointer' : 'not-allowed', opacity: (sessionId.trim() && jobId.trim() && selectedOptimizationSector && optimizationJobStatus === 'idle') ? 1 : 0.5, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      disabled={!sessionId.trim() || !jobId.trim() || !selectedOptimizationSector || optimizationJobStatus !== 'idle'}
+                    >
+                      <span>{(optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling') ? 'Running...' : optimizationJobStatus === 'completed' ? '✓ Complete' : 'Submit Job'}</span>
+                    </button>
+                  )}
                 </div>
 
                 {/* Session/Job ID Display with Copy Buttons */}
