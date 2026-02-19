@@ -1747,8 +1747,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       setSubmissionResponse(body)
 
       if (!response.ok) {
-        const errorMsg = body?.message || body?.error || `HTTP ${response.status}: ${response.statusText}`
-        throw new Error(`Job submission failed: ${errorMsg}`)
+        // Don't throw — the statusUrl polling will pick up the real error
+        // message from the API. Just log the HTTP status for debugging.
+        console.warn('[Optimization] POST returned', response.status, response.statusText, '— status polling will report the error')
+        return
       }
 
       console.log('[Optimization] Checking for results in response...')
