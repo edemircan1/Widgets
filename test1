@@ -149,7 +149,7 @@ const DEFAULT_COVERAGE_STYLE_URL = 'https://bird.web.abc.com/oauth21/api/vector/
 const DEFAULT_BBOX_COVERAGE_ENDPOINT = 'https://bird.web.abc.com/oauth21/api/bird/bbox/{min_lng}/{min_lat}/{max_lng}/{max_lat}/output.json?resolution=4.0'
 const DEFAULT_TOKEN_EXPIRY_SECONDS = 3599
 const MIN_REFRESH_OFFSET_SECONDS = 60
-const STATUS_POLL_INTERVAL_MS = 1909
+const STATUS_POLL_INTERVAL_MS = 1000
 const CELL_NAME = 'NWL91056_7C_1' 
 const DEFAULT_SECTOR_NAME = CELL_NAME || 'replace-with-sector-name'
 const ENABLE_WIDGET_3D_BUILDINGS_LAYER = false
@@ -717,7 +717,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   const [submissionResponse, setSubmissionResponse] = React.useState<any>(null)
   const [lastSubmissionUrl, setLastSubmissionUrl] = React.useState<string | null>(null)
   const [lastStatusUrl, setLastStatusUrl] = React.useState<string | null>(null)
-  const [pollingCount, setPollingCount] = React.useState<number>(0)
   const [optimizationResults, setOptimizationResults] = React.useState<any>(null)
   const [showResultsView, setShowResultsView] = React.useState<boolean>(false)
   const [resultsError, setResultsError] = React.useState<string | null>(null)
@@ -1691,11 +1690,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
     setOptimizationJobStatus('submitting')
     setOptimizationJobError(null)
-    setStatusMessage('Submitting optimization job...')
+    setStatusMessage('')
     setStatusDetails(null)
     setSubmissionResponse(null)
     setLastSubmissionUrl(requestUrl)
-    setPollingCount(0)
     console.log('[Optimization] Submitting job to:', requestUrl)
 
     try {
@@ -1760,30 +1758,24 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       if (hasCompleteResults) {
         console.log('[Optimization] ✓ Complete results found in submission response - NO POLLING NEEDED')
         setOptimizationResults(body)
-        setStatusMessage(`Job completed successfully with results`)
         setOptimizationJobStatus('completed')
-        // Don't start polling since we already have complete results
       } else {
         console.log('[Optimization] ✗ No complete results in submission response - starting status polling')
-        console.log('[Optimization] Will poll status endpoint until status is TRACE_ENDING or OK')
-        setStatusMessage(`Job submitted. Polling for completion status...`)
         setOptimizationJobStatus('polling')
-        
-        // Start polling for status after a short delay
         setTimeout(() => {
           void pollOptimizationStatus()
         }, STATUS_POLL_INTERVAL_MS)
       }
     } catch (error) {
       console.error('[Optimization] Failed to submit job:', error)
-      setOptimizationJobStatus('error')
       const message = error instanceof TypeError
         ? 'Network or CORS error reaching optimization endpoint'
         : error instanceof Error
           ? error.message
           : 'Unknown error'
       setOptimizationJobError(message)
-      setStatusMessage('Job submission failed')
+      setStatusMessage(message)
+      setOptimizationJobStatus('error')
     }
   }, [sessionId, jobId, selectedOptimizationSector])
 
@@ -1798,10 +1790,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     const statusUrl = `https://bird.web.abc.com/oauth21/api/optimization/tile/${encodeURIComponent(sessionId)}/${encodeURIComponent(jobId)}/status.json`
     setLastStatusUrl(statusUrl)
 
-    const currentCount = pollingCount + 1
-    setPollingCount(currentCount)
-    console.log(`[Optimization] Polling abcempt #${currentCount}:`, statusUrl)
-
     try {
       const response = await fetch(statusUrl, {
         method: 'GET',
@@ -1812,95 +1800,60 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         }
       })
 
-      console.log(`[Optimization] Status response #${currentCount}:`, response.status, response.statusText)
-
       let body: any = null
-      let bodyText = ''
       try {
-        bodyText = await response.text()
-        console.log(`[Optimization] Status body #${currentCount} (raw):`, bodyText)
-        if (bodyText) {
-          body = JSON.parse(bodyText)
-          console.log(`[Optimization] Status body #${currentCount} (parsed):`, body)
-        }
-      } catch (parseError) {
-        console.error('[Optimization] Failed to parse status response:', parseError)
-        body = { raw: bodyText, parseError: String(parseError) }
-      }
-
-      if (!response.ok) {
-        const errorMsg = body?.message || body?.error || `HTTP ${response.status}: ${response.statusText}`
-        throw new Error(`Status polling failed: ${errorMsg}`)
+        const bodyText = await response.text()
+        if (bodyText) body = JSON.parse(bodyText)
+      } catch {
+        // keep body null on parse failure
       }
 
       setStatusDetails(body)
-      setOptimizationJobError(null)
-      
-      if (body?.message) {
-        setStatusMessage(`[Poll #${currentCount}] ${body.message}`)
-      } else {
-        setStatusMessage(`[Poll #${currentCount}] Status: ${body?.status || 'unknown'}`)
-      }
 
-      // Check if job is complete - looking for status: "TRACE_ENDING" or "OK"
-      const isComplete = body?.status === 'TRACE_ENDING' || body?.status === 'OK'
-      const isFailed = body?.status === 'FAILED' || body?.status === 'ERROR'
-      
-      if (isComplete || isFailed) {
-        console.log('[Optimization] Job reached terminal state:', body.status)
+      const status: string = body?.status ?? ''
+      const message: string = body?.message ?? ''
+
+      if (status === 'TRACE_ENDING') {
+        // Job complete — fetch results
+        console.log('[Optimization] ✓ Job completed (TRACE_ENDING)')
+        if (message) setStatusMessage(message)
         setOptimizationJobStatus('completed')
-        
         if (pollingTimerRef.current) {
           window.clearTimeout(pollingTimerRef.current)
           pollingTimerRef.current = null
         }
-        
-        if (isComplete) {
-          console.log('[Optimization] ✓ Job completed successfully (status: ' + body.status + ')')
-          setStatusMessage(`Job completed: ${body.message || 'Ready to view results'}`)
-          
-          // Check if we already have results in submission response
-          if (submissionResponse?.results) {
-            console.log('[Optimization] Using results from submission response')
-            setOptimizationResults(submissionResponse)
-          } else {
-            console.log('[Optimization] Fetching results from data.json endpoint...')
-            setTimeout(() => {
-              void fetchOptimizationResults()
-            }, 500)
-          }
-        } else {
-          console.log('[Optimization] ✗ Job failed with status:', body.status)
-          setStatusMessage(`Job ${body.status.toLowerCase()}: ${body.message || 'No message'}`)
-        }
-      } else {
-        // Continue polling every 3 seconds
-        console.log(`[Optimization] Job status: ${body?.status || 'unknown'}, continuing to poll...`)
+        setTimeout(() => { void fetchOptimizationResults() }, 500)
+      } else if (status === 'ERROR' || status === 'FAILED') {
+        // Job failed — show message, no more polling
+        console.log('[Optimization] ✗ Job failed:', status, message)
+        setStatusMessage(message || 'Optimization failed')
+        setOptimizationJobError(message || 'Optimization failed')
+        setOptimizationJobStatus('error')
         if (pollingTimerRef.current) {
           window.clearTimeout(pollingTimerRef.current)
+          pollingTimerRef.current = null
         }
+      } else {
+        // status === 'OK' or any in-progress state — update message, keep polling
+        if (message) setStatusMessage(message)
+        if (pollingTimerRef.current) window.clearTimeout(pollingTimerRef.current)
         pollingTimerRef.current = window.setTimeout(() => {
           void pollOptimizationStatus()
         }, STATUS_POLL_INTERVAL_MS)
       }
     } catch (error) {
-      console.error(`[Optimization] Polling error #${currentCount}:`, error)
       const message = error instanceof TypeError
         ? 'Network or CORS error reaching status endpoint'
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error'
+        : error instanceof Error ? error.message : 'Unknown error'
+      setStatusMessage(message)
       setOptimizationJobError(message)
       setOptimizationJobStatus('error')
-      setStatusMessage(`[Poll #${currentCount}] Error: ${message}`)
-
-      // Stop polling on error and surface status message
       if (pollingTimerRef.current) {
         window.clearTimeout(pollingTimerRef.current)
         pollingTimerRef.current = null
       }
     }
-  }, [sessionId, jobId, pollingCount])
+  }, [sessionId, jobId])
 
   // Cleanup polling timer on unmount
   React.useEffect(() => {
@@ -3523,36 +3476,92 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
           }
+          @keyframes progressSlide {
+            0%   { left: -50%; }
+            100% { left: 110%; }
+          }
         `}
       </style>
-      {(optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling') && (
+      {(optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling' || optimizationJobStatus === 'error') && (
         <div style={{
           position: 'absolute',
           top: 12,
           left: '50%',
           transform: 'translateX(-50%)',
           zIndex: 2,
-          background: 'rgba(10,10,10,0.85)',
+          background: 'rgba(12,12,12,0.93)',
           color: '#fff',
-          padding: '8px 14px',
-          borderRadius: 999,
-          border: '1px solid rgba(255,255,255,0.2)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          maxWidth: 520
+          borderRadius: 10,
+          border: `1px solid ${optimizationJobStatus === 'error' ? 'rgba(239,83,80,0.45)' : 'rgba(79,195,247,0.25)'}`,
+          boxShadow: '0 6px 28px rgba(0,0,0,0.6)',
+          minWidth: 220,
+          maxWidth: 440,
+          overflow: 'hidden'
         }}>
-          <div style={{
-            width: 12,
-            height: 12,
-            border: '2px solid rgba(255,255,255,0.3)',
-            borderTop: '2px solid #4fc3f7',
-            borderRadius: '50%',
-            animation: 'spinLoader 1s linear infinite'
-          }} />
-          <div style={{ fontSize: 11, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {statusMessage || 'Optimization in progress...'}
+          {/* Indeterminate progress track */}
+          <div style={{ height: 3, background: 'rgba(255,255,255,0.07)', position: 'relative', overflow: 'hidden' }}>
+            {optimizationJobStatus !== 'error' && (
+              <div style={{
+                position: 'absolute',
+                top: 0,
+                height: '100%',
+                width: '45%',
+                background: 'linear-gradient(90deg, transparent 0%, #4fc3f7 50%, transparent 100%)',
+                animation: 'progressSlide 1.4s cubic-bezier(0.4,0,0.2,1) infinite'
+              }} />
+            )}
+            {optimizationJobStatus === 'error' && (
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: '#ef5350' }} />
+            )}
+          </div>
+          {/* Content */}
+          <div style={{ padding: '9px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+            {optimizationJobStatus !== 'error' ? (
+              <div style={{
+                width: 14,
+                height: 14,
+                border: '2px solid rgba(79,195,247,0.2)',
+                borderTop: '2px solid #4fc3f7',
+                borderRadius: '50%',
+                flexShrink: 0,
+                animation: 'spinLoader 0.8s linear infinite'
+              }} />
+            ) : (
+              <div style={{
+                width: 14,
+                height: 14,
+                borderRadius: '50%',
+                background: '#ef5350',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                fontSize: 9,
+                fontWeight: 700
+              }}>✕</div>
+            )}
+            <div style={{ minWidth: 0 }}>
+              <div style={{
+                fontSize: 9,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+                color: optimizationJobStatus === 'error' ? '#ef9a9a' : '#4fc3f7',
+                marginBottom: 2
+              }}>
+                {optimizationJobStatus === 'error' ? 'Error' : 'Optimizing'}
+              </div>
+              <div style={{
+                fontSize: 11,
+                color: 'rgba(255,255,255,0.85)',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                maxWidth: 360
+              }}>
+                {statusMessage || (optimizationJobStatus === 'error' ? (optimizationJobError || 'An error occurred') : 'Processing...')}
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -4336,7 +4345,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                     setStatusMessage('')
                     setStatusDetails(null)
                     setSubmissionResponse(null)
-                    setPollingCount(0)
                     setSessionId('')
                     setJobId('')
                     setOptimizationResults(null)
@@ -4766,9 +4774,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                         <div style={{ fontSize: 9, color: '#4CAF50', fontWeight: 'bold' }}>✓ Ready!</div>
                       )}
                     </div>
-                    {pollingCount > 0 && (
-                      <div style={{ fontSize: 10 }}><strong>Polls:</strong> {pollingCount}</div>
-                    )}
+
                     {(optimizationJobStatus !== 'submitting' && optimizationJobStatus !== 'polling' && statusMessage) && (
                       <div style={{ marginTop: 4, fontSize: 10 }}>
                         <strong>Message:</strong> {statusMessage}
