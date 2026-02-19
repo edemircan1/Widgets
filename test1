@@ -713,7 +713,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   const [optimizationJobStatus, setOptimizationJobStatus] = React.useState<'idle' | 'submitting' | 'polling' | 'completed' | 'error'>('idle')
   const [optimizationJobError, setOptimizationJobError] = React.useState<string | null>(null)
   const [statusMessage, setStatusMessage] = React.useState<string>('')
-  const [statusDetails, setStatusDetails] = React.useState<any>(null)
+
   const [submissionResponse, setSubmissionResponse] = React.useState<any>(null)
   const [lastSubmissionUrl, setLastSubmissionUrl] = React.useState<string | null>(null)
   const [lastStatusUrl, setLastStatusUrl] = React.useState<string | null>(null)
@@ -1691,7 +1691,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setOptimizationJobStatus('polling')
     setOptimizationJobError(null)
     setStatusMessage('')
-    setStatusDetails(null)
     setSubmissionResponse(null)
     setLastSubmissionUrl(requestUrl)
     console.log('[Optimization] Submitting job to:', requestUrl)
@@ -1819,7 +1818,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         // keep body null on parse failure
       }
 
-      setStatusDetails(body)
 
       const status: string = body?.status ?? ''
       const message: string = body?.message ?? ''
@@ -3496,79 +3494,79 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       {(optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling' || optimizationJobStatus === 'error') && (
         <div style={{
           position: 'absolute',
-          top: 12,
+          top: '50%',
           left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 2,
-          background: 'rgba(12,12,12,0.93)',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 10,
+          background: 'rgba(18,18,18,0.96)',
           color: '#fff',
-          borderRadius: 10,
-          border: `1px solid ${optimizationJobStatus === 'error' ? 'rgba(239,83,80,0.45)' : 'rgba(79,195,247,0.25)'}`,
-          boxShadow: '0 6px 28px rgba(0,0,0,0.6)',
-          minWidth: 220,
-          maxWidth: 440,
+          borderRadius: 14,
+          border: `1px solid ${optimizationJobStatus === 'error' ? 'rgba(239,83,80,0.4)' : 'rgba(79,195,247,0.2)'}`,
+          boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 120px rgba(0,0,0,0.4)',
+          width: 380,
           overflow: 'hidden'
         }}>
-          {/* Indeterminate progress track */}
-          <div style={{ height: 3, background: 'rgba(255,255,255,0.07)', position: 'relative', overflow: 'hidden' }}>
+          {/* Progress bar */}
+          <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', position: 'relative', overflow: 'hidden' }}>
             {optimizationJobStatus !== 'error' && (
               <div style={{
                 position: 'absolute',
                 top: 0,
                 height: '100%',
-                width: '45%',
+                width: '40%',
                 background: 'linear-gradient(90deg, transparent 0%, #4fc3f7 50%, transparent 100%)',
                 animation: 'progressSlide 1.4s cubic-bezier(0.4,0,0.2,1) infinite'
               }} />
             )}
             {optimizationJobStatus === 'error' && (
-              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, background: '#ef5350' }} />
+              <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: '#ef5350' }} />
             )}
           </div>
           {/* Content */}
-          <div style={{ padding: '9px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-            {optimizationJobStatus !== 'error' ? (
+          <div style={{ padding: '20px 24px', display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+            {optimizationJobStatus !== 'error' && (
               <div style={{
-                width: 14,
-                height: 14,
-                border: '2px solid rgba(79,195,247,0.2)',
-                borderTop: '2px solid #4fc3f7',
+                width: 22,
+                height: 22,
+                marginTop: 1,
+                border: '2.5px solid rgba(79,195,247,0.2)',
+                borderTop: '2.5px solid #4fc3f7',
                 borderRadius: '50%',
                 flexShrink: 0,
                 animation: 'spinLoader 0.8s linear infinite'
               }} />
-            ) : (
+            )}
+            {optimizationJobStatus === 'error' && (
               <div style={{
-                width: 14,
-                height: 14,
+                width: 22,
+                height: 22,
+                marginTop: 1,
                 borderRadius: '50%',
                 background: '#ef5350',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
-                fontSize: 9,
+                fontSize: 11,
                 fontWeight: 700
               }}>✕</div>
             )}
-            <div style={{ minWidth: 0 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{
-                fontSize: 9,
+                fontSize: 10,
                 fontWeight: 700,
                 letterSpacing: '0.08em',
                 textTransform: 'uppercase',
                 color: optimizationJobStatus === 'error' ? '#ef9a9a' : '#4fc3f7',
-                marginBottom: 2
+                marginBottom: 6
               }}>
-                {optimizationJobStatus === 'error' ? 'Error' : 'Optimizing'}
+                {optimizationJobStatus === 'error' ? 'Optimization Failed' : 'Optimization In Progress'}
               </div>
               <div style={{
-                fontSize: 11,
+                fontSize: 12,
+                lineHeight: 1.5,
                 color: 'rgba(255,255,255,0.85)',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                maxWidth: 360
+                wordBreak: 'break-word'
               }}>
                 {statusMessage || (optimizationJobStatus === 'error' ? (optimizationJobError || 'An error occurred') : 'Processing...')}
               </div>
@@ -4354,8 +4352,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                     setOptimizationJobStatus('idle')
                     setOptimizationJobError(null)
                     setStatusMessage('')
-                    setStatusDetails(null)
-                    setSubmissionResponse(null)
+                                    setSubmissionResponse(null)
                     setSessionId('')
                     setJobId('')
                     setOptimizationResults(null)
@@ -4769,63 +4766,28 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                   </div>
                 )}
 
-                {(optimizationJobStatus !== 'submitting' && optimizationJobStatus !== 'polling' && (optimizationJobStatus !== 'idle' || statusMessage || statusDetails || optimizationJobError || resultsError || submissionResponse || optimizationResults)) && (
-                  <div style={{ marginTop: 6, padding: '6px', background: 'rgba(0,0,0,0.3)', borderRadius: 3, fontSize: 10, maxHeight: 200, overflow: 'auto' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                      {(optimizationJobStatus !== 'submitting' && optimizationJobStatus !== 'polling') && (
-                        <div><strong>Status:</strong> {optimizationJobStatus}</div>
-                      )}
-                      {optimizationJobStatus === 'polling' && (
-                        <div style={{ fontSize: 9, opacity: 0.8, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <div style={{ width: 10, height: 10, border: '2px solid rgba(255,255,255,0.3)', borderTop: '2px solid #4fc3f7', borderRadius: '50%', animation: 'spinLoader 1s linear infinite' }} />
-                          Polling...
-                        </div>
-                      )}
-                      {submissionResponse?.results && (
-                        <div style={{ fontSize: 9, color: '#4CAF50', fontWeight: 'bold' }}>✓ Ready!</div>
-                      )}
-                    </div>
-
-                    {(optimizationJobStatus !== 'submitting' && optimizationJobStatus !== 'polling' && statusMessage) && (
-                      <div style={{ marginTop: 4, fontSize: 10 }}>
-                        <strong>Message:</strong> {statusMessage}
-                      </div>
-                    )}
-                    {statusDetails?.message && (
-                      <div style={{ marginTop: 4, padding: '4px', background: 'rgba(0,150,255,0.15)', borderRadius: 2, fontSize: 10, borderLeft: '2px solid #4fc3f7' }}>
-                        {statusDetails.message}
-                      </div>
-                    )}
-                    {optimizationJobError && (
-                      <div style={{ marginTop: 4, color: '#ffb3b3' }}>
-                        <strong>Error:</strong> {optimizationJobError}
-                      </div>
-                    )}
-                    {/* View Results Button */}
-                    {(submissionResponse?.results || optimizationJobStatus === 'completed' || optimizationResults) && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          console.log('[Optimization] View Results clicked')
-                          if (optimizationResults) {
-                            setShowResultsView(true)
-                          } else if (submissionResponse?.results) {
-                            setOptimizationResults(submissionResponse)
-                            setShowResultsView(true)
-                          } else {
-                            void fetchOptimizationResults()
-                          }
-                        }}
-                        style={{ width: '100%', marginTop: 8, padding: '8px 10px', borderRadius: 3, border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(0,200,100,0.5)', color: '#fff', cursor: 'pointer', fontWeight: 'bold', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
-                      >
-                        📊 View Results
-                      </button>
-                    )}
-                    {resultsError && (
-                      <div style={{ marginTop: 4, color: '#ffb3b3' }}>
-                        <strong>Results Error:</strong> {resultsError}
-                      </div>
-                    )}
+                {(submissionResponse?.results || optimizationJobStatus === 'completed' || optimizationResults) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      console.log('[Optimization] View Results clicked')
+                      if (optimizationResults) {
+                        setShowResultsView(true)
+                      } else if (submissionResponse?.results) {
+                        setOptimizationResults(submissionResponse)
+                        setShowResultsView(true)
+                      } else {
+                        void fetchOptimizationResults()
+                      }
+                    }}
+                    style={{ width: '100%', marginTop: 8, padding: '8px 10px', borderRadius: 3, border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(0,200,100,0.5)', color: '#fff', cursor: 'pointer', fontWeight: 'bold', fontSize: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}
+                  >
+                    📊 View Results
+                  </button>
+                )}
+                {resultsError && (
+                  <div style={{ marginTop: 4, color: '#ffb3b3', fontSize: 10 }}>
+                    <strong>Results Error:</strong> {resultsError}
                   </div>
                 )}
               </div>
