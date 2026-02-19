@@ -1688,13 +1688,17 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       availableFrequencies: [...optimizationSectors]
     }
 
-    setOptimizationJobStatus('submitting')
+    setOptimizationJobStatus('polling')
     setOptimizationJobError(null)
     setStatusMessage('')
     setStatusDetails(null)
     setSubmissionResponse(null)
     setLastSubmissionUrl(requestUrl)
     console.log('[Optimization] Submitting job to:', requestUrl)
+
+    // Start polling the status URL immediately — the server begins
+    // writing progress messages as soon as it receives the POST.
+    void pollOptimizationStatus()
 
     try {
       const basePayload = {
@@ -1750,24 +1754,29 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       console.log('[Optimization] Checking for results in response...')
       console.log('[Optimization] Has results property?', !!body?.results)
       console.log('[Optimization] Response keys:', Object.keys(body || {}))
-      
+
       // Check if response contains complete results data (with histograms, scores, etc.)
       // If results exist, we can display them immediately without polling
       const hasCompleteResults = body?.results?.histograms && body?.results?.total_scores
-      
+
       if (hasCompleteResults) {
         console.log('[Optimization] ✓ Complete results found in submission response - NO POLLING NEEDED')
+        // Stop polling — we already have everything
+        if (pollingTimerRef.current) {
+          window.clearTimeout(pollingTimerRef.current)
+          pollingTimerRef.current = null
+        }
         setOptimizationResults(body)
         setOptimizationJobStatus('completed')
-      } else {
-        console.log('[Optimization] ✗ No complete results in submission response - starting status polling')
-        setOptimizationJobStatus('polling')
-        setTimeout(() => {
-          void pollOptimizationStatus()
-        }, STATUS_POLL_INTERVAL_MS)
       }
+      // Otherwise polling continues automatically via pollOptimizationStatus
     } catch (error) {
       console.error('[Optimization] Failed to submit job:', error)
+      // Stop polling on submission error
+      if (pollingTimerRef.current) {
+        window.clearTimeout(pollingTimerRef.current)
+        pollingTimerRef.current = null
+      }
       const message = error instanceof TypeError
         ? 'Network or CORS error reaching optimization endpoint'
         : error instanceof Error
