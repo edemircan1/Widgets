@@ -3494,26 +3494,27 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       {(optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling' || optimizationJobStatus === 'error') && (
         <div style={{
           position: 'absolute',
-          top: '50%',
+          top: 12,
           left: '50%',
-          transform: 'translate(-50%, -50%)',
+          transform: 'translateX(-50%)',
           zIndex: 10,
-          background: 'rgba(18,18,18,0.96)',
+          background: optimizationJobStatus === 'error' ? 'rgba(30,12,12,0.94)' : 'rgba(12,18,28,0.94)',
           color: '#fff',
-          borderRadius: 14,
-          border: `1px solid ${optimizationJobStatus === 'error' ? 'rgba(239,83,80,0.4)' : 'rgba(79,195,247,0.2)'}`,
-          boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 120px rgba(0,0,0,0.4)',
-          width: 380,
+          borderRadius: 8,
+          border: `1px solid ${optimizationJobStatus === 'error' ? 'rgba(239,83,80,0.35)' : 'rgba(79,195,247,0.18)'}`,
+          boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+          maxWidth: 520,
+          minWidth: 280,
           overflow: 'hidden'
         }}>
-          {/* Progress bar */}
-          <div style={{ height: 4, background: 'rgba(255,255,255,0.06)', position: 'relative', overflow: 'hidden' }}>
+          {/* Thin animated progress bar */}
+          <div style={{ height: 3, background: 'rgba(255,255,255,0.04)', position: 'relative', overflow: 'hidden' }}>
             {optimizationJobStatus !== 'error' && (
               <div style={{
                 position: 'absolute',
                 top: 0,
                 height: '100%',
-                width: '40%',
+                width: '35%',
                 background: 'linear-gradient(90deg, transparent 0%, #4fc3f7 50%, transparent 100%)',
                 animation: 'progressSlide 1.4s cubic-bezier(0.4,0,0.2,1) infinite'
               }} />
@@ -3522,15 +3523,14 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: '#ef5350' }} />
             )}
           </div>
-          {/* Content */}
-          <div style={{ padding: '20px 24px', display: 'flex', alignItems: 'flex-start', gap: 14 }}>
+          {/* Content row */}
+          <div style={{ padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
             {optimizationJobStatus !== 'error' && (
               <div style={{
-                width: 22,
-                height: 22,
-                marginTop: 1,
-                border: '2.5px solid rgba(79,195,247,0.2)',
-                borderTop: '2.5px solid #4fc3f7',
+                width: 14,
+                height: 14,
+                border: '2px solid rgba(79,195,247,0.2)',
+                borderTop: '2px solid #4fc3f7',
                 borderRadius: '50%',
                 flexShrink: 0,
                 animation: 'spinLoader 0.8s linear infinite'
@@ -3538,38 +3538,27 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
             )}
             {optimizationJobStatus === 'error' && (
               <div style={{
-                width: 22,
-                height: 22,
-                marginTop: 1,
+                width: 14,
+                height: 14,
                 borderRadius: '50%',
                 background: '#ef5350',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 flexShrink: 0,
-                fontSize: 11,
+                fontSize: 8,
                 fontWeight: 700
               }}>✕</div>
             )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{
-                fontSize: 10,
-                fontWeight: 700,
-                letterSpacing: '0.08em',
-                textTransform: 'uppercase',
-                color: optimizationJobStatus === 'error' ? '#ef9a9a' : '#4fc3f7',
-                marginBottom: 6
-              }}>
-                {optimizationJobStatus === 'error' ? 'Optimization Failed' : 'Optimization In Progress'}
-              </div>
-              <div style={{
-                fontSize: 12,
-                lineHeight: 1.5,
-                color: 'rgba(255,255,255,0.85)',
-                wordBreak: 'break-word'
-              }}>
-                {statusMessage || (optimizationJobStatus === 'error' ? (optimizationJobError || 'An error occurred') : 'Processing...')}
-              </div>
+            <div style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: 11,
+              lineHeight: 1.4,
+              color: 'rgba(255,255,255,0.88)',
+              wordBreak: 'break-word'
+            }}>
+              {statusMessage || (optimizationJobStatus === 'error' ? (optimizationJobError || 'An error occurred') : 'Processing...')}
             </div>
           </div>
         </div>
@@ -3880,21 +3869,19 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       </div>
       )}
 
-      {/* Sector View Panel - Top Center */}
+      {/* Sector View Panel - Top Left */}
       {clickedSectorData && (
-        <div style={{ 
-          position: 'absolute', 
-          top: 16,
-          left: '50%',
-          transform: 'translateX(-50%)',
-          zIndex: 1000, 
-          background: 'linear-gradient(135deg, rgba(30,30,35,0.98) 0%, rgba(45,45,50,0.98) 100%)', 
+        <div style={{
+          position: 'absolute',
+          top: 50,
+          left: 8,
+          zIndex: 1000,
+          background: 'linear-gradient(135deg, rgba(30,30,35,0.98) 0%, rgba(45,45,50,0.98) 100%)',
           border: '1px solid rgba(100,200,100,0.4)',
           borderRadius: 6,
           boxShadow: '0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(100,200,100,0.2)',
           minWidth: 240,
-          maxWidth: 280,
-          backdropFilter: 'blur(10px)'
+          maxWidth: 280
         }}>
           {/* Header Bar */}
           <div style={{
