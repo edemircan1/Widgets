@@ -480,6 +480,9 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   const [iqiFeatureCount, setIqiFeatureCount] = React.useState<number>(0)
   const iqiFetchControllerRef = React.useRef<AbortController | null>(null)
   const iqiTokenRefreshTimerRef = React.useRef<number | null>(null)
+  const iqiGenerationRef = React.useRef<number>(0)
+  const iqiBatchTimerRef = React.useRef<number | null>(null)
+  const iqiSourceExistsRef = React.useRef<boolean>(false)
 
   const coverageStyleLayerSummary = React.useMemo(() => {
     const layers = Array.isArray((coverageStyleData as any)?.layers) ? (coverageStyleData as any).layers : []
@@ -1498,164 +1501,15 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
   // ─── IQI LAYER DATA FETCHING ──────────────────────────────────────────────────
 
-  const fetchIqiData = React.useCallback(async () => {
-    if (!mapRef.current) {
-      return
-    }
-
-    const map = mapRef.current
-    const zoom = map.getZoom()
-
-    // Only load at zoom level 12+
-    if (zoom < 12) {
-      setIqiStatus('idle')
-      setIqiFeatureCount(0)
-      setIqiError(`Zoom in to 12+ to load features (current: ${Math.floor(zoom)})`)
-      clearOverlay('iqi')
-      return
-    }
-
-    // Abort any previous fetch
-    if (iqiFetchControllerRef.current) {
-      iqiFetchControllerRef.current.abort()
-    }
-    iqiFetchControllerRef.current = new AbortController()
-    const signal = iqiFetchControllerRef.current.signal
-
-    setIqiStatus('loading-token')
-    setIqiError(null)
-
-    const token = await ensureIqiToken()
-    if (!token) {
-      setIqiStatus('error')
-      setIqiError('Failed to get IQI token')
-      return
-    }
-
-    if (signal.aborted) return
-
-    const bounds = map.getBounds()
-    const bbox = {
-      xmin: bounds.getWest(),
-      ymin: bounds.getSouth(),
-      xmax: bounds.getEast(),
-      ymax: bounds.getNorth()
-    }
-
-    const FEATURE_SERVER_URL = 'https://egisarcgis.dev.abc.com/arcgissecure/rest/services/INP/IQI_700_202511/FeatureServer/5'
-    const MAX_RECORDS = 2000
-
-    // Determine grid size based on zoom level
-    // With 2000 max records, need more cells to cover dense areas
-    // Key: each cell must contain < 2000 features to avoid truncation
-    const gridSize = zoom >= 15 ? 1 : zoom >= 14 ? 2 : zoom >= 13 ? 4 : 6
-
-    try {
-      let featureBuffer: any[] = []
-
-      if (gridSize === 1) {
-        // Single request for entire viewport
-        setIqiStatus('loading-data')
-        featureBuffer = await fetchIqiBbox(bbox, token, signal, FEATURE_SERVER_URL, MAX_RECORDS)
-        
-        if (signal.aborted) return
-        
-        if (featureBuffer.length === 0) {
-          setIqiStatus('idle')
-          setIqiFeatureCount(0)
-          setIqiError('No IQI features in viewport')
-          clearOverlay('iqi')
-          return
-        }
-        
-        renderIqiFeatures(featureBuffer)
-        setIqiFeatureCount(featureBuffer.length)
-        setIqiStatus('success')
-        setIqiError(null)
-      } else {
-        // Grid-based progressive fetching
-        const cellWidth = (bbox.xmax - bbox.xmin) / gridSize
-        const cellHeight = (bbox.ymax - bbox.ymin) / gridSize
-
-        const cells: any[] = []
-        for (let r = 0; r < gridSize; r++) {
-          for (let c = 0; c < gridSize; c++) {
-            cells.push({
-              xmin: bbox.xmin + c * cellWidth,
-              ymin: bbox.ymin + r * cellHeight,
-              xmax: bbox.xmin + (c + 1) * cellWidth,
-              ymax: bbox.ymin + (r + 1) * cellHeight
-            })
-          }
-        }
-
-        const seen = new Set<string>()
-        let completed = 0
-        const total = cells.length
-
-        // Fire all requests at once — browser will manage concurrency (6 parallel)
-        const promises = cells.map(cell =>
-          fetchIqiBbox(cell, token, signal, FEATURE_SERVER_URL, MAX_RECORDS).then(features => {
-            if (signal.aborted) return
-
-            for (const f of features) {
-              const id = f.id || f.properties?.OBJECTID || f.properties?.objectid
-              if (id != null) {
-                const key = String(id)
-                if (seen.has(key)) continue
-                seen.add(key)
-              }
-              featureBuffer.push(f)
-            }
-
-            completed++
-            
-            // Progressive rendering and status updates
-            if (featureBuffer.length > 0) {
-              renderIqiFeatures(featureBuffer)
-            }
-            
-            setIqiFeatureCount(featureBuffer.length)
-            setIqiStatus('loading-data')
-            setIqiError(`Loading ${completed}/${total}... (${featureBuffer.length.toLocaleString()})`)
-          })
-        )
-
-        await Promise.all(promises)
-
-        if (signal.aborted) return
-
-        if (featureBuffer.length === 0) {
-          setIqiStatus('idle')
-          setIqiFeatureCount(0)
-          setIqiError('No IQI features in viewport')
-          clearOverlay('iqi')
-          return
-        }
-
-        setIqiStatus('success')
-        setIqiFeatureCount(featureBuffer.length)
-        setIqiError(null)
-      }
-    } catch (error) {
-      if (signal.aborted) return
-      
-      console.error('IQI data fetch error:', error)
-      setIqiStatus('error')
-      setIqiError(error instanceof Error ? error.message : 'Failed to fetch IQI data')
-      setIqiFeatureCount(0)
-      clearOverlay('iqi')
-    }
-  }, [ensureIqiToken, clearOverlay])
-
   const fetchIqiBbox = async (
     bbox: any,
     token: string,
     signal: AbortSignal,
     featureServerUrl: string,
-    maxRecords: number
-  ): Promise<any[]> => {
-    if (signal.aborted) return []
+    maxRecords: number,
+    depth: number = 0
+  ): Promise<{ features: any[]; truncatedCells: number; failedCells: number }> => {
+    if (signal.aborted) return { features: [], truncatedCells: 0, failedCells: 0 }
 
     let tokenParam = encodeURIComponent(token)
     if (token.endsWith('.')) {
@@ -1671,31 +1525,66 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
     try {
       const res = await fetch(url, { signal })
-      
+
       if (!res.ok) {
         console.warn(`IQI: HTTP ${res.status} for cell, skipping`)
-        return []
+        return { features: [], truncatedCells: 0, failedCells: 1 }
       }
-      
+
       const text = await res.text()
 
       if (text.startsWith('<')) {
         console.warn('IQI: HTML response received, skipping')
-        return []
+        return { features: [], truncatedCells: 0, failedCells: 1 }
       }
 
       const json = JSON.parse(text)
 
       if (json.error) {
         console.warn('IQI: ArcGIS error:', json.error.message)
-        return []
+        return { features: [], truncatedCells: 0, failedCells: 1 }
       }
 
-      return json.features || []
+      const features = json.features || []
+
+      // Adaptive subdivision: if we hit the record limit, subdivide into 4 quadrants
+      if (features.length >= maxRecords && depth < 3) {
+        console.log(`IQI: Cell returned ${features.length} features (limit ${maxRecords}), subdividing at depth ${depth + 1}`)
+        const midX = (bbox.xmin + bbox.xmax) / 2
+        const midY = (bbox.ymin + bbox.ymax) / 2
+        const quadrants = [
+          { xmin: bbox.xmin, ymin: bbox.ymin, xmax: midX, ymax: midY },
+          { xmin: midX, ymin: bbox.ymin, xmax: bbox.xmax, ymax: midY },
+          { xmin: bbox.xmin, ymin: midY, xmax: midX, ymax: bbox.ymax },
+          { xmin: midX, ymin: midY, xmax: bbox.xmax, ymax: bbox.ymax }
+        ]
+        const results = await Promise.all(
+          quadrants.map(q => fetchIqiBbox(q, token, signal, featureServerUrl, maxRecords, depth + 1))
+        )
+        let allFeatures: any[] = []
+        let totalTruncated = 0
+        let totalFailed = 0
+        for (const r of results) {
+          allFeatures = allFeatures.concat(r.features)
+          totalTruncated += r.truncatedCells
+          totalFailed += r.failedCells
+        }
+        return { features: allFeatures, truncatedCells: totalTruncated, failedCells: totalFailed }
+      }
+
+      // At max depth and still truncated — flag it
+      if (features.length >= maxRecords && depth >= 3) {
+        console.warn(`IQI: Cell still truncated at max depth ${depth} (${features.length} features)`)
+        return { features, truncatedCells: 1, failedCells: 0 }
+      }
+
+      return { features, truncatedCells: 0, failedCells: 0 }
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') return []
+      if (err instanceof Error && err.name === 'AbortError') {
+        return { features: [], truncatedCells: 0, failedCells: 0 }
+      }
       console.warn('IQI fetch error:', err)
-      return []
+      return { features: [], truncatedCells: 0, failedCells: 1 }
     }
   }
 
@@ -1711,22 +1600,28 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     const fillLayerId = 'iqi-fill-layer'
     const outlineLayerId = 'iqi-outline-layer'
 
-    // Remove existing layers and source
-    if (map.getLayer(outlineLayerId)) map.removeLayer(outlineLayerId)
-    if (map.getLayer(fillLayerId)) map.removeLayer(fillLayerId)
-    if (map.getSource(sourceId)) map.removeSource(sourceId)
+    // If source already exists, just update data in-place (no flicker)
+    if (iqiSourceExistsRef.current && map.getSource(sourceId)) {
+      ;(map.getSource(sourceId) as any).setData(geojson)
+      return
+    }
 
-    // Add source
+    // Source was unexpectedly removed (e.g. style change) — clean up stale state
+    if (iqiSourceExistsRef.current && !map.getSource(sourceId)) {
+      if (map.getLayer(outlineLayerId)) map.removeLayer(outlineLayerId)
+      if (map.getLayer(fillLayerId)) map.removeLayer(fillLayerId)
+      iqiSourceExistsRef.current = false
+    }
+
+    // First call: create source + layers
     map.addSource(sourceId, {
       type: 'geojson',
       data: geojson
     } as any)
 
-    // Determine layer position - should be on top of everything
-    // But still respect the label layers
     const beforeLayerId = findLabelLayerId(map)
+    const opacityValue = iqiOpacity / 100
 
-    // Add fill layer with RSRP-based styling
     map.addLayer({
       id: fillLayerId,
       type: 'fill',
@@ -1743,11 +1638,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           -95, '#2196f3',   // -95 to -85
           -85, '#4caf50'    // >= -85
         ],
-        'fill-opacity': 0.7
+        'fill-opacity': opacityValue
       }
     } as any, beforeLayerId)
 
-    // Add outline layer
     map.addLayer({
       id: outlineLayerId,
       type: 'line',
@@ -1755,16 +1649,187 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       paint: {
         'line-color': '#ffffff',
         'line-width': 0.5,
-        'line-opacity': 0.7
+        'line-opacity': opacityValue
       }
     } as any, beforeLayerId)
 
-    // Track the layers in overlay ref
     overlayRef.current['iqi'] = {
       sourceIds: [sourceId],
       layerIds: [fillLayerId, outlineLayerId]
     }
-  }, [])
+    iqiSourceExistsRef.current = true
+  }, [iqiOpacity])
+
+  const fetchIqiData = React.useCallback(async () => {
+    if (!mapRef.current) {
+      return
+    }
+
+    const map = mapRef.current
+    const zoom = map.getZoom()
+
+    // Only load at zoom level 12+
+    if (zoom < 12) {
+      setIqiStatus('idle')
+      setIqiFeatureCount(0)
+      setIqiError(`Zoom in to 12+ to load features (current: ${Math.floor(zoom)})`)
+      clearOverlay('iqi')
+      iqiSourceExistsRef.current = false
+      return
+    }
+
+    // Abort any previous fetch and clear batch timer
+    if (iqiFetchControllerRef.current) {
+      iqiFetchControllerRef.current.abort()
+    }
+    if (iqiBatchTimerRef.current) {
+      window.clearTimeout(iqiBatchTimerRef.current)
+      iqiBatchTimerRef.current = null
+    }
+    iqiFetchControllerRef.current = new AbortController()
+    const signal = iqiFetchControllerRef.current.signal
+
+    // Generation counter — all callbacks check this to discard stale results
+    const generation = ++iqiGenerationRef.current
+
+    setIqiStatus('loading-token')
+    setIqiError(null)
+
+    const token = await ensureIqiToken()
+    if (!token) {
+      setIqiStatus('error')
+      setIqiError('Failed to get IQI token')
+      return
+    }
+
+    if (signal.aborted || generation !== iqiGenerationRef.current) return
+
+    const bounds = map.getBounds()
+    const bbox = {
+      xmin: bounds.getWest(),
+      ymin: bounds.getSouth(),
+      xmax: bounds.getEast(),
+      ymax: bounds.getNorth()
+    }
+
+    const FEATURE_SERVER_URL = 'https://egisarcgis.dev.abc.com/arcgissecure/rest/services/INP/IQI_700_202511/FeatureServer/5'
+    const MAX_RECORDS = 2000
+
+    // Grid size based on zoom level
+    const gridSize = zoom >= 15 ? 1 : zoom >= 14 ? 2 : zoom >= 13 ? 4 : 6
+
+    setIqiStatus('loading-data')
+
+    try {
+      // Build grid cells
+      const cellWidth = (bbox.xmax - bbox.xmin) / gridSize
+      const cellHeight = (bbox.ymax - bbox.ymin) / gridSize
+      const cells: any[] = []
+      for (let r = 0; r < gridSize; r++) {
+        for (let c = 0; c < gridSize; c++) {
+          cells.push({
+            xmin: bbox.xmin + c * cellWidth,
+            ymin: bbox.ymin + r * cellHeight,
+            xmax: bbox.xmin + (c + 1) * cellWidth,
+            ymax: bbox.ymin + (r + 1) * cellHeight
+          })
+        }
+      }
+
+      const seen = new Set<string>()
+      const featureBuffer: any[] = []
+      let completed = 0
+      let totalTruncated = 0
+      let totalFailed = 0
+      const total = cells.length
+      let renderScheduled = false
+
+      // Dedup helper
+      const addFeatures = (features: any[]) => {
+        for (const f of features) {
+          const id = f.id || f.properties?.OBJECTID || f.properties?.objectid
+          if (id != null) {
+            const key = String(id)
+            if (seen.has(key)) continue
+            seen.add(key)
+          }
+          featureBuffer.push(f)
+        }
+      }
+
+      // Batched render — at most every 200ms during progressive loading
+      const scheduleBatchRender = () => {
+        if (renderScheduled || generation !== iqiGenerationRef.current) return
+        renderScheduled = true
+        iqiBatchTimerRef.current = window.setTimeout(() => {
+          iqiBatchTimerRef.current = null
+          renderScheduled = false
+          if (generation !== iqiGenerationRef.current) return
+          if (featureBuffer.length > 0) {
+            renderIqiFeatures(featureBuffer)
+          }
+          setIqiFeatureCount(featureBuffer.length)
+        }, 200)
+      }
+
+      // Fire all requests — browser manages concurrency (6 parallel)
+      const promises = cells.map(cell =>
+        fetchIqiBbox(cell, token, signal, FEATURE_SERVER_URL, MAX_RECORDS).then(result => {
+          if (signal.aborted || generation !== iqiGenerationRef.current) return
+
+          addFeatures(result.features)
+          totalTruncated += result.truncatedCells
+          totalFailed += result.failedCells
+          completed++
+
+          setIqiError(`Loading ${completed}/${total}... (${featureBuffer.length.toLocaleString()})`)
+          scheduleBatchRender()
+        })
+      )
+
+      await Promise.all(promises)
+
+      if (signal.aborted || generation !== iqiGenerationRef.current) return
+
+      // Clear any pending batch timer and do final render
+      if (iqiBatchTimerRef.current) {
+        window.clearTimeout(iqiBatchTimerRef.current)
+        iqiBatchTimerRef.current = null
+      }
+
+      if (featureBuffer.length === 0) {
+        setIqiStatus('idle')
+        setIqiFeatureCount(0)
+        setIqiError('No IQI features in viewport')
+        clearOverlay('iqi')
+        iqiSourceExistsRef.current = false
+        return
+      }
+
+      renderIqiFeatures(featureBuffer)
+      setIqiFeatureCount(featureBuffer.length)
+      setIqiStatus('success')
+
+      // Report partial-success warnings
+      if (totalFailed > 0 || totalTruncated > 0) {
+        const parts: string[] = []
+        if (totalFailed > 0) parts.push(`${totalFailed} cell${totalFailed > 1 ? 's' : ''} failed`)
+        if (totalTruncated > 0) parts.push(`${totalTruncated} cell${totalTruncated > 1 ? 's' : ''} truncated`)
+        setIqiError(`Loaded ${featureBuffer.length.toLocaleString()} features (${parts.join(', ')})`)
+      } else {
+        setIqiError(null)
+      }
+    } catch (error) {
+      if (signal.aborted || generation !== iqiGenerationRef.current) return
+
+      console.error('IQI data fetch error:', error)
+      setIqiStatus('error')
+      setIqiError(error instanceof Error ? error.message : 'Failed to fetch IQI data')
+      setIqiFeatureCount(0)
+      clearOverlay('iqi')
+      iqiSourceExistsRef.current = false
+    }
+  }, [ensureIqiToken, clearOverlay, renderIqiFeatures])
 
   const fetchOptimizationSectors = React.useCallback(async (activeToken: string, bounds: BBoxBounds) => {
     const requestUrl = `https://bird.web.abc.com/oauth21/api/metadata/sector/list/opto_area/frequency/${formatCoord(bounds.minLng)}/${formatCoord(bounds.minLat)}/${formatCoord(bounds.maxLng)}/${formatCoord(bounds.maxLat)}/`
@@ -2676,14 +2741,19 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     } else {
       // Clear IQI overlay when toggled off
       clearOverlay('iqi')
+      iqiSourceExistsRef.current = false
       setIqiStatus('idle')
       setIqiFeatureCount(0)
       setIqiError(null)
-      
-      // Abort any in-flight fetches
+
+      // Abort any in-flight fetches and clear batch timer
       if (iqiFetchControllerRef.current) {
         iqiFetchControllerRef.current.abort()
         iqiFetchControllerRef.current = null
+      }
+      if (iqiBatchTimerRef.current) {
+        window.clearTimeout(iqiBatchTimerRef.current)
+        iqiBatchTimerRef.current = null
       }
     }
   }, [mapReady, iqiVisible, fetchIqiData, clearOverlay])
@@ -2746,7 +2816,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     }
   }, [mapReady, iqiVisible, fetchIqiData])
 
-  // Cleanup IQI token refresh timer on unmount
+  // Cleanup IQI timers and controllers on unmount
   React.useEffect(() => {
     return () => {
       if (iqiTokenRefreshTimerRef.current) {
@@ -2756,6 +2826,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       if (iqiFetchControllerRef.current) {
         iqiFetchControllerRef.current.abort()
         iqiFetchControllerRef.current = null
+      }
+      if (iqiBatchTimerRef.current) {
+        window.clearTimeout(iqiBatchTimerRef.current)
+        iqiBatchTimerRef.current = null
       }
     }
   }, [])
@@ -3957,8 +4031,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               {iqiStatus === 'loading-data' && (
                 <div style={{ fontSize: 10, color: '#80deea', paddingLeft: 22 }}>Loading features...</div>
               )}
-              {iqiStatus === 'success' && iqiFeatureCount > 0 && (
+              {iqiStatus === 'success' && iqiFeatureCount > 0 && !iqiError && (
                 <div style={{ fontSize: 10, color: '#4caf50', paddingLeft: 22 }}>✓ {iqiFeatureCount.toLocaleString()} features loaded</div>
+              )}
+              {iqiStatus === 'success' && iqiError && (
+                <div style={{ fontSize: 10, color: '#ff9800', paddingLeft: 22 }}>⚠ {iqiError}</div>
               )}
               {iqiStatus === 'error' && iqiError && (
                 <div style={{ fontSize: 10, color: '#f44336', paddingLeft: 22 }}>{iqiError}</div>
