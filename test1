@@ -2445,7 +2445,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         bounds,
         data,
         timestamp: Date.now(),
-        label: apiTime ? `Recalled: ${apiTime}` : `Recalled: ${new Date().toLocaleString()}`,
+        label: 'Recalled',
         color,
         source: 'recalled',
         submittedTime: apiTime
@@ -5040,7 +5040,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                   )}
                 </div>
 
-                {/* Session/Job ID Display with Copy Buttons */}
+                {/* Session/Job ID Display with single Copy button */}
                 {sessionId && jobId && (
                   <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(100,100,255,0.15)', borderRadius: 3, fontSize: 9, border: '1px solid rgba(100,100,255,0.3)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -5048,51 +5048,38 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                       <code style={{ flex: 1, fontSize: 8, background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {sessionId}
                       </code>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(sessionId)
-                          console.log('Session ID copied:', sessionId)
-                        }}
-                        style={{
-                          padding: '2px 6px',
-                          fontSize: 9,
-                          borderRadius: 2,
-                          border: '1px solid rgba(255,255,255,0.3)',
-                          background: 'rgba(100,150,255,0.3)',
-                          color: '#fff',
-                          cursor: 'pointer'
-                        }}
-                        title="Copy Session ID"
-                      >
-                        📋
-                      </button>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                       <strong style={{ fontSize: 9, minWidth: 60 }}>Job ID:</strong>
                       <code style={{ flex: 1, fontSize: 8, background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         {jobId}
                       </code>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          navigator.clipboard.writeText(jobId)
-                          console.log('Job ID copied:', jobId)
-                        }}
-                        style={{
-                          padding: '2px 6px',
-                          fontSize: 9,
-                          borderRadius: 2,
-                          border: '1px solid rgba(255,255,255,0.3)',
-                          background: 'rgba(100,150,255,0.3)',
-                          color: '#fff',
-                          cursor: 'pointer'
-                        }}
-                        title="Copy Job ID"
-                      >
-                        📋
-                      </button>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const text = `Session ID: ${sessionId}, Job ID: ${jobId}`
+                        navigator.clipboard.writeText(text)
+                        console.log('IDs copied:', text)
+                      }}
+                      style={{
+                        width: '100%',
+                        padding: '3px 6px',
+                        fontSize: 9,
+                        borderRadius: 2,
+                        border: '1px solid rgba(255,255,255,0.3)',
+                        background: 'rgba(100,150,255,0.3)',
+                        color: '#fff',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 4
+                      }}
+                      title="Copy Session ID and Job ID"
+                    >
+                      📋 Copy IDs
+                    </button>
                   </div>
                 )}
 
@@ -5224,51 +5211,38 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                   <code style={{ flex: 1, fontSize: 8, background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {optimizationResultsArray[activeResultIndex].sessionId}
                   </code>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(optimizationResultsArray[activeResultIndex].sessionId)
-                      console.log('Session ID copied:', optimizationResultsArray[activeResultIndex].sessionId)
-                    }}
-                    style={{
-                      padding: '2px 6px',
-                      fontSize: 9,
-                      borderRadius: 2,
-                      border: '1px solid rgba(255,255,255,0.3)',
-                      background: 'rgba(100,150,255,0.3)',
-                      color: '#fff',
-                      cursor: 'pointer'
-                    }}
-                    title="Copy Session ID"
-                  >
-                    📋
-                  </button>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                   <strong style={{ fontSize: 9, minWidth: 60 }}>Job ID:</strong>
                   <code style={{ flex: 1, fontSize: 8, background: 'rgba(0,0,0,0.3)', padding: '2px 4px', borderRadius: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {optimizationResultsArray[activeResultIndex].jobId}
                   </code>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(optimizationResultsArray[activeResultIndex].jobId)
-                      console.log('Job ID copied:', optimizationResultsArray[activeResultIndex].jobId)
-                    }}
-                    style={{
-                      padding: '2px 6px',
-                      fontSize: 9,
-                      borderRadius: 2,
-                      border: '1px solid rgba(255,255,255,0.3)',
-                      background: 'rgba(100,150,255,0.3)',
-                      color: '#fff',
-                      cursor: 'pointer'
-                    }}
-                    title="Copy Job ID"
-                  >
-                    📋
-                  </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = `Session ID: ${optimizationResultsArray[activeResultIndex].sessionId}, Job ID: ${optimizationResultsArray[activeResultIndex].jobId}`
+                    navigator.clipboard.writeText(text)
+                    console.log('IDs copied:', text)
+                  }}
+                  style={{
+                    width: '100%',
+                    padding: '3px 6px',
+                    fontSize: 9,
+                    borderRadius: 2,
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    background: 'rgba(100,150,255,0.3)',
+                    color: '#fff',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 4
+                  }}
+                  title="Copy Session ID and Job ID"
+                >
+                  📋 Copy IDs
+                </button>
               </div>
               </div>
             ) : null}
@@ -5353,7 +5327,12 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontSize: 11, fontWeight: 'bold' }}>{result.label}</span>
+                <span style={{ fontSize: 11, fontWeight: 'bold' }}>
+                  {result.label}
+                  {result.source === 'recalled' && result.submittedTime && (
+                    <span style={{ fontWeight: 'normal', opacity: 0.8 }}> | Submitted on: {result.submittedTime}</span>
+                  )}
+                </span>
                 <div style={{ display: 'flex', gap: 4 }}>
                   {/* Toggle Bounding Box Visibility */}
                   <button
@@ -5821,12 +5800,15 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                   }} />
                   <span style={{ fontSize: 10, fontWeight: '500', flex: 1 }}>
                     {optimizationResultsArray[activeResultIndex].label}
+                    {optimizationResultsArray[activeResultIndex].source === 'recalled' && optimizationResultsArray[activeResultIndex].submittedTime && (
+                      <span style={{ fontWeight: 'normal', opacity: 0.8 }}> | Submitted on: {optimizationResultsArray[activeResultIndex].submittedTime}</span>
+                    )}
                   </span>
                   <span style={{ fontSize: 8, opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                     {optimizationResultsArray[activeResultIndex].source === 'submitted' ? 'Submitted' : 'Recalled'}
                   </span>
                 </div>
-                {optimizationResultsArray[activeResultIndex].submittedTime && (
+                {optimizationResultsArray[activeResultIndex].source === 'submitted' && optimizationResultsArray[activeResultIndex].submittedTime && (
                   <div style={{ fontSize: 9, color: '#90CAF9', marginBottom: 8 }}>
                     Submitted on: {optimizationResultsArray[activeResultIndex].submittedTime}
                   </div>
