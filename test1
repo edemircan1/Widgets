@@ -1094,7 +1094,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           return
         }
 
-        const groupUrl = `https://egisportal.dev.abc.com/egisweb/sharing/rest/community/groups/group1/userList?f=json&token=${encodeURIComponent(token)}`
+        const groupUrl = `https://egisportal.dev.abc.com/egisweb/sharing/rest/community/groups/group1/userList?f=json&num=500&token=${encodeURIComponent(token)}`
         console.log('[Portal] Fetching group user list...')
         const groupResponse = await fetch(groupUrl, { method: 'GET', mode: 'cors' })
         if (!groupResponse.ok) {
@@ -1102,10 +1102,16 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           return
         }
         const groupData = await groupResponse.json()
-        console.log('[Portal] Group user list response:', groupData)
+        console.log('[Portal] Group response top-level keys:', Object.keys(groupData))
+        const users: any[] = groupData?.users || []
+        console.log('[Portal] Total users in group:', users.length)
+        if (users.length > 0) {
+          console.log('[Portal] First user object sample:', JSON.stringify(users[0]))
+          console.log('[Portal] All fullNames:', users.map((u: any) => u?.fullName).filter(Boolean))
+        }
+        console.log('[Portal] Looking for fullName:', portalUser.fullName)
 
-        // Search for the logged-in user's fullName in the group list
-        const users: any[] = groupData?.users || groupData?.items || groupData?.members || []
+        // Search for the logged-in user's fullName in the users array
         const found = users.some((u: any) => u?.fullName === portalUser.fullName)
         console.log('[Portal] User', portalUser.fullName, found ? 'IS in OptoUser group' : 'is NOT in OptoUser group')
         setIsOptoUser(found)
