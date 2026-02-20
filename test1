@@ -14,136 +14,23 @@ const DEFAULT_CENTER: [number, number] = [-98.5795, 39.8283]
 const DEFAULT_ZOOM = 3.2
 const DEFAULT_PITCH = 0
 const DEFAULT_BEARING = 0
+const DEFAULT_BASEMAP_STYLE_URL = 'https://bird.web.abc.com/oauth21/api/visualization/assets/styles/light/style.json'
 
-
-const DEFAULT_STYLE: StyleSpecification = {
-  version: 8,
-  name: 'OSM Custom',
-  sources: {
-    'osm': {
-      type: 'vector',
-      tiles: ['https://bird.web.abc.com/oauth21/api/vector/tile/osm/zxy/{z}/{x}/{y}.pbf'],
-      minzoom: 0,
-      maxzoom: 14
-    }
-  },
-  layers: [
-    {
-      id: 'background',
-      type: 'background',
-      paint: {
-        'background-color': '#f8f8f8'
-      }
-    },
-    {
-      id: 'water',
-      type: 'fill',
-      source: 'osm',
-      'source-layer': 'water',
-      paint: {
-        'fill-color': '#a8d5e8',
-        'fill-opacity': 0.7
-      }
-    },
-    {
-      id: 'landuse',
-      type: 'fill',
-      source: 'osm',
-      'source-layer': 'landuse',
-      paint: {
-        'fill-color': [
-          'match',
-          ['get', 'class'],
-          'park', '#f5f5f5',
-          'residential', '#e8e8e8',
-          'industrial', '#e0e0e0',
-          '#f0f0f0'
-        ],
-        'fill-opacity': 0.8
-      }
-    },
-    {
-      id: 'roads-casing',
-      type: 'line',
-      source: 'osm',
-      'source-layer': 'transportation',
-      paint: {
-        'line-color': '#c0c0c0',
-        'line-width': [
-          'interpolate',
-          ['exponential', 1.5],
-          ['zoom'],
-          5, ['match', ['get', 'class'], ['motorway', 'trunk'], 0.8, 0],
-          10, ['match', ['get', 'class'], ['motorway', 'trunk'], 3, ['primary', 'secondary'], 2, 0],
-          15, ['match', ['get', 'class'], ['motorway', 'trunk'], 8, ['primary', 'secondary'], 6, 4]
-        ]
-      }
-    },
-    {
-      id: 'roads',
-      type: 'line',
-      source: 'osm',
-      'source-layer': 'transportation',
-      paint: {
-        'line-color': [
-          'match',
-          ['get', 'class'],
-          'motorway', '#e8d3b9',
-          'trunk', '#e9ddc0',
-          'primary', '#ffffff',
-          'secondary', '#ffffff',
-          '#ffffff'
-        ],
-        'line-width': [
-          'interpolate',
-          ['exponential', 1.5],
-          ['zoom'],
-          5, ['match', ['get', 'class'], ['motorway', 'trunk'], 0.5, 0],
-          10, ['match', ['get', 'class'], ['motorway', 'trunk'], 2, ['primary', 'secondary'], 1.5, 0],
-          15, ['match', ['get', 'class'], ['motorway', 'trunk'], 6, ['primary', 'secondary'], 4.5, 3]
-        ]
-      }
-    },
-    {
-      id: 'buildings',
-      type: 'fill',
-      source: 'osm',
-      'source-layer': 'building',
-      minzoom: 13,
-      paint: {
-        'fill-color': '#d8d8d8',
-        'fill-opacity': 0.6
-      }
-    },
-    {
-      id: 'place-labels',
-      type: 'symbol',
-      source: 'osm',
-      'source-layer': 'place',
-      minzoom: 5,
-      layout: {
-        'text-field': ['get', 'name'],
-        'text-size': [
-          'interpolate',
-          ['linear'],
-          ['zoom'],
-          5, ['match', ['get', 'class'], 'country', 14, 'state', 12, 10],
-          10, ['match', ['get', 'class'], 'country', 18, 'state', 16, 'city', 14, 12]
-        ],
-        'text-font': ['Open Sans Regular', 'Arial Unicode MS Regular']
-      },
-      paint: {
-        'text-color': '#333333',
-        'text-halo-color': '#ffffff',
-        'text-halo-width': 1.5
-      }
-    }
-  ]
+const isbirdProtectedUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url, window.location.origin)
+    const host = parsed.hostname.toLowerCase()
+    return (
+      host === 'bird.web.abc.com' || host.endsWith('.bird.web.abc.com') ||
+      host === 'bird.research.abc.com' || host.endsWith('.bird.research.abc.com')
+    )
+  } catch (_ignored) {
+    return false
+  }
 }
 
 const DEFAULT_TOKEN_URL = 'https://egisportal.dev.abc.com/egis-bird-client/token'
 const DEFAULT_SECTOR_ENDPOINT = 'https://bird.web.abc.com/oauth21/api/sector/tile/{sector_name}/12.0/RSRP/style.json'
-const DEFAULT_VISUALIZATION_STYLE_URL = 'https://bird.web.abc.com/oauth21/api/visualization/assets/styles/basic/style.json'
 const DEFAULT_METADATA_SECTOR_STYLE_URL = 'https://bird.web.abc.com/oauth21/api/metadata/sector/tile/style.json'
 const DEFAULT_COVERAGE_STYLE_URL = 'https://bird.web.abc.com/oauth21/api/vector/styles/all/style.json?coverageLayer={coverage_layer}'
 const DEFAULT_BBOX_COVERAGE_ENDPOINT = 'https://bird.web.abc.com/oauth21/api/bird/bbox/{min_lng}/{min_lat}/{max_lng}/{max_lat}/output.json?resolution=4.0'
@@ -194,6 +81,42 @@ interface ApiVisibilityEntry {
   label: string
   enabled: boolean
 }
+
+interface BasemapLayerEntry {
+  id: string
+  label: string
+  type: string
+  category: 'background' | 'road' | 'water' | 'other' | 'terrain'
+}
+
+const TERRAIN_TOGGLE_ID = '__terrain__'
+
+const normalizeBasemapLayerKey = (value: string): string => {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[-_]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+const FIXED_VISIBLE_BASEMAP_LAYER_KEYS = new Set<string>([
+  'water',
+  'highway path',
+  'highway minor',
+  'highway major casing',
+  'highway motorway inner',
+  'highway motorway bridge inner'
+])
+
+const TOGGLEABLE_BASEMAP_LAYER_KEYS = new Set<string>([
+  'building 3d',
+  'vegetation 3d'
+])
+
+const ALLOWED_BASEMAP_LAYER_KEYS = new Set<string>([
+  ...Array.from(FIXED_VISIBLE_BASEMAP_LAYER_KEYS),
+  ...Array.from(TOGGLEABLE_BASEMAP_LAYER_KEYS)
+])
 
 interface BBoxBounds {
   minLng: number
@@ -490,9 +413,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   const [show3DSectors, setShow3DSectors] = React.useState<boolean>(true)
   const [sectorScale, setSectorScale] = React.useState<number>(1)
   const terrainChangedRef = React.useRef<boolean>(false)
+  const terrainStyleRef = React.useRef<any | null>(null)
 
   const fallbackConfig = React.useMemo<Config>(() => ({
-    mapStyleUrl: '', // Use empty string to trigger default style object
+    mapStyleUrl: DEFAULT_BASEMAP_STYLE_URL,
     initialView: {
       center: DEFAULT_CENTER,
       zoom: DEFAULT_ZOOM,
@@ -514,10 +438,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   }, [config, fallbackConfig])
 
   const [authState, setAuthState] = React.useState<{ accessToken: string | null, expiresIn: number | null }>({ accessToken: null, expiresIn: null })
-  const [visualizationData, setVisualizationData] = React.useState<any>(null)
-  const [visualizationStatus, setVisualizationStatus] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [visualizationError, setVisualizationError] = React.useState<string | null>(null)
-  const [lastVisualizationUrl, setLastVisualizationUrl] = React.useState<string | null>(null)
 
   const [metadataStyleData, setMetadataStyleData] = React.useState<any>(null)
   const [metadataStyleStatus, setMetadataStyleStatus] = React.useState<'idle' | 'loading' | 'success' | 'error'>('idle')
@@ -695,6 +615,8 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
   const [showApiControls, setShowApiControls] = React.useState<boolean>(false)
   const [apiVisibility, setApiVisibility] = React.useState<Record<string, ApiVisibilityEntry>>({})
+  const [basemapLayers, setBasemapLayers] = React.useState<BasemapLayerEntry[]>([])
+  const [basemapLayerVisibility, setBasemapLayerVisibility] = React.useState<Record<string, boolean>>({})
 
   const [optimizationDrawEnabled, setOptimizationDrawEnabled] = React.useState<boolean>(false)
   const [optimizationBounds, setOptimizationBounds] = React.useState<BBoxBounds | null>(null)
@@ -832,7 +754,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       sector: 'Sector',
       bbox: 'BBox Coverage',
       coverage: 'Coverage',
-      viz: 'Vegetation',
       meta: 'Metadata'
     }
 
@@ -879,14 +800,263 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     return apiVisibility[normalizedKey]?.enabled ?? true
   }, [apiVisibility])
 
+  const isManagedBasemapLayer = React.useCallback((layerId: string): boolean => {
+    if (!layerId || typeof layerId !== 'string') {
+      return false
+    }
+
+    if (layerId === 'three-d-sectors-layer') {
+      return false
+    }
+
+    if (layerId.startsWith('map-widget-')) {
+      return false
+    }
+
+    if (layerId.includes('-geojson-')) {
+      return false
+    }
+
+    // Exclude runtime overlay layers generated from style overlays (coverage/meta/clicked-sector/etc)
+    if (layerId.includes('-lyr-')) {
+      return false
+    }
+
+    // Exclude IQI runtime overlay layers
+    if (layerId.startsWith('iqi-')) {
+      return false
+    }
+
+    if (/^(coverage|sector|meta|bbox)-lyr-/.test(layerId)) {
+      return false
+    }
+
+    if (/^(coverage|sector|meta|bbox)-src-/.test(layerId)) {
+      return false
+    }
+
+    if (layerId.startsWith('optimization-layer')) {
+      return false
+    }
+
+    return true
+  }, [])
+
+  const isAllowedBasemapLayer = React.useCallback((layerId: string): boolean => {
+    return ALLOWED_BASEMAP_LAYER_KEYS.has(normalizeBasemapLayerKey(layerId))
+  }, [])
+
+  const isToggleableBasemapLayer = React.useCallback((layerId: string): boolean => {
+    return TOGGLEABLE_BASEMAP_LAYER_KEYS.has(normalizeBasemapLayerKey(layerId))
+  }, [])
+
+  const classifyBasemapLayer = React.useCallback((layer: any): BasemapLayerEntry['category'] => {
+    const type = String(layer?.type ?? '').toLowerCase()
+    const id = String(layer?.id ?? '').toLowerCase()
+    const sourceLayer = String(layer?.['source-layer'] ?? '').toLowerCase()
+    const haystack = `${id} ${sourceLayer}`
+
+    if (type === 'background') {
+      return 'background'
+    }
+
+    if (haystack.includes('water') || haystack.includes('waterway')) {
+      return 'water'
+    }
+
+    const isRoadLike =
+      haystack.includes('road') ||
+      haystack.includes('street') ||
+      haystack.includes('highway') ||
+      haystack.includes('motorway') ||
+      haystack.includes('trunk') ||
+      haystack.includes('primary') ||
+      haystack.includes('secondary') ||
+      haystack.includes('tertiary') ||
+      haystack.includes('minor') ||
+      haystack.includes('transportation') ||
+      haystack.includes('bridge') ||
+      haystack.includes('tunnel') ||
+      haystack.includes('path')
+
+    if (isRoadLike) {
+      return 'road'
+    }
+
+    return 'other'
+  }, [])
+
+  const refreshBasemapLayerControls = React.useCallback(() => {
+    if (!mapRef.current) {
+      return
+    }
+
+    const map = mapRef.current
+    const styleLayers = map.getStyle()?.layers ?? []
+
+    const allManagedEntries: BasemapLayerEntry[] = styleLayers
+      .filter((layer: any) => isManagedBasemapLayer(String(layer?.id ?? '')))
+      .map((layer: any) => {
+        const id = String(layer.id)
+        const type = String(layer.type ?? '')
+        const label = id.replace(/[-_]+/g, ' ')
+        const category = classifyBasemapLayer(layer)
+        return { id, type, label, category }
+      })
+
+    const allowedEntries = allManagedEntries.filter((entry: BasemapLayerEntry) => isAllowedBasemapLayer(entry.id))
+    const toggleableEntries = allowedEntries.filter((entry: BasemapLayerEntry) => isToggleableBasemapLayer(entry.id))
+
+    const styleTerrain = (map.getStyle() as any)?.terrain
+    if (styleTerrain && !terrainStyleRef.current) {
+      terrainStyleRef.current = styleTerrain
+    }
+
+    const terrainEntry: BasemapLayerEntry | null = terrainStyleRef.current
+      ? {
+          id: TERRAIN_TOGGLE_ID,
+          label: 'terrain',
+          type: 'terrain',
+          category: 'terrain'
+        }
+      : null
+
+    setBasemapLayers(terrainEntry ? [...toggleableEntries, terrainEntry] : toggleableEntries)
+
+    setBasemapLayerVisibility((prev: Record<string, boolean>) => {
+      const next: Record<string, boolean> = {}
+
+      allManagedEntries.forEach((entry: BasemapLayerEntry) => {
+        const isAllowed = isAllowedBasemapLayer(entry.id)
+        const isToggleable = isToggleableBasemapLayer(entry.id)
+
+        const desiredVisible = !isAllowed
+          ? false
+          : isToggleable
+            ? (typeof prev[entry.id] === 'boolean' ? prev[entry.id] : true)
+            : true
+
+        if (isToggleable) {
+          next[entry.id] = desiredVisible
+        }
+
+        try {
+          map.setLayoutProperty(entry.id, 'visibility', desiredVisible ? 'visible' : 'none')
+        } catch (_ignored) {
+          // Layer may not be style-toggleable; ignore.
+        }
+      })
+
+      if (terrainStyleRef.current) {
+        const terrainEnabled = typeof prev[TERRAIN_TOGGLE_ID] === 'boolean' ? prev[TERRAIN_TOGGLE_ID] : false
+        next[TERRAIN_TOGGLE_ID] = terrainEnabled
+        try {
+          map.setTerrain(terrainEnabled ? terrainStyleRef.current : null)
+          terrainChangedRef.current = true
+        } catch (_ignored) {
+          // ignore terrain update errors
+        }
+      }
+
+      return next
+    })
+  }, [classifyBasemapLayer, isManagedBasemapLayer, isAllowedBasemapLayer, isToggleableBasemapLayer])
+
+  const setBasemapLayerVisible = React.useCallback((layerId: string, visible: boolean) => {
+    if (!mapRef.current) {
+      return
+    }
+
+    if (layerId === TERRAIN_TOGGLE_ID) {
+      try {
+        mapRef.current.setTerrain(visible ? terrainStyleRef.current : null)
+        terrainChangedRef.current = true
+      } catch (_ignored) {
+        // ignore terrain update errors
+      }
+      return
+    }
+
+    if (!mapRef.current.getLayer(layerId)) {
+      return
+    }
+
+    mapRef.current.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none')
+  }, [])
+
+  const applyMinimalBasemapPaint = React.useCallback((entry: BasemapLayerEntry) => {
+    if (!mapRef.current || !mapRef.current.getLayer(entry.id)) {
+      return
+    }
+
+    const map = mapRef.current
+
+    try {
+      if (entry.category === 'background' && entry.type === 'background') {
+        map.setPaintProperty(entry.id, 'background-color', '#ffffff')
+        return
+      }
+
+      if (entry.category === 'water') {
+        if (entry.type === 'fill') {
+          map.setPaintProperty(entry.id, 'fill-color', '#d9d9d9')
+        } else if (entry.type === 'line') {
+          map.setPaintProperty(entry.id, 'line-color', '#d0d0d0')
+        }
+        return
+      }
+
+      if (entry.category === 'road') {
+        if (entry.type === 'line') {
+          const roadColor = entry.id.toLowerCase().includes('casing') ? '#cfcfcf' : '#f2f2f2'
+          map.setPaintProperty(entry.id, 'line-color', roadColor)
+        } else if (entry.type === 'fill') {
+          map.setPaintProperty(entry.id, 'fill-color', '#f2f2f2')
+        }
+      }
+    } catch (_ignored) {
+      // Some style layers may have paint properties not compatible with this override.
+    }
+  }, [])
+
   React.useEffect(() => {
     // Seed known APIs so the list is visible before first successful fetch.
     registerApi('sector', 'Sector')
     registerApi('bbox', 'BBox Coverage')
     registerApi('coverage', 'Coverage')
-    registerApi('viz', 'Vegetation')
     registerApi('meta', 'Metadata')
   }, [registerApi])
+
+  React.useEffect(() => {
+    if (!mapReady || !mapRef.current) {
+      return
+    }
+
+    refreshBasemapLayerControls()
+
+    const map = mapRef.current
+    const handleStyleData = () => {
+      refreshBasemapLayerControls()
+    }
+
+    map.on('styledata', handleStyleData)
+    return () => {
+      map.off('styledata', handleStyleData)
+    }
+  }, [mapReady, refreshBasemapLayerControls])
+
+  React.useEffect(() => {
+    if (!mapReady || !mapRef.current) {
+      return
+    }
+
+    basemapLayers.forEach((layer: BasemapLayerEntry) => {
+      const desired = basemapLayerVisibility[layer.id]
+      if (typeof desired === 'boolean') {
+        setBasemapLayerVisible(layer.id, desired)
+      }
+    })
+  }, [mapReady, basemapLayers, basemapLayerVisibility, setBasemapLayerVisible])
 
   const clearOverlay = React.useCallback((overlayKey: string) => {
     if (!mapRef.current) {
@@ -1189,8 +1359,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
   const styleUrl = React.useMemo(() => {
     const configuredStyle = runtimeConfig?.mapStyleUrl?.trim()
-    // If configured style exists and is not empty, use it; otherwise use default style object
-    return configuredStyle && configuredStyle.length > 0 ? configuredStyle : DEFAULT_STYLE
+    return configuredStyle && configuredStyle.length > 0 ? configuredStyle : DEFAULT_BASEMAP_STYLE_URL
   }, [runtimeConfig?.mapStyleUrl])
 
   const pixelRatio = React.useMemo(() => {
@@ -2194,34 +2363,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     }
   }, [optimizationResultsArray])
 
-  const fetchVisualizationStyle = React.useCallback(async (activeToken: string) => {
-    const requestUrl = DEFAULT_VISUALIZATION_STYLE_URL
-    setVisualizationStatus('loading')
-    setVisualizationError(null)
-    setLastVisualizationUrl(requestUrl)
-
-    try {
-      const response = await fetch(requestUrl, {
-        headers: {
-          Authorization: `Bearer ${activeToken}`
-        }
-      })
-
-      if (!response.ok) {
-        throw new Error(`Visualization style request failed with status ${response.status}`)
-      }
-
-      const body = await response.json()
-      setVisualizationData(body)
-      setVisualizationStatus('success')
-    } catch (error) {
-      console.error('Failed to load visualization style', error)
-      setVisualizationData(null)
-      setVisualizationStatus('error')
-      setVisualizationError(error instanceof Error ? error.message : 'Unknown error')
-    }
-  }, [])
-
   const fetchMetadataSectorStyle = React.useCallback(async (activeToken: string) => {
     const requestUrl = DEFAULT_METADATA_SECTOR_STYLE_URL
     setMetadataStyleStatus('loading')
@@ -2412,10 +2553,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       return
     }
 
-    if (isApiEnabled('viz')) {
-      void fetchVisualizationStyle(authState.accessToken)
-    }
-
     if (isApiEnabled('meta')) {
       void fetchMetadataSectorStyle(authState.accessToken)
     }
@@ -2423,7 +2560,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     if (isApiEnabled('coverage')) {
       void fetchCoverageStyle(authState.accessToken, coverageLayer)
     }
-  }, [authState.accessToken, coverageLayer, fetchVisualizationStyle, fetchMetadataSectorStyle, fetchCoverageStyle, isApiEnabled])
+  }, [authState.accessToken, coverageLayer, fetchMetadataSectorStyle, fetchCoverageStyle, isApiEnabled])
 
   React.useEffect(() => {
     if (!mapReady || !mapRef.current || !coverageStyleData) {
@@ -2626,25 +2763,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   // ─── END IQI LAYER EFFECTS ─────────────────────────────────────────────────────
 
   React.useEffect(() => {
-    if (!mapReady || !mapRef.current || !visualizationData) {
-      return
-    }
-
-    if (!isApiEnabled('viz')) {
-      clearOverlay('viz')
-      return
-    }
-
-    try {
-      applyOverlayStyle('viz', visualizationData)
-    } catch (error) {
-      console.error('Failed to apply visualization style', error)
-      setVisualizationStatus('error')
-      setVisualizationError(error instanceof Error ? error.message : 'Failed to apply visualization style')
-    }
-  }, [mapReady, visualizationData, applyOverlayStyle, clearOverlay, isApiEnabled])
-
-  React.useEffect(() => {
     if (!mapReady || !mapRef.current || !metadataStyleData) {
       return
     }
@@ -2788,173 +2906,34 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       return
     }
 
-    const mapOptions: maplibregl.MapOptions & { antialias?: boolean } = {
-      container: mapContainerRef.current,
-      style: styleUrl,
-      center: DEFAULT_CENTER,
-      zoom: DEFAULT_ZOOM,
-      bearing: DEFAULT_BEARING,
-      pitch: DEFAULT_PITCH,
-      antialias: true,
-      pixelRatio,
-      transformRequest: (url: string) => {
-        const token = authTokenRef.current
-        if (!token) {
-          return { url }
-        }
+    let map: MapLibreMap | null = null
+    let disposed = false
+    let handleLoad: (() => void) | null = null
+    let handleMouseMove: ((e: maplibregl.MapLayerMouseEvent) => void) | null = null
+    let handleClick: ((e: maplibregl.MapLayerMouseEvent) => void) | null = null
+    let handleMoveEnd: (() => void) | null = null
+    let handleIdle: (() => void) | null = null
 
-        try {
-          const parsed = new URL(url, window.location.origin)
-          const host = parsed.hostname.toLowerCase()
-          const isbirdHost =
-            host === 'bird.web.abc.com' || host.endsWith('.bird.web.abc.com') ||
-            host === 'bird.research.abc.com' || host.endsWith('.bird.research.abc.com')
-          if (isbirdHost) {
-            return {
-              url,
-              headers: {
-                Authorization: `Bearer ${token}`
-              }
-            }
-          }
-        } catch (_ignored) {
-          // fall through to default
-        }
+    const cleanupMap = () => {
+      if (!map) {
+        return
+      }
 
-        return { url }
-      }
-    }
+      if (handleLoad) map.off('load', handleLoad)
+      if (handleMouseMove) map.off('mousemove', handleMouseMove)
+      if (handleClick) map.off('click', handleClick)
+      if (handleMoveEnd) map.off('moveend', handleMoveEnd)
+      if (handleIdle) map.off('idle', handleIdle)
 
-    const map = new maplibregl.Map(mapOptions)
-
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-left')
-    mapRef.current = map
-
-    const handleLoad = () => {
-      // Add 3D Sectors custom layer
-      if (!map.getLayer('three-d-sectors-layer')) {
-        console.log('[3D Sectors] Adding 3D sectors custom layer')
-        map.addLayer({
-          id: 'three-d-sectors-layer',
-          type: 'custom',
-          renderingMode: '3d',
-          onAdd: function (_map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext) {
-            console.log('[3D Sectors] Initializing 3D scene')
-            threeDSceneRef.current.initialize(_map, gl)
-            threeDSceneRef.current.setLayerProps(ThreeD.LayerType.Sectors, {
-              getSectorColor: getSectorColor,
-              visible: show3DSectors,
-              scale: sectorScale
-            })
-            // Initial update - metadata layer may not be loaded yet
-            console.log('[3D Sectors] Initial scene update (metadata layer may not be ready yet)')
-            const updated = threeDSceneRef.current.updateAfterMove()
-            if (updated) {
-              console.log('[3D Sectors] Initial update successful')
-              _map.triggerRepaint()
-            } else {
-              console.log('[3D Sectors] Waiting for metadata layer to load...')
-            }
-          },
-          render: function (_gl: WebGLRenderingContext | WebGL2RenderingContext, args: any) {
-            threeDSceneRef.current.render(args as CustomRenderMethodInput)
-          }
-        } as any)
-      }
-      
-      setMapReady(true)
-    }
-    
-    const handleMouseMove = (e: maplibregl.MapLayerMouseEvent) => {
-      const hoverStateChange = threeDSceneRef.current.hoverAtPoint(e.point)
-      if (hoverStateChange.changed()) {
-        const canvas = map.getCanvas()
-        if (hoverStateChange.selected()) {
-          canvas.style.cursor = 'pointer'
-        } else if (hoverStateChange.deselected()) {
-          canvas.style.cursor = ''
-        }
-        map.triggerRepaint()
-      }
-    }
-    
-    const handleClick = (e: maplibregl.MapLayerMouseEvent) => {
-      const selectionStateChange = threeDSceneRef.current.selectAtPoint(e.point)
-      if (selectionStateChange.changed()) {
-        if (selectionStateChange.after?.mesh?.userData) {
-          const sectorData = selectionStateChange.after.mesh.userData as SectorData
-          console.log('Selected sector:', sectorData.sector_name, sectorData)
-          setClickedSectorData(sectorData)
-          
-          // Fetch sector metadata first, then coverage layer
-          const token = authTokenRef.current
-          if (token && sectorData.sector_name) {
-            void fetchSectorMetadata(token, sectorData.sector_name).then((metadata: any) => {
-              if (metadata && metadata.current_tilt !== undefined) {
-                void fetchSectorStyle(token, sectorData.sector_name, metadata.current_tilt, 'RSRP')
-              }
-            })
-          }
-        }
-        map.triggerRepaint()
-      }
-    }
-    
-    const handleMoveEnd = () => {
-      let updateFromTerrain = false
-      if (terrainChangedRef.current) {
-        terrainChangedRef.current = false
-        updateFromTerrain = threeDSceneRef.current.updateAfterTerrainChange()
-      }
-      
-      const currentZoom = map.getZoom()
-      const minZoom = threeDSceneRef.current.minZoom
-      console.log(`[3D Sectors] Zoom: ${currentZoom.toFixed(1)} (min required: ${minZoom})`)
-      
-      const updated = threeDSceneRef.current.updateAfterMove()
-      if (updated || updateFromTerrain) {
-        console.log('[3D Sectors] Scene updated after map move')
-        map.triggerRepaint()
-      } else if (currentZoom < minZoom) {
-        console.log(`[3D Sectors] Zoom too low for 3D sectors (need ${minZoom}+)`)
-      }
-    }
-    
-    const handleIdle = () => {
-      let updated = false
-      if (terrainChangedRef.current) {
-        terrainChangedRef.current = false
-        updated = threeDSceneRef.current.updateAfterTerrainChange()
-      }
-      
-      if (updated) {
-        map.triggerRepaint()
-      }
-    }
-    
-    map.on('load', handleLoad)
-    map.on('mousemove', handleMouseMove)
-    map.on('click', handleClick)
-    map.on('moveend', handleMoveEnd)
-    map.on('idle', handleIdle)
-
-    return () => {
-      map.off('load', handleLoad)
-      map.off('mousemove', handleMouseMove)
-      map.off('click', handleClick)
-      map.off('moveend', handleMoveEnd)
-      map.off('idle', handleIdle)
-
-      // Clean up any overlay layers/sources we added.
       const overlays = Object.values(overlayRef.current) as Array<{ sourceIds: string[], layerIds: string[] }>
       overlays.forEach((overlay) => {
         overlay.layerIds.forEach((layerId: string) => {
-          if (map.getLayer(layerId)) {
+          if (map?.getLayer(layerId)) {
             map.removeLayer(layerId)
           }
         })
         overlay.sourceIds.forEach((sourceId: string) => {
-          if (map.getSource(sourceId)) {
+          if (map?.getSource(sourceId)) {
             map.removeSource(sourceId)
           }
         })
@@ -2963,9 +2942,187 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
       map.remove()
       mapRef.current = null
+      map = null
       setMapReady(false)
     }
-  }, [runtimeConfig?.initialView, styleUrl, pixelRatio])
+
+    const initializeMap = async () => {
+      if (isbirdProtectedUrl(styleUrl) && !authTokenRef.current) {
+        const token = await refreshToken()
+        if (!token || disposed || !mapContainerRef.current) {
+          return
+        }
+      }
+
+      if (disposed || !mapContainerRef.current) {
+        return
+      }
+
+      const mapOptions: maplibregl.MapOptions & { antialias?: boolean } = {
+        container: mapContainerRef.current,
+        style: styleUrl,
+        center: DEFAULT_CENTER,
+        zoom: DEFAULT_ZOOM,
+        bearing: DEFAULT_BEARING,
+        pitch: DEFAULT_PITCH,
+        antialias: true,
+        pixelRatio,
+        transformRequest: (url: string) => {
+          const token = authTokenRef.current
+          if (!token || !isbirdProtectedUrl(url)) {
+            return { url }
+          }
+
+          return {
+            url,
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        }
+      }
+
+      map = new maplibregl.Map(mapOptions)
+      map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-left')
+      mapRef.current = map
+
+      handleLoad = () => {
+        if (!map) {
+          return
+        }
+
+        if (!map.getLayer('three-d-sectors-layer')) {
+          console.log('[3D Sectors] Adding 3D sectors custom layer')
+          map.addLayer({
+            id: 'three-d-sectors-layer',
+            type: 'custom',
+            renderingMode: '3d',
+            onAdd: function (_map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext) {
+              console.log('[3D Sectors] Initializing 3D scene')
+              threeDSceneRef.current.initialize(_map, gl)
+              threeDSceneRef.current.setLayerProps(ThreeD.LayerType.Sectors, {
+                getSectorColor: getSectorColor,
+                visible: show3DSectors,
+                scale: sectorScale
+              })
+              console.log('[3D Sectors] Initial scene update (metadata layer may not be ready yet)')
+              const updated = threeDSceneRef.current.updateAfterMove()
+              if (updated) {
+                console.log('[3D Sectors] Initial update successful')
+                _map.triggerRepaint()
+              } else {
+                console.log('[3D Sectors] Waiting for metadata layer to load...')
+              }
+            },
+            render: function (_gl: WebGLRenderingContext | WebGL2RenderingContext, args: any) {
+              threeDSceneRef.current.render(args as CustomRenderMethodInput)
+            }
+          } as any)
+        }
+
+        setMapReady(true)
+      }
+
+      handleMouseMove = (e: maplibregl.MapLayerMouseEvent) => {
+        if (!map) {
+          return
+        }
+
+        const hoverStateChange = threeDSceneRef.current.hoverAtPoint(e.point)
+        if (hoverStateChange.changed()) {
+          const canvas = map.getCanvas()
+          if (hoverStateChange.selected()) {
+            canvas.style.cursor = 'pointer'
+          } else if (hoverStateChange.deselected()) {
+            canvas.style.cursor = ''
+          }
+          map.triggerRepaint()
+        }
+      }
+
+      handleClick = (e: maplibregl.MapLayerMouseEvent) => {
+        if (!map) {
+          return
+        }
+
+        const selectionStateChange = threeDSceneRef.current.selectAtPoint(e.point)
+        if (selectionStateChange.changed()) {
+          if (selectionStateChange.after?.mesh?.userData) {
+            const sectorData = selectionStateChange.after.mesh.userData as SectorData
+            console.log('Selected sector:', sectorData.sector_name, sectorData)
+            setClickedSectorData(sectorData)
+
+            const token = authTokenRef.current
+            if (token && sectorData.sector_name) {
+              void fetchSectorMetadata(token, sectorData.sector_name).then((metadata: any) => {
+                if (metadata && metadata.current_tilt !== undefined) {
+                  void fetchSectorStyle(token, sectorData.sector_name, metadata.current_tilt, 'RSRP')
+                }
+              })
+            }
+          }
+          map.triggerRepaint()
+        }
+      }
+
+      handleMoveEnd = () => {
+        if (!map) {
+          return
+        }
+
+        let updateFromTerrain = false
+        if (terrainChangedRef.current) {
+          terrainChangedRef.current = false
+          updateFromTerrain = threeDSceneRef.current.updateAfterTerrainChange()
+        }
+
+        const currentZoom = map.getZoom()
+        const minZoom = threeDSceneRef.current.minZoom
+        console.log(`[3D Sectors] Zoom: ${currentZoom.toFixed(1)} (min required: ${minZoom})`)
+
+        const updated = threeDSceneRef.current.updateAfterMove()
+        if (updated || updateFromTerrain) {
+          console.log('[3D Sectors] Scene updated after map move')
+          map.triggerRepaint()
+        } else if (currentZoom < minZoom) {
+          console.log(`[3D Sectors] Zoom too low for 3D sectors (need ${minZoom}+)`)
+        }
+      }
+
+      handleIdle = () => {
+        if (!map) {
+          return
+        }
+
+        let updated = false
+        if (terrainChangedRef.current) {
+          terrainChangedRef.current = false
+          updated = threeDSceneRef.current.updateAfterTerrainChange()
+        }
+
+        if (updated) {
+          map.triggerRepaint()
+        }
+      }
+
+      map.on('load', handleLoad)
+      map.on('mousemove', handleMouseMove)
+      map.on('click', handleClick)
+      map.on('moveend', handleMoveEnd)
+      map.on('idle', handleIdle)
+
+      if (disposed) {
+        cleanupMap()
+      }
+    }
+
+    void initializeMap()
+
+    return () => {
+      disposed = true
+      cleanupMap()
+    }
+  }, [runtimeConfig?.initialView, styleUrl, pixelRatio, refreshToken])
 
   // Optimization drawing effect - keeps box visible on map until cleared
   React.useEffect(() => {
@@ -3830,9 +3987,37 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               <strong style={{ fontSize: 12 }}>Additional Map Layers</strong>
             </div>
 
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 10, opacity: 0.8, marginBottom: 4 }}>Basemap Style Layers</div>
+              <div style={{ display: 'grid', gap: 4, maxHeight: 180, overflow: 'auto' }}>
+                {basemapLayers.map((layer: BasemapLayerEntry) => (
+                  <label key={layer.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '4px 8px', borderRadius: 4, background: 'rgba(0,0,0,0.3)', cursor: 'pointer', transition: 'all 0.2s' }}>
+                    <span style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={layer.id}>
+                      {layer.label}
+                    </span>
+                    <input
+                      type="checkbox"
+                      checked={basemapLayerVisibility[layer.id] ?? true}
+                      onChange={() => {
+                        const nextEnabled = !(basemapLayerVisibility[layer.id] ?? true)
+                        setBasemapLayerVisibility((prev: Record<string, boolean>) => ({
+                          ...prev,
+                          [layer.id]: nextEnabled
+                        }))
+                        setBasemapLayerVisible(layer.id, nextEnabled)
+                      }}
+                      style={{ cursor: 'pointer', width: 16, height: 16 }}
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ fontSize: 10, opacity: 0.8, marginBottom: 4 }}>API Overlays</div>
+
             <div style={{ display: 'grid', gap: 4, maxHeight: 180, overflow: 'auto' }}>
               {(Object.entries(apiVisibility) as Array<[string, ApiVisibilityEntry]>)
-                .filter(([key]) => key !== 'bbox' && !key.startsWith('optimization-layer'))
+                .filter(([key]) => key !== 'bbox' && key !== 'coverage' && key !== 'sector' && !key.startsWith('optimization-layer'))
                 .sort((a, b) => String(a[1]?.label ?? a[0]).localeCompare(String(b[1]?.label ?? b[0])))
                 .map(([key, entry]: [string, ApiVisibilityEntry]) => (
                   <label key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, padding: '4px 8px', borderRadius: 4, background: 'rgba(0,0,0,0.3)', cursor: 'pointer', transition: 'all 0.2s' }}>
@@ -3869,12 +4054,12 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       </div>
       )}
 
-      {/* Sector View Panel - Top Left */}
+      {/* Sector View Panel - Bottom Left of Loaded Results */}
       {clickedSectorData && (
         <div style={{
           position: 'absolute',
-          top: 50,
-          left: 8,
+          bottom: 8,
+          left: 'max(8px, calc(50% - 440px))',
           zIndex: 1000,
           background: 'linear-gradient(135deg, rgba(30,30,35,0.98) 0%, rgba(45,45,50,0.98) 100%)',
           border: '1px solid rgba(100,200,100,0.4)',
@@ -5108,7 +5293,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         <div style={{
           position: 'absolute',
           bottom: 8,
-          left: 'calc(50% + 150px)',
+          left: 'min(calc(100% - 208px), calc(50% + 160px))',
           zIndex: 999,
           background: 'rgba(0,0,0,0.75)',
           color: '#fff',
@@ -5261,7 +5446,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                 {layerType === 'user_density' && (
                   <>
                     <div style={{ fontSize: 9, marginBottom: 4, opacity: 0.8, fontWeight: 'bold' }}>
-                      User Density
+                      User Density | Downlink Volume (GB)
                     </div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                       {USER_DENSITY_LEGEND.map((item: { value: number, color: string, label: string }) => (
