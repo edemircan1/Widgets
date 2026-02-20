@@ -1,4 +1,4 @@
-import { React } from 'jimu-core'
+import { React, getAppStore } from 'jimu-core'
 import maplibregl, { type LayerSpecification, type Map as MapLibreMap, type StyleSpecification, type CustomRenderMethodInput } from 'maplibre-gl'
 import MapLibreWorker from 'maplibre-gl/dist/maplibre-gl-csp-worker'
 import { type IMConfig, type Config, type LayerConfig } from '../../config'
@@ -1043,35 +1043,32 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     }
   }, [])
 
-  // Fetch portal user identity on mount (cookie-based session auth)
+  // Get logged-in user identity from Experience Builder app store
   React.useEffect(() => {
-    const fetchPortalUser = async () => {
-      try {
-        const portalSelfUrl = 'https://egisportal.dev.abc.com/portal/sharing/rest/community/self?f=json'
-        console.log('[Portal] Fetching logged-in user from:', portalSelfUrl)
-        const response = await fetch(portalSelfUrl, {
-          method: 'GET',
-          credentials: 'include'
-        })
-        if (!response.ok) {
-          console.warn('[Portal] User fetch failed:', response.status, response.statusText)
-          return
-        }
-        const data = await response.json()
-        if (data?.username) {
-          const user = { username: data.username, fullName: data.fullName || data.username }
+    try {
+      const state = getAppStore().getState()
+      console.log('[Portal] App store state keys:', Object.keys(state))
+      const userInfo = state?.user
+      console.log('[Portal] state.user:', userInfo)
+      if (userInfo?.username) {
+        const user = { username: userInfo.username, fullName: userInfo.fullName || userInfo.username }
+        setPortalUser(user)
+        console.log('[Portal] Logged-in user:', user.fullName, '(' + user.username + ')')
+      } else {
+        // Try portalSelf as fallback
+        const portalSelf = state?.portalSelf
+        console.log('[Portal] state.portalSelf:', portalSelf)
+        if (portalSelf?.user?.username) {
+          const user = { username: portalSelf.user.username, fullName: portalSelf.user.fullName || portalSelf.user.username }
           setPortalUser(user)
-          console.log('[Portal] Logged-in user:', user.fullName, '(' + user.username + ')')
-        } else if (data?.error) {
-          console.warn('[Portal] API error:', data.error.message || data.error)
+          console.log('[Portal] Logged-in user (from portalSelf):', user.fullName, '(' + user.username + ')')
         } else {
-          console.warn('[Portal] No username in response. Keys:', Object.keys(data))
+          console.warn('[Portal] No user found in app store. Available state keys:', Object.keys(state))
         }
-      } catch (error) {
-        console.error('[Portal] Failed to fetch user:', error)
       }
+    } catch (error) {
+      console.error('[Portal] Failed to get user from app store:', error)
     }
-    void fetchPortalUser()
   }, [])
 
   React.useEffect(() => {
