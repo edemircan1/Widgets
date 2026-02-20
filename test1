@@ -5754,25 +5754,63 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                 {
                   title: 'RSRP',
                   delta: scores['Net RSRP Bin to Bin'] || 0,
-                  bars: [
-                    { label: 'Flipped Bad', value: scores['RSRP Good to Bad'] || 0, color: '#EF4444' },
-                    { label: 'Worse', value: (scores['RSRP Worse'] || 0) - (scores['RSRP Good to Bad'] || 0), color: '#F97316' },
-                    { label: 'Flipped Good', value: scores['RSRP Bad to Good'] || 0, color: '#22C55E' },
-                    { label: 'Improve', value: (scores['RSRP Improv'] || 0) - (scores['RSRP Bad to Good'] || 0), color: '#EAB308' },
+                  degradation: [
+                    { label: 'Flipped Bad', desc: 'Good to Bad', value: scores['RSRP Good to Bad'] || 0, color: '#EF4444' },
+                    { label: 'Worse', desc: 'Degraded', value: (scores['RSRP Worse'] || 0) - (scores['RSRP Good to Bad'] || 0), color: '#F97316' },
+                  ],
+                  improvement: [
+                    { label: 'Flipped Good', desc: 'Bad to Good', value: scores['RSRP Bad to Good'] || 0, color: '#EAB308' },
+                    { label: 'Improve', desc: 'Enhanced', value: (scores['RSRP Improv'] || 0) - (scores['RSRP Bad to Good'] || 0), color: '#22C55E' },
                   ]
                 },
                 {
                   title: 'SINR',
                   delta: scores['Net SINR Bin to Bin'] || 0,
-                  bars: [
-                    { label: 'Flipped Bad', value: scores['SINR Good to Bad'] || 0, color: '#EF4444' },
-                    { label: 'Worse', value: (scores['SINR Worse'] || 0) - (scores['SINR Good to Bad'] || 0), color: '#F97316' },
-                    { label: 'Flipped Good', value: scores['SINR Bad to Good'] || 0, color: '#22C55E' },
-                    { label: 'Improve', value: (scores['SINR Improv'] || 0) - (scores['SINR Bad to Good'] || 0), color: '#EAB308' },
+                  degradation: [
+                    { label: 'Flipped Bad', desc: 'Good to Bad', value: scores['SINR Good to Bad'] || 0, color: '#EF4444' },
+                    { label: 'Worse', desc: 'Degraded', value: (scores['SINR Worse'] || 0) - (scores['SINR Good to Bad'] || 0), color: '#F97316' },
+                  ],
+                  improvement: [
+                    { label: 'Flipped Good', desc: 'Bad to Good', value: scores['SINR Bad to Good'] || 0, color: '#EAB308' },
+                    { label: 'Improve', desc: 'Enhanced', value: (scores['SINR Improv'] || 0) - (scores['SINR Bad to Good'] || 0), color: '#22C55E' },
                   ]
                 }
               ]
-              const maxVal = Math.max(...sections.flatMap(s => s.bars.map(b => Math.abs(b.value))), 0.1)
+              const allBars = sections.flatMap(s => [...s.degradation, ...s.improvement])
+              const maxVal = Math.max(...allBars.map(b => Math.abs(b.value)), 0.1)
+
+              const renderBar = (bar: { label: string; desc: string; value: number; color: string }) => (
+                <div key={bar.label} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <div style={{ width: 82, textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 10, fontWeight: '700', color: bar.color, lineHeight: 1.1 }}>
+                      {bar.label}
+                    </div>
+                    <div style={{ fontSize: 8, color: 'rgba(255,255,255,0.4)', lineHeight: 1.2, marginTop: 1 }}>
+                      {bar.desc}
+                    </div>
+                  </div>
+                  <div style={{
+                    flex: 1, background: 'rgba(255,255,255,0.06)', borderRadius: 4,
+                    height: 20, position: 'relative', overflow: 'hidden'
+                  }}>
+                    <div style={{
+                      position: 'absolute', left: 0, top: 0, bottom: 0,
+                      width: `${Math.min((Math.abs(bar.value) / maxVal) * 100, 100)}%`,
+                      background: `linear-gradient(90deg, ${bar.color}CC, ${bar.color}66)`,
+                      borderRadius: 4,
+                      transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)',
+                      boxShadow: `inset 0 1px 0 rgba(255,255,255,0.15), 0 0 10px ${bar.color}22`
+                    }} />
+                    <div style={{
+                      position: 'relative', padding: '0 8px', lineHeight: '20px',
+                      fontSize: 10, fontWeight: '700', color: '#fff',
+                      textShadow: '0 1px 2px rgba(0,0,0,0.7)'
+                    }}>
+                      {bar.value.toFixed(2)}%
+                    </div>
+                  </div>
+                </div>
+              )
 
               return (
                 <div style={{ marginBottom: 12 }}>
@@ -5786,72 +5824,80 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                     }}>
                       {/* Section Header */}
                       <div style={{
-                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                        padding: '10px 14px',
-                        background: 'linear-gradient(135deg, rgba(100,181,246,0.12), rgba(100,181,246,0.04))',
+                        padding: '12px 14px 10px',
+                        background: 'linear-gradient(180deg, rgba(100,181,246,0.10), rgba(100,181,246,0.02))',
                         borderBottom: '1px solid rgba(255,255,255,0.06)'
                       }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <div style={{
-                            width: 6, height: 6, borderRadius: '50%',
-                            background: section.delta >= 0 ? '#22C55E' : '#EF4444',
-                            boxShadow: `0 0 6px ${section.delta >= 0 ? '#22C55E' : '#EF4444'}`
-                          }} />
-                          <span style={{ fontSize: 13, fontWeight: '700', letterSpacing: '1px', color: '#E0E0E0' }}>
-                            {section.title}
-                          </span>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                          <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                            <span style={{
+                              fontSize: 15, fontWeight: '800', letterSpacing: '1.5px',
+                              color: '#fff',
+                              textShadow: '0 0 20px rgba(100,181,246,0.3)'
+                            }}>
+                              {section.title}
+                            </span>
+                            <span style={{ fontSize: 9, fontWeight: '500', color: 'rgba(255,255,255,0.35)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                              Performance
+                            </span>
+                          </div>
                         </div>
                         <div style={{
-                          background: section.delta >= 0 ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
-                          border: `1px solid ${section.delta >= 0 ? 'rgba(34,197,94,0.35)' : 'rgba(239,68,68,0.35)'}`,
-                          borderRadius: 20, padding: '3px 12px', fontSize: 12, fontWeight: '800',
-                          color: section.delta >= 0 ? '#4ADE80' : '#F87171',
-                          letterSpacing: '0.3px'
+                          display: 'flex', alignItems: 'center', gap: 6,
+                          padding: '5px 10px',
+                          background: section.delta >= 0 ? 'rgba(34,197,94,0.08)' : 'rgba(239,68,68,0.08)',
+                          border: `1px solid ${section.delta >= 0 ? 'rgba(34,197,94,0.20)' : 'rgba(239,68,68,0.20)'}`,
+                          borderRadius: 6
                         }}>
-                          {section.title === 'RSRP' ? 'RSRP' : 'SINR'} Δ {section.delta >= 0 ? '+' : ''}{section.delta.toFixed(2)}%
+                          <span style={{ fontSize: 10, fontWeight: '600', color: 'rgba(255,255,255,0.5)' }}>Delta:</span>
+                          <span style={{
+                            fontSize: 14, fontWeight: '800',
+                            color: section.delta >= 0 ? '#4ADE80' : '#F87171',
+                            fontFamily: 'monospace'
+                          }}>
+                            {section.delta >= 0 ? '+' : ''}{section.delta.toFixed(2)}%
+                          </span>
+                          <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)' }}>Net Bin to Bin</span>
                         </div>
                       </div>
 
-                      {/* Chart Bars */}
-                      <div style={{ padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {section.bars.map((bar, bIdx) => (
-                          <React.Fragment key={bar.label}>
-                            {bIdx === 2 && (
-                              <div style={{
-                                height: 1,
-                                background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.12), transparent)',
-                                margin: '2px 0'
-                              }} />
-                            )}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <div style={{ width: 78, textAlign: 'right' }}>
-                                <div style={{ fontSize: 10, fontWeight: '600', color: bar.color, lineHeight: 1.3 }}>
-                                  {bar.label}
-                                </div>
-                              </div>
-                              <div style={{
-                                flex: 1, background: 'rgba(255,255,255,0.06)', borderRadius: 4,
-                                height: 22, position: 'relative', overflow: 'hidden'
-                              }}>
-                                <div style={{
-                                  position: 'absolute', left: 0, top: 0, bottom: 0,
-                                  width: `${Math.min((Math.abs(bar.value) / maxVal) * 100, 100)}%`,
-                                  background: `linear-gradient(90deg, ${bar.color}, ${bar.color}99)`,
-                                  borderRadius: 4,
-                                  transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)',
-                                  boxShadow: `0 0 12px ${bar.color}22`
-                                }} />
-                                <div style={{
-                                  position: 'relative', padding: '0 8px', lineHeight: '22px',
-                                  fontSize: 10, fontWeight: '700', color: '#fff',
-                                  textShadow: '0 1px 3px rgba(0,0,0,0.6)'
-                                }}>
-                                  {bar.value.toFixed(2)}%
-                                </div>
-                              </div>
-                            </div>
-                          </React.Fragment>
-                        ))}
+                      {/* Chart Content */}
+                      <div style={{ padding: '10px 14px 12px' }}>
+                        {/* Degradation Group */}
+                        <div style={{ marginBottom: 8 }}>
+                          <div style={{
+                            display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6
+                          }}>
+                            <svg width="10" height="10" viewBox="0 0 10 10" style={{ flexShrink: 0 }}>
+                              <path d="M5 2 L8.5 7.5 L1.5 7.5 Z" fill="#EF4444" opacity="0.9" />
+                            </svg>
+                            <span style={{
+                              fontSize: 9, fontWeight: '700', color: '#EF4444', letterSpacing: '1px', textTransform: 'uppercase', opacity: 0.9
+                            }}>
+                              Degradation
+                            </span>
+                            <div style={{ flex: 1, height: 1, background: 'rgba(239,68,68,0.15)' }} />
+                          </div>
+                          {section.degradation.map(bar => renderBar(bar))}
+                        </div>
+
+                        {/* Improvement Group */}
+                        <div>
+                          <div style={{
+                            display: 'flex', alignItems: 'center', gap: 5, marginBottom: 6
+                          }}>
+                            <svg width="10" height="10" viewBox="0 0 10 10" style={{ flexShrink: 0 }}>
+                              <path d="M5 8 L8.5 2.5 L1.5 2.5 Z" fill="#22C55E" opacity="0.9" />
+                            </svg>
+                            <span style={{
+                              fontSize: 9, fontWeight: '700', color: '#22C55E', letterSpacing: '1px', textTransform: 'uppercase', opacity: 0.9
+                            }}>
+                              Improvement
+                            </span>
+                            <div style={{ flex: 1, height: 1, background: 'rgba(34,197,94,0.15)' }} />
+                          </div>
+                          {section.improvement.map(bar => renderBar(bar))}
+                        </div>
                       </div>
                     </div>
                   ))}
