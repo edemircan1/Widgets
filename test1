@@ -702,6 +702,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
   // Portal user info
   const [portalUser, setPortalUser] = React.useState<{ username: string, fullName: string } | null>(null)
+  const [isOptoUser, setIsOptoUser] = React.useState<boolean>(false)
 
   // Optimization Hyperparameters
   const DEFAULT_HYPERPARAMETERS = React.useMemo(() => ({
@@ -1070,6 +1071,50 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       console.error('[Portal] Failed to get user from app store:', error)
     }
   }, [])
+
+  // Check if logged-in user belongs to the OptoUser group
+  React.useEffect(() => {
+    if (!portalUser) return
+    const checkGroupMembership = async () => {
+      try {
+        // Fetch token using same IQI token endpoint
+        const tokenResponse = await fetch('https://egisportal.dev.abc.com/egis-js-app/token', {
+          method: 'GET',
+          mode: 'cors',
+          cache: 'no-store'
+        })
+        if (!tokenResponse.ok) {
+          console.warn('[Portal] Token fetch failed for group check:', tokenResponse.status)
+          return
+        }
+        const tokenData = await tokenResponse.json()
+        const token = tokenData.access_token
+        if (!token) {
+          console.warn('[Portal] No token available for group check')
+          return
+        }
+
+        const groupUrl = `https://egisportal.dev.abc.com/egisweb/sharing/rest/community/groups/group1/userList?f=json&token=${encodeURIComponent(token)}`
+        console.log('[Portal] Fetching group user list...')
+        const groupResponse = await fetch(groupUrl, { method: 'GET', mode: 'cors' })
+        if (!groupResponse.ok) {
+          console.warn('[Portal] Group user list fetch failed:', groupResponse.status)
+          return
+        }
+        const groupData = await groupResponse.json()
+        console.log('[Portal] Group user list response:', groupData)
+
+        // Search for the logged-in user's fullName in the group list
+        const users: any[] = groupData?.users || groupData?.items || groupData?.members || []
+        const found = users.some((u: any) => u?.fullName === portalUser.fullName)
+        console.log('[Portal] User', portalUser.fullName, found ? 'IS in OptoUser group' : 'is NOT in OptoUser group')
+        setIsOptoUser(found)
+      } catch (error) {
+        console.error('[Portal] Failed to check group membership:', error)
+      }
+    }
+    void checkGroupMembership()
+  }, [portalUser])
 
   React.useEffect(() => {
     // Seed known APIs so the list is visible before first successful fetch.
@@ -4004,6 +4049,42 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           </div>
         </button>
       </div>
+
+      {/* User Badge - Top Right */}
+      {portalUser && (
+        <div style={{
+          position: 'absolute',
+          top: 8,
+          right: 8,
+          zIndex: 2,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 6,
+          background: 'rgba(0,0,0,0.7)',
+          color: '#fff',
+          padding: '6px 12px',
+          borderRadius: 20,
+          fontSize: 12,
+          fontWeight: 500,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          border: '1px solid rgba(255,255,255,0.15)'
+        }}>
+          <span style={{ fontSize: 14 }}>&#x1F464;</span>
+          <span>{portalUser.fullName}</span>
+          {isOptoUser && (
+            <span style={{
+              background: 'rgba(76,175,80,0.25)',
+              color: '#81c784',
+              fontSize: 10,
+              fontWeight: 600,
+              padding: '2px 6px',
+              borderRadius: 10,
+              border: '1px solid rgba(76,175,80,0.4)',
+              marginLeft: 2
+            }}>OptoUser</span>
+          )}
+        </div>
+      )}
 
       {/* Layer Controls Sidebar */}
       {showLayerControls && (
