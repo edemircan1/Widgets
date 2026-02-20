@@ -166,6 +166,7 @@ interface OptimizationResult {
     use_default_antenna_pabcerns_only: boolean
   }
   availableFrequencies?: number[]
+  submittedTime?: string // "time" field from the API response JSON (e.g. "Tue Feb 17 13:07:33 2026")
 }
 
 interface RecallFormState {
@@ -1866,7 +1867,21 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       })
 
       if (!response.ok) {
-        throw new Error(`Optimization request failed with status ${response.status}`)
+        // The API may return an HTML or text error message in the body for 400 responses
+        let errorMsg = `Optimization request failed with status ${response.status}`
+        try {
+          const errorBody = await response.text()
+          if (errorBody) {
+            // Strip HTML tags to extract the plain text message
+            const plainText = errorBody.replace(/<[^>]*>/g, '').trim()
+            if (plainText) {
+              errorMsg = plainText
+            }
+          }
+        } catch {
+          // Ignore body read errors, use default message
+        }
+        throw new Error(errorMsg)
       }
 
       const body = await response.json()
@@ -2286,6 +2301,9 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       const jobKey = `${sessionId}-${jobId}`
       const savedParams = submittedJobParamsRef.current[jobKey]
 
+      // Extract the submission time from the API response
+      const apiTime: string | undefined = body?.time
+
       const newResult: OptimizationResult = {
         id: generateUniqueId(),
         sessionId,
@@ -2293,9 +2311,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         bounds,
         data: body,
         timestamp: Date.now(),
-        label: `Submitted: ${new Date().toLocaleString()}`,
+        label: apiTime ? `Submitted: ${apiTime}` : `Submitted: ${new Date().toLocaleString()}`,
         color,
         source: 'submitted',
+        submittedTime: apiTime,
         // Store optimization parameters with this result - use saved params if available
         frequency: savedParams?.frequency ?? selectedOptimizationSector,
         networkType: savedParams?.networkType ?? selectedNetworkType,
@@ -2395,6 +2414,9 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       const colorIndex = optimizationResultsArray.length % RESULT_COLORS.length
       const color = RESULT_COLORS[colorIndex]
 
+      // Extract the original submission time from the API response
+      const apiTime: string | undefined = data?.time
+
       const newResult: OptimizationResult = {
         id: generateUniqueId(),
         sessionId: trimmedSessionId,
@@ -2402,11 +2424,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         bounds,
         data,
         timestamp: Date.now(),
-        label: `Recalled: ${new Date().toLocaleString()}`,
+        label: apiTime ? `Recalled: ${apiTime}` : `Recalled: ${new Date().toLocaleString()}`,
         color,
-        source: 'recalled'
-        // Recalled results don't have parameters stored initially
-        // They will be extracted from data if available
+        source: 'recalled',
+        submittedTime: apiTime
       }
 
       // Check if we've reached the limit of 4 results
@@ -5390,11 +5411,43 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               <div style={{ fontSize: 9, opacity: 0.7 }}>
                 <div>Session: {result.sessionId.substring(0, 12)}...</div>
                 <div>Job: {result.jobId.substring(0, 12)}...</div>
+                {result.submittedTime && (
+                  <div style={{ marginTop: 2, color: '#90CAF9' }}>Submitted on: {result.submittedTime}</div>
+                )}
                 <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
                   <div style={{ width: 12, height: 12, background: result.color, borderRadius: 2 }} />
                   <span>{result.source === 'submitted' ? 'Submitted' : 'Recalled'}</span>
                 </div>
               </div>
+
+              {/* View Results Button */}
+              <button
+                type="button"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation()
+                  setActiveResultIndex(idx)
+                  setShowResultsPanel(true)
+                }}
+                style={{
+                  width: '100%',
+                  marginTop: 6,
+                  padding: '4px 8px',
+                  fontSize: 9,
+                  fontWeight: '600',
+                  borderRadius: 3,
+                  border: activeResultIndex === idx && showResultsPanel
+                    ? '1px solid rgba(100,200,255,0.6)'
+                    : '1px solid rgba(255,255,255,0.25)',
+                  background: activeResultIndex === idx && showResultsPanel
+                    ? 'rgba(100,200,255,0.25)'
+                    : 'rgba(255,255,255,0.1)',
+                  color: activeResultIndex === idx && showResultsPanel ? '#90CAF9' : '#fff',
+                  cursor: activeResultIndex === idx && showResultsPanel ? 'default' : 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                {activeResultIndex === idx && showResultsPanel ? 'Viewing Results' : 'View Results'}
+              </button>
             </div>
           ))}
         </div>
@@ -5696,31 +5749,38 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
             
             {/* Viewing Section */}
             {activeResultIndex !== null && optimizationResultsArray[activeResultIndex] && (
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '6px 10px',
-                background: `linear-gradient(135deg, ${optimizationResultsArray[activeResultIndex].color}22, ${optimizationResultsArray[activeResultIndex].color}11)`,
-                borderRadius: 4,
-                border: `1px solid ${optimizationResultsArray[activeResultIndex].color}66`,
-                marginBottom: 8
-              }}>
+              <>
                 <div style={{
-                  width: 8,
-                  height: 8,
-                  background: optimizationResultsArray[activeResultIndex].color,
-                  borderRadius: '50%',
-                  flexShrink: 0,
-                  boxShadow: `0 0 8px ${optimizationResultsArray[activeResultIndex].color}`
-                }} />
-                <span style={{ fontSize: 10, fontWeight: '500', flex: 1 }}>
-                  {optimizationResultsArray[activeResultIndex].label}
-                </span>
-                <span style={{ fontSize: 8, opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                  {optimizationResultsArray[activeResultIndex].source === 'submitted' ? 'Submitted' : 'Recalled'}
-                </span>
-              </div>
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  padding: '6px 10px',
+                  background: `linear-gradient(135deg, ${optimizationResultsArray[activeResultIndex].color}22, ${optimizationResultsArray[activeResultIndex].color}11)`,
+                  borderRadius: 4,
+                  border: `1px solid ${optimizationResultsArray[activeResultIndex].color}66`,
+                  marginBottom: optimizationResultsArray[activeResultIndex].submittedTime ? 4 : 8
+                }}>
+                  <div style={{
+                    width: 8,
+                    height: 8,
+                    background: optimizationResultsArray[activeResultIndex].color,
+                    borderRadius: '50%',
+                    flexShrink: 0,
+                    boxShadow: `0 0 8px ${optimizationResultsArray[activeResultIndex].color}`
+                  }} />
+                  <span style={{ fontSize: 10, fontWeight: '500', flex: 1 }}>
+                    {optimizationResultsArray[activeResultIndex].label}
+                  </span>
+                  <span style={{ fontSize: 8, opacity: 0.6, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    {optimizationResultsArray[activeResultIndex].source === 'submitted' ? 'Submitted' : 'Recalled'}
+                  </span>
+                </div>
+                {optimizationResultsArray[activeResultIndex].submittedTime && (
+                  <div style={{ fontSize: 9, color: '#90CAF9', marginBottom: 8 }}>
+                    Submitted on: {optimizationResultsArray[activeResultIndex].submittedTime}
+                  </div>
+                )}
+              </>
             )}
             
             {/* Tilt Optimization Button */}
