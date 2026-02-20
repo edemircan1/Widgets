@@ -1867,15 +1867,28 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       })
 
       if (!response.ok) {
-        // The API may return an HTML or text error message in the body for 400 responses
+        // The API returns a raw HTTP response in the body for 400 errors,
+        // e.g. "HTTP/1.1 400 Bad Request\r\n...headers...\r\nConnection: close\r\n\r\nChoose smaller area"
+        // The actual user message comes after the blank line that separates headers from body.
         let errorMsg = `Optimization request failed with status ${response.status}`
         try {
           const errorBody = await response.text()
+          console.log('[Optimization] Error response body:', errorBody)
           if (errorBody) {
-            // Strip HTML tags to extract the plain text message
-            const plainText = errorBody.replace(/<[^>]*>/g, '').trim()
-            if (plainText) {
-              errorMsg = plainText
+            // Try to extract the message after the header/body separator (double newline)
+            const headerBodySplit = errorBody.split(/\r?\n\r?\n/)
+            if (headerBodySplit.length > 1) {
+              // The actual message is everything after the headers
+              const bodyPart = headerBodySplit.slice(1).join('\n').trim()
+              if (bodyPart) {
+                errorMsg = bodyPart
+              }
+            } else {
+              // No header separator found — use the whole text, stripped of HTML tags
+              const plainText = errorBody.replace(/<[^>]*>/g, '').trim()
+              if (plainText) {
+                errorMsg = plainText
+              }
             }
           }
         } catch {
@@ -2302,7 +2315,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       const savedParams = submittedJobParamsRef.current[jobKey]
 
       // Extract the submission time from the API response
-      const apiTime: string | undefined = body?.time
+      // The "time" field may be at the top level or nested under "results"
+      const apiTime: string | undefined = body?.time || body?.results?.time
+      console.log('[Optimization] API response top-level keys:', Object.keys(body || {}))
+      console.log('[Optimization] body.time:', body?.time, '| body.results?.time:', body?.results?.time)
+      console.log('[Optimization] Resolved apiTime:', apiTime)
 
       const newResult: OptimizationResult = {
         id: generateUniqueId(),
@@ -2415,7 +2432,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       const color = RESULT_COLORS[colorIndex]
 
       // Extract the original submission time from the API response
-      const apiTime: string | undefined = data?.time
+      // The "time" field may be at the top level or nested under "results"
+      const apiTime: string | undefined = data?.time || data?.results?.time
+      console.log('[Recall] API response top-level keys:', Object.keys(data || {}))
+      console.log('[Recall] data.time:', data?.time, '| data.results?.time:', data?.results?.time)
+      console.log('[Recall] Resolved apiTime:', apiTime)
 
       const newResult: OptimizationResult = {
         id: generateUniqueId(),
@@ -5099,6 +5120,36 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                     <strong>Results Error:</strong> {resultsError}
                   </div>
                 )}
+              </div>
+            ) : optimizationStatus === 'error' && optimizationError ? (
+              <div style={{ marginTop: 8, padding: '10px 12px', background: 'rgba(255,0,0,0.15)', borderRadius: 4, border: '1px solid rgba(255,80,80,0.4)' }}>
+                <div style={{ fontSize: 10, fontWeight: 'bold', color: '#F87171', marginBottom: 4 }}>Request Error</div>
+                <div style={{ fontSize: 10, color: '#ffb3b3', lineHeight: 1.4, wordBreak: 'break-word' }}>{optimizationError}</div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setOptimizationStatus('idle')
+                    setOptimizationError(null)
+                    setOptimizationBounds(null)
+                    optimizationBoundsRef.current = null
+                  }}
+                  style={{
+                    marginTop: 8,
+                    padding: '4px 10px',
+                    fontSize: 10,
+                    borderRadius: 3,
+                    border: '1px solid rgba(255,255,255,0.3)',
+                    background: 'rgba(255,255,255,0.1)',
+                    color: '#fff',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : optimizationStatus === 'loading' && optimizationBounds ? (
+              <div style={{ marginTop: 8, padding: '10px 12px', textAlign: 'center' }}>
+                <div style={{ fontSize: 10, color: '#90CAF9' }}>Loading frequencies...</div>
               </div>
             ) : activeResultIndex !== null && optimizationResultsArray[activeResultIndex] && optimizationResultsArray[activeResultIndex].source === 'submitted' ? (
               <div style={{ marginTop: 8 }}>
