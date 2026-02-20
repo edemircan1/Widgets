@@ -700,6 +700,9 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   const [visibleBoundingBoxes, setVisibleBoundingBoxes] = React.useState<Set<string>>(new Set())
   const [loadedResultsMinimized, setLoadedResultsMinimized] = React.useState<boolean>(false)
 
+  // Portal user info
+  const [portalUser, setPortalUser] = React.useState<{ username: string, fullName: string } | null>(null)
+
   // Optimization Hyperparameters
   const DEFAULT_HYPERPARAMETERS = React.useMemo(() => ({
     rsrp_threshold: -106,
@@ -1038,6 +1041,37 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     } catch (_ignored) {
       // Some style layers may have paint properties not compatible with this override.
     }
+  }, [])
+
+  // Fetch portal user identity on mount (cookie-based session auth)
+  React.useEffect(() => {
+    const fetchPortalUser = async () => {
+      try {
+        const portalSelfUrl = 'https://egisportal.dev.abc.com/portal/sharing/rest/community/self?f=json'
+        console.log('[Portal] Fetching logged-in user from:', portalSelfUrl)
+        const response = await fetch(portalSelfUrl, {
+          method: 'GET',
+          credentials: 'include'
+        })
+        if (!response.ok) {
+          console.warn('[Portal] User fetch failed:', response.status, response.statusText)
+          return
+        }
+        const data = await response.json()
+        if (data?.username) {
+          const user = { username: data.username, fullName: data.fullName || data.username }
+          setPortalUser(user)
+          console.log('[Portal] Logged-in user:', user.fullName, '(' + user.username + ')')
+        } else if (data?.error) {
+          console.warn('[Portal] API error:', data.error.message || data.error)
+        } else {
+          console.warn('[Portal] No username in response. Keys:', Object.keys(data))
+        }
+      } catch (error) {
+        console.error('[Portal] Failed to fetch user:', error)
+      }
+    }
+    void fetchPortalUser()
   }, [])
 
   React.useEffect(() => {
