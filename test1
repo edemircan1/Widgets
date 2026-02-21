@@ -4096,17 +4096,20 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           backdropFilter: 'blur(8px)'
         }}>
           <span style={{
-            fontSize: 12,
-            width: 20,
-            height: 20,
+            width: 18,
+            height: 18,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            background: 'rgba(33, 150, 243, 0.3)',
+            background: 'rgba(33, 150, 243, 0.25)',
             borderRadius: '50%',
-            border: '1px solid rgba(33, 150, 243, 0.5)',
-            color: '#64b5f6'
-          }}>&#x1F464;</span>
+            border: '1px solid rgba(33, 150, 243, 0.4)',
+            flexShrink: 0
+          }}>
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="#64b5f6">
+              <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/>
+            </svg>
+          </span>
           <span style={{ fontSize: 11 }}>{portalUser.fullName}</span>
           {isOptoUser && (
             <span style={{
@@ -4645,17 +4648,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                 padding: '16px 12px',
                 textAlign: 'center'
               }}>
-                <div style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: '50%',
-                  background: 'rgba(33, 150, 243, 0.15)',
-                  border: '1px solid rgba(33, 150, 243, 0.3)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 18
-                }}>ℹ️</div>
+                <div style={{ fontSize: 22 }}>ℹ️</div>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.9)', lineHeight: 1.5 }}>
                   User: <strong style={{ color: '#64b5f6' }}>{portalUser?.fullName ?? 'Unknown'}</strong> doesn't have privileges to use bird optimization feature.
                 </div>
@@ -5509,9 +5502,15 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                <span style={{ fontSize: 11, fontWeight: 'bold' }}>
-                  {result.label}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <div style={{ width: 8, height: 8, background: result.color, borderRadius: 2, flexShrink: 0 }} />
+                  <span style={{ fontSize: 11, fontWeight: 'bold' }}>
+                    {result.source === 'submitted' ? 'Submitted' : 'Recalled'}
+                  </span>
+                  {result.submittedTime && (
+                    <span style={{ fontSize: 10, fontWeight: 'normal', opacity: 0.7 }}>: {result.submittedTime}</span>
+                  )}
+                </div>
                 <div style={{ display: 'flex', gap: 4 }}>
                   {/* Toggle Bounding Box Visibility */}
                   <button
@@ -5620,13 +5619,6 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
               <div style={{ fontSize: 9, opacity: 0.7 }}>
                 <div>Session: {result.sessionId.substring(0, 12)}...</div>
                 <div>Job: {result.jobId.substring(0, 12)}...</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 2 }}>
-                  <div style={{ width: 10, height: 10, background: result.color, borderRadius: 2, flexShrink: 0 }} />
-                  <span style={{ color: '#fff', fontWeight: 500 }}>{result.source === 'submitted' ? 'Submitted' : 'Recalled'}</span>
-                  {result.submittedTime && (
-                    <span style={{ opacity: 0.7 }}>: {result.submittedTime}</span>
-                  )}
-                </div>
               </div>
 
               {/* View Results Button */}
@@ -5978,12 +5970,9 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                     boxShadow: `0 0 8px ${optimizationResultsArray[activeResultIndex].color}`
                   }} />
                   <span style={{ fontSize: 10, fontWeight: '500', flex: 1 }}>
-                    {optimizationResultsArray[activeResultIndex].label}
-                  </span>
-                  <span style={{ fontSize: 8, color: '#fff', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>
                     {optimizationResultsArray[activeResultIndex].source === 'submitted' ? 'Submitted' : 'Recalled'}
                     {optimizationResultsArray[activeResultIndex].submittedTime && (
-                      <span style={{ textTransform: 'none', letterSpacing: 'normal', opacity: 0.7 }}>: {optimizationResultsArray[activeResultIndex].submittedTime}</span>
+                      <span style={{ fontWeight: 'normal', opacity: 0.7 }}>: {optimizationResultsArray[activeResultIndex].submittedTime}</span>
                     )}
                   </span>
                 </div>
