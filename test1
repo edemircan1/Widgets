@@ -1094,25 +1094,44 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           return
         }
 
-        const groupUrl = `https://egisportal.dev.abc.com/egisweb/sharing/rest/community/groups/group1/userList?f=json&num=500&token=${encodeURIComponent(token)}`
-        console.log('[Portal] Fetching group user list...')
-        const groupResponse = await fetch(groupUrl, { method: 'GET', mode: 'cors' })
-        if (!groupResponse.ok) {
-          console.warn('[Portal] Group user list fetch failed:', groupResponse.status)
-          return
-        }
-        const groupData = await groupResponse.json()
-        console.log('[Portal] Group response top-level keys:', Object.keys(groupData))
-        const users: any[] = groupData?.users || []
-        console.log('[Portal] Total users in group:', users.length)
-        if (users.length > 0) {
-          console.log('[Portal] First user object sample:', JSON.stringify(users[0]))
-          console.log('[Portal] All fullNames:', users.map((u: any) => u?.fullName).filter(Boolean))
-        }
-        console.log('[Portal] Looking for fullName:', portalUser.fullName)
+        // Paginate through all users in the group (API caps at 100 per page)
+        const allUsers: any[] = []
+        let start = 1
+        const pageSize = 100
+        let foundEarly = false
 
-        // Search for the logged-in user's fullName in the users array
-        const found = users.some((u: any) => u?.fullName === portalUser.fullName)
+        console.log('[Portal] Fetching group user list (paginated)...')
+        while (true) {
+          const groupUrl = `https://egisportal.dev.abc.com/egisweb/sharing/rest/community/groups/group1/userList?f=json&start=${start}&num=${pageSize}&token=${encodeURIComponent(token)}`
+          const groupResponse = await fetch(groupUrl, { method: 'GET', mode: 'cors' })
+          if (!groupResponse.ok) {
+            console.warn('[Portal] Group user list fetch failed:', groupResponse.status)
+            break
+          }
+          const groupData = await groupResponse.json()
+          const pageUsers: any[] = groupData?.users || []
+          allUsers.push(...pageUsers)
+
+          // Check this page immediately — stop early if user is found
+          if (pageUsers.some((u: any) => u?.fullName === portalUser.fullName)) {
+            foundEarly = true
+            console.log('[Portal] Found user on page starting at', start)
+            break
+          }
+
+          const nextStart = groupData?.nextStart
+          console.log(`[Portal] Page start=${start}: ${pageUsers.length} users, nextStart=${nextStart}, total so far=${allUsers.length}`)
+
+          // nextStart === -1 means no more pages
+          if (!nextStart || nextStart === -1 || pageUsers.length === 0) {
+            break
+          }
+          start = nextStart
+        }
+
+        console.log('[Portal] Total users fetched:', allUsers.length)
+        console.log('[Portal] Looking for fullName:', portalUser.fullName)
+        const found = foundEarly || allUsers.some((u: any) => u?.fullName === portalUser.fullName)
         console.log('[Portal] User', portalUser.fullName, found ? 'IS in OptoUser group' : 'is NOT in OptoUser group')
         setIsOptoUser(found)
       } catch (error) {
