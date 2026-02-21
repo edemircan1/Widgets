@@ -6,6 +6,155 @@ import { ThreeD, type SectorData } from '../../lib/three-d-sectors'
 import cubeIcon from '../../../cube.svg'
 import logoImage from '../../../logo.png'
 
+// ─── LOGGER UTILITY ──────────────────────────────────────────────────────────
+// Replaces raw console.* calls. In production, debug/info are silenced.
+const IS_PRODUCTION = (() => {
+  try { return (globalThis as any)?.process?.env?.NODE_ENV === 'production' } catch { return false }
+})()
+
+const logger = {
+  debug: (...args: any[]) => { if (!IS_PRODUCTION) console.log(...args) },
+  info: (...args: any[]) => { if (!IS_PRODUCTION) console.info(...args) },
+  warn: (...args: any[]) => { console.warn(...args) },
+  error: (...args: any[]) => { console.error(...args) }
+}
+
+// ─── FETCH WITH TIMEOUT ──────────────────────────────────────────────────────
+// Wraps fetch() with a configurable timeout (default 30s) so hung requests
+// don't leave the UI stuck in a loading state indefinitely.
+const fetchWithTimeout = (
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = 30000
+): Promise<Response> => {
+  const controller = new AbortController()
+  const existingSignal = options.signal
+
+  // If caller already provided a signal, abort on either signal
+  if (existingSignal) {
+    if (existingSignal.aborted) {
+      controller.abort(existingSignal.reason)
+    } else {
+      existingSignal.addEventListener('abort', () => controller.abort(existingSignal.reason), { once: true })
+    }
+  }
+
+  const timeoutId = window.setTimeout(() => {
+    controller.abort(new DOMException('Request timed out', 'TimeoutError'))
+  }, timeoutMs)
+
+  return fetch(url, { ...options, signal: controller.signal }).finally(() => {
+    window.clearTimeout(timeoutId)
+  })
+}
+
+// ─── RETRY FETCH (GET only) ──────────────────────────────────────────────────
+// Retries idempotent GET requests with exponential backoff.
+// Does NOT retry POST/PUT/DELETE to avoid duplicate side effects.
+const retryFetch = async (
+  url: string,
+  options: RequestInit = {},
+  config: { retries?: number, backoffMs?: number, timeoutMs?: number } = {}
+): Promise<Response> => {
+  const { retries = 2, backoffMs = 1000, timeoutMs = 30000 } = config
+  const method = (options.method ?? 'GET').toUpperCase()
+
+  // Only retry idempotent methods
+  if (method !== 'GET' && method !== 'HEAD') {
+    return fetchWithTimeout(url, options, timeoutMs)
+  }
+
+  let lastError: Error | null = null
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetchWithTimeout(url, options, timeoutMs)
+      // Don't retry on client errors (4xx) - only on server/network errors
+      if (response.ok || (response.status >= 400 && response.status < 500)) {
+        return response
+      }
+      // Server error (5xx) - worth retrying
+      if (attempt < retries) {
+        const delay = backoffMs * Math.pow(2, attempt)
+        logger.warn(`[Retry] Attempt ${attempt + 1}/${retries} failed (${response.status}), retrying in ${delay}ms...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+        continue
+      }
+      return response
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      if (attempt < retries) {
+        // Don't retry if the request was intentionally aborted by the caller
+        if (lastError.name === 'AbortError' && !lastError.message?.includes('timed out')) {
+          throw lastError
+        }
+        const delay = backoffMs * Math.pow(2, attempt)
+        logger.warn(`[Retry] Attempt ${attempt + 1}/${retries} error (${lastError.message}), retrying in ${delay}ms...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+  throw lastError ?? new Error('Request failed after retries')
+}
+
+// ─── USER-FRIENDLY ERROR MAPPER ──────────────────────────────────────────────
+// Converts raw technical errors into messages suitable for end users.
+// The original error is always logged for developer debugging.
+type ErrorContext = 'token' | 'coverage' | 'sector' | 'metadata' | 'optimization' | 'iqi' | 'general'
+
+const getUserFriendlyError = (error: unknown, context: ErrorContext = 'general'): string => {
+  const raw = error instanceof Error ? error : new Error(String(error))
+  const msg = raw.message ?? ''
+
+  // Timeout
+  if (raw.name === 'TimeoutError' || msg.toLowerCase().includes('timed out') || msg.toLowerCase().includes('timeout')) {
+    return 'The request timed out. Please check your network connection and try again.'
+  }
+
+  // Network / CORS
+  if (raw instanceof TypeError || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('cors') || msg.toLowerCase().includes('failed to fetch')) {
+    return 'Unable to connect to the server. Please check your network connection and try again.'
+  }
+
+  // HTTP status-based messages
+  const statusMatch = msg.match(/status\s+(\d{3})/i)
+  if (statusMatch) {
+    const status = Number(statusMatch[1])
+    if (status === 401 || status === 403) {
+      return 'Your session may have expired. Please refresh the page to re-authenticate.'
+    }
+    if (status === 404) {
+      const labels: Record<ErrorContext, string> = {
+        token: 'Authentication service',
+        coverage: 'Coverage data',
+        sector: 'Sector data',
+        metadata: 'Metadata service',
+        optimization: 'Optimization service',
+        iqi: 'IQI data service',
+        general: 'The requested resource'
+      }
+      return `${labels[context]} was not found. It may have been moved or is temporarily unavailable.`
+    }
+    if (status === 429) {
+      return 'Too many requests. Please wait a moment and try again.'
+    }
+    if (status >= 500) {
+      return 'The server encountered an error. Please try again in a few moments.'
+    }
+  }
+
+  // Context-specific fallbacks
+  if (context === 'token') {
+    return 'Failed to authenticate. Some features may not work until authentication succeeds.'
+  }
+
+  // If the message is already user-friendly (short, no stack traces), pass it through
+  if (msg.length > 0 && msg.length < 200 && !msg.includes('at ') && !msg.includes('Error:')) {
+    return msg
+  }
+
+  return 'An unexpected error occurred. Please try again.'
+}
+
 interface MapLibreViewProps {
   config: IMConfig
 }
@@ -769,6 +918,35 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   const authTokenRef = React.useRef<string | null>(null)
   const [lastAccessToken, setLastAccessToken] = React.useState<string | null>(null)
 
+  // ─── Token expiry tracking (for pre-call validity check) ────────────────
+  const tokenExpiresAtRef = React.useRef<number>(0)
+
+  const isTokenValid = React.useCallback((): boolean => {
+    return Boolean(authTokenRef.current) && Date.now() < tokenExpiresAtRef.current
+  }, [])
+
+  // ─── Online status detection ────────────────────────────────────────────
+  const [isOnline, setIsOnline] = React.useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true
+  )
+
+  React.useEffect(() => {
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
+  // ─── AbortController refs for cancellable fetch operations ──────────────
+  const coverageFetchControllerRef = React.useRef<AbortController | null>(null)
+  const sectorStyleFetchControllerRef = React.useRef<AbortController | null>(null)
+  const metadataFetchControllerRef = React.useRef<AbortController | null>(null)
+  const sectorMetadataFetchControllerRef = React.useRef<AbortController | null>(null)
+
   const defaultApiLabel = React.useCallback((key: string): string => {
     const trimmed = (key ?? '').trim()
     if (trimmed.length === 0) {
@@ -1048,27 +1226,27 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
   React.useEffect(() => {
     try {
       const state = getAppStore().getState()
-      console.log('[Portal] App store state keys:', Object.keys(state))
+      logger.debug('[Portal] App store state keys:', Object.keys(state))
       const userInfo = state?.user
-      console.log('[Portal] state.user:', userInfo)
+      logger.debug('[Portal] state.user:', userInfo)
       if (userInfo?.username) {
         const user = { username: userInfo.username, fullName: userInfo.fullName || userInfo.username }
         setPortalUser(user)
-        console.log('[Portal] Logged-in user:', user.fullName, '(' + user.username + ')')
+        logger.debug('[Portal] Logged-in user:', user.fullName, '(' + user.username + ')')
       } else {
         // Try portalSelf as fallback
         const portalSelf = state?.portalSelf
-        console.log('[Portal] state.portalSelf:', portalSelf)
+        logger.debug('[Portal] state.portalSelf:', portalSelf)
         if (portalSelf?.user?.username) {
           const user = { username: portalSelf.user.username, fullName: portalSelf.user.fullName || portalSelf.user.username }
           setPortalUser(user)
-          console.log('[Portal] Logged-in user (from portalSelf):', user.fullName, '(' + user.username + ')')
+          logger.debug('[Portal] Logged-in user (from portalSelf):', user.fullName, '(' + user.username + ')')
         } else {
-          console.warn('[Portal] No user found in app store. Available state keys:', Object.keys(state))
+          logger.warn('[Portal] No user found in app store. Available state keys:', Object.keys(state))
         }
       }
     } catch (error) {
-      console.error('[Portal] Failed to get user from app store:', error)
+      logger.error('[Portal] Failed to get user from app store:', error)
     }
   }, [])
 
@@ -1084,13 +1262,13 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           cache: 'no-store'
         })
         if (!tokenResponse.ok) {
-          console.warn('[Portal] Token fetch failed for group check:', tokenResponse.status)
+          logger.warn('[Portal] Token fetch failed for group check:', tokenResponse.status)
           return
         }
         const tokenData = await tokenResponse.json()
         const token = tokenData.access_token
         if (!token) {
-          console.warn('[Portal] No token available for group check')
+          logger.warn('[Portal] No token available for group check')
           return
         }
 
@@ -1100,12 +1278,12 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         const pageSize = 100
         let foundEarly = false
 
-        console.log('[Portal] Fetching group user list (paginated)...')
+        logger.debug('[Portal] Fetching group user list (paginated)...')
         while (true) {
           const groupUrl = `https://egisportal.dev.abc.com/egisweb/sharing/rest/community/groups/group1/userList?f=json&start=${start}&num=${pageSize}&token=${encodeURIComponent(token)}`
           const groupResponse = await fetch(groupUrl, { method: 'GET', mode: 'cors' })
           if (!groupResponse.ok) {
-            console.warn('[Portal] Group user list fetch failed:', groupResponse.status)
+            logger.warn('[Portal] Group user list fetch failed:', groupResponse.status)
             break
           }
           const groupData = await groupResponse.json()
@@ -1115,12 +1293,12 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           // Check this page immediately — stop early if user is found
           if (pageUsers.some((u: any) => u?.fullName === portalUser.fullName)) {
             foundEarly = true
-            console.log('[Portal] Found user on page starting at', start)
+            logger.debug('[Portal] Found user on page starting at', start)
             break
           }
 
           const nextStart = groupData?.nextStart
-          console.log(`[Portal] Page start=${start}: ${pageUsers.length} users, nextStart=${nextStart}, total so far=${allUsers.length}`)
+          logger.debug(`[Portal] Page start=${start}: ${pageUsers.length} users, nextStart=${nextStart}, total so far=${allUsers.length}`)
 
           // nextStart === -1 means no more pages
           if (!nextStart || nextStart === -1 || pageUsers.length === 0) {
@@ -1129,13 +1307,13 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           start = nextStart
         }
 
-        console.log('[Portal] Total users fetched:', allUsers.length)
-        console.log('[Portal] Looking for fullName:', portalUser.fullName)
+        logger.debug('[Portal] Total users fetched:', allUsers.length)
+        logger.debug('[Portal] Looking for fullName:', portalUser.fullName)
         const found = foundEarly || allUsers.some((u: any) => u?.fullName === portalUser.fullName)
-        console.log('[Portal] User', portalUser.fullName, found ? 'IS in OptoUser group' : 'is NOT in OptoUser group')
+        logger.debug('[Portal] User', portalUser.fullName, found ? 'IS in OptoUser group' : 'is NOT in OptoUser group')
         setIsOptoUser(found)
       } catch (error) {
-        console.error('[Portal] Failed to check group membership:', error)
+        logger.error('[Portal] Failed to check group membership:', error)
       }
     }
     void checkGroupMembership()
@@ -1499,20 +1677,20 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setLastTokenUrlTried(DEFAULT_TOKEN_URL)
 
     try {
-      const response = await fetch(DEFAULT_TOKEN_URL, {
+      const response = await retryFetch(DEFAULT_TOKEN_URL, {
         method: 'GET',
         cache: 'no-store',
         headers: {
           Accept: 'application/json'
         }
-      })
+      }, { retries: 2, backoffMs: 1000, timeoutMs: 15000 })
 
       if (!response.ok) {
         throw new Error(`Token fetch failed with status ${response.status}`)
       }
 
       const tokenData = await response.json()
-      
+
       if (!tokenData.access_token || typeof tokenData.access_token !== 'string') {
         throw new Error('Invalid token response: missing or invalid access_token field')
       }
@@ -1522,6 +1700,8 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
       setAuthState({ accessToken, expiresIn })
       authTokenRef.current = accessToken
+      // Store absolute expiry time for pre-call validity checks
+      tokenExpiresAtRef.current = Date.now() + ((expiresIn - MIN_REFRESH_OFFSET_SECONDS) * 1000)
       setLastAccessToken(accessToken)
       setTokenStatus('success')
       setTokenError(null)
@@ -1537,17 +1717,13 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
       return accessToken
     } catch (error) {
-      console.error('Failed to fetch token from', DEFAULT_TOKEN_URL, error)
+      logger.error('[Token] Failed to fetch token from', DEFAULT_TOKEN_URL, error)
       setAuthState({ accessToken: null, expiresIn: null })
       authTokenRef.current = null
+      tokenExpiresAtRef.current = 0
       setLastAccessToken(null)
       setTokenStatus('error')
-      const message = error instanceof TypeError
-        ? 'Network or CORS error reaching token endpoint'
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error'
-      setTokenError(message)
+      setTokenError(getUserFriendlyError(error, 'token'))
 
       if (tokenRefreshTimerRef.current) {
         window.clearTimeout(tokenRefreshTimerRef.current)
@@ -1564,12 +1740,12 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     const IQI_TOKEN_URL = 'https://egisportal.dev.abc.com/egis-js-app/token'
     
     try {
-      const response = await fetch(IQI_TOKEN_URL, {
+      const response = await retryFetch(IQI_TOKEN_URL, {
         method: 'GET',
         mode: 'cors',
         cache: 'no-store'
-      })
-      
+      }, { retries: 2, backoffMs: 1000, timeoutMs: 15000 })
+
       if (!response.ok) {
         throw new Error(`IQI token fetch failed with status ${response.status}`)
       }
@@ -1597,10 +1773,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       
       return rawToken
     } catch (error) {
-      console.error('Failed to fetch IQI token from', IQI_TOKEN_URL, error)
+      logger.error('[IQI] Failed to fetch IQI token from', IQI_TOKEN_URL, error)
       setIqiToken(null)
       setIqiTokenExpiresAt(null)
-      setIqiError(error instanceof Error ? error.message : 'Failed to fetch IQI token')
+      setIqiError(getUserFriendlyError(error, 'iqi'))
       
       if (iqiTokenRefreshTimerRef.current) {
         window.clearTimeout(iqiTokenRefreshTimerRef.current)
@@ -1646,21 +1822,21 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       const res = await fetch(url, { signal })
 
       if (!res.ok) {
-        console.warn(`IQI: HTTP ${res.status} for cell, skipping`)
+        logger.warn(`IQI: HTTP ${res.status} for cell, skipping`)
         return { features: [], truncatedCells: 0, failedCells: 1 }
       }
 
       const text = await res.text()
 
       if (text.startsWith('<')) {
-        console.warn('IQI: HTML response received, skipping')
+        logger.warn('IQI: HTML response received, skipping')
         return { features: [], truncatedCells: 0, failedCells: 1 }
       }
 
       const json = JSON.parse(text)
 
       if (json.error) {
-        console.warn('IQI: ArcGIS error:', json.error.message)
+        logger.warn('IQI: ArcGIS error:', json.error.message)
         return { features: [], truncatedCells: 0, failedCells: 1 }
       }
 
@@ -1668,7 +1844,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
       // Adaptive subdivision: if we hit the record limit, subdivide into 4 quadrants
       if (features.length >= maxRecords && depth < 3) {
-        console.log(`IQI: Cell returned ${features.length} features (limit ${maxRecords}), subdividing at depth ${depth + 1}`)
+        logger.debug(`IQI: Cell returned ${features.length} features (limit ${maxRecords}), subdividing at depth ${depth + 1}`)
         const midX = (bbox.xmin + bbox.xmax) / 2
         const midY = (bbox.ymin + bbox.ymax) / 2
         const quadrants = [
@@ -1693,7 +1869,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
       // At max depth and still truncated — flag it
       if (features.length >= maxRecords && depth >= 3) {
-        console.warn(`IQI: Cell still truncated at max depth ${depth} (${features.length} features)`)
+        logger.warn(`IQI: Cell still truncated at max depth ${depth} (${features.length} features)`)
         return { features, truncatedCells: 1, failedCells: 0 }
       }
 
@@ -1702,7 +1878,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       if (err instanceof Error && err.name === 'AbortError') {
         return { features: [], truncatedCells: 0, failedCells: 0 }
       }
-      console.warn('IQI fetch error:', err)
+      logger.warn('IQI fetch error:', err)
       return { features: [], truncatedCells: 0, failedCells: 1 }
     }
   }
@@ -1941,7 +2117,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     } catch (error) {
       if (signal.aborted || generation !== iqiGenerationRef.current) return
 
-      console.error('IQI data fetch error:', error)
+      logger.error('IQI data fetch error:', error)
       setIqiStatus('error')
       setIqiError(error instanceof Error ? error.message : 'Failed to fetch IQI data')
       setIqiFeatureCount(0)
@@ -1958,14 +2134,14 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setLastOptimizationUrl(requestUrl)
 
     try {
-      const response = await fetch(requestUrl, {
+      const response = await fetchWithTimeout(requestUrl, {
         method: 'GET',
         cache: 'no-store',
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${activeToken}`
         }
-      })
+      }, 30000)
 
       if (!response.ok) {
         // The API returns a raw HTTP response in the body for 400 errors,
@@ -1974,7 +2150,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         let errorMsg = `Optimization request failed with status ${response.status}`
         try {
           const errorBody = await response.text()
-          console.log('[Optimization] Error response body:', errorBody)
+          logger.debug('[Optimization] Error response body:', errorBody)
           if (errorBody) {
             // Try to extract the message after the header/body separator (double newline)
             const headerBodySplit = errorBody.split(/\r?\n\r?\n/)
@@ -2009,15 +2185,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         throw new Error('Expected array response from optimization API')
       }
     } catch (error) {
-      console.error('Failed to load optimization sectors', error)
+      logger.error('[Optimization] Failed to load optimization sectors', error)
       setOptimizationSectors([])
       setOptimizationStatus('error')
-      const message = error instanceof TypeError
-        ? 'Network or CORS error reaching optimization endpoint'
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error'
-      setOptimizationError(message)
+      setOptimizationError(getUserFriendlyError(error, 'optimization'))
     }
   }, [])
 
@@ -2073,7 +2244,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setStatusMessage('')
     setSubmissionResponse(null)
     setLastSubmissionUrl(requestUrl)
-    console.log('[Optimization] Submitting job to:', requestUrl)
+    logger.debug('[Optimization] Submitting job to:', requestUrl)
 
     // Start polling the status URL immediately — the server begins
     // writing progress messages as soon as it receives the POST.
@@ -2094,9 +2265,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         ? { ...basePayload, ...hyperparameters }
         : basePayload
 
-      console.log('[Optimization] Request payload:', JSON.stringify(payload, null, 2))
+      logger.debug('[Optimization] Request payload:', JSON.stringify(payload, null, 2))
 
-      const response = await fetch(requestUrl, {
+      // POST is not retried to avoid duplicate job submissions
+      const response = await fetchWithTimeout(requestUrl, {
         method: 'POST',
         cache: 'no-store',
         headers: {
@@ -2105,21 +2277,21 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify(payload)
-      })
+      }, 90000)
 
-      console.log('[Optimization] Response status:', response.status, response.statusText)
+      logger.debug('[Optimization] Response status:', response.status, response.statusText)
 
       let body: any = null
       let bodyText = ''
       try {
         bodyText = await response.text()
-        console.log('[Optimization] Response body (raw):', bodyText)
+        logger.debug('[Optimization] Response body (raw):', bodyText.substring(0, 500))
         if (bodyText) {
           body = JSON.parse(bodyText)
-          console.log('[Optimization] Response body (parsed):', body)
+          logger.debug('[Optimization] Response body (parsed):', Object.keys(body || {}))
         }
       } catch (parseError) {
-        console.error('[Optimization] Failed to parse response:', parseError)
+        logger.error('[Optimization] Failed to parse response:', parseError)
         body = { raw: bodyText }
       }
 
@@ -2128,20 +2300,18 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       if (!response.ok) {
         // Don't throw — the statusUrl polling will pick up the real error
         // message from the API. Just log the HTTP status for debugging.
-        console.warn('[Optimization] POST returned', response.status, response.statusText, '— status polling will report the error')
+        logger.warn('[Optimization] POST returned', response.status, response.statusText, '— status polling will report the error')
         return
       }
 
-      console.log('[Optimization] Checking for results in response...')
-      console.log('[Optimization] Has results property?', !!body?.results)
-      console.log('[Optimization] Response keys:', Object.keys(body || {}))
+      logger.debug('[Optimization] Checking for results in response...')
 
       // Check if response contains complete results data (with histograms, scores, etc.)
       // If results exist, we can display them immediately without polling
       const hasCompleteResults = body?.results?.histograms && body?.results?.total_scores
 
       if (hasCompleteResults) {
-        console.log('[Optimization] ✓ Complete results found in submission response - NO POLLING NEEDED')
+        logger.info('[Optimization] Complete results found in submission response - NO POLLING NEEDED')
         // Stop polling — we already have everything
         if (pollingTimerRef.current) {
           window.clearTimeout(pollingTimerRef.current)
@@ -2152,17 +2322,13 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       }
       // Otherwise polling continues automatically via pollOptimizationStatus
     } catch (error) {
-      console.error('[Optimization] Failed to submit job:', error)
+      logger.error('[Optimization] Failed to submit job:', error)
       // Stop polling on submission error
       if (pollingTimerRef.current) {
         window.clearTimeout(pollingTimerRef.current)
         pollingTimerRef.current = null
       }
-      const message = error instanceof TypeError
-        ? 'Network or CORS error reaching optimization endpoint'
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error'
+      const message = getUserFriendlyError(error, 'optimization')
       setOptimizationJobError(message)
       setStatusMessage(message)
       setOptimizationJobStatus('error')
@@ -2173,22 +2339,34 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     const token = authTokenRef.current
 
     if (!token || !sessionId || !jobId) {
-      console.log('[Optimization] Polling aborted: missing token or IDs')
+      logger.debug('[Optimization] Polling aborted: missing token or IDs')
       return
+    }
+
+    // Check token validity before polling; refresh if expired
+    if (!isTokenValid()) {
+      logger.warn('[Optimization] Token expired before polling, refreshing...')
+      const newToken = await refreshToken()
+      if (!newToken) {
+        setStatusMessage('Authentication expired. Please refresh the page.')
+        setOptimizationJobError('Authentication expired. Please refresh the page.')
+        setOptimizationJobStatus('error')
+        return
+      }
     }
 
     const statusUrl = `https://bird.web.abc.com/oauth21/api/optimization/tile/${encodeURIComponent(sessionId)}/${encodeURIComponent(jobId)}/status.json`
     setLastStatusUrl(statusUrl)
 
     try {
-      const response = await fetch(statusUrl, {
+      const response = await fetchWithTimeout(statusUrl, {
         method: 'GET',
         cache: 'no-store',
         headers: {
           Accept: 'application/json',
-          Authorization: `Bearer ${token}`
+          Authorization: `Bearer ${authTokenRef.current}`
         }
-      })
+      }, 15000)
 
       let body: any = null
       try {
@@ -2198,13 +2376,12 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         // keep body null on parse failure
       }
 
-
       const status: string = body?.status ?? ''
       const message: string = body?.message ?? ''
 
       if (status === 'TRACE_ENDING') {
         // Job complete — fetch results
-        console.log('[Optimization] ✓ Job completed (TRACE_ENDING)')
+        logger.info('[Optimization] Job completed (TRACE_ENDING)')
         if (message) setStatusMessage(message)
         setOptimizationJobStatus('completed')
         if (pollingTimerRef.current) {
@@ -2214,7 +2391,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         setTimeout(() => { void fetchOptimizationResults() }, 500)
       } else if (status === 'ERROR' || status === 'FAILED') {
         // Job failed — show message, no more polling
-        console.log('[Optimization] ✗ Job failed:', status, message)
+        logger.warn('[Optimization] Job failed:', status, message)
         setStatusMessage(message || 'Optimization failed')
         setOptimizationJobError(message || 'Optimization failed')
         setOptimizationJobStatus('error')
@@ -2231,9 +2408,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         }, STATUS_POLL_INTERVAL_MS)
       }
     } catch (error) {
-      const message = error instanceof TypeError
-        ? 'Network or CORS error reaching status endpoint'
-        : error instanceof Error ? error.message : 'Unknown error'
+      const message = getUserFriendlyError(error, 'optimization')
       setStatusMessage(message)
       setOptimizationJobError(message)
       setOptimizationJobStatus('error')
@@ -2242,7 +2417,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         pollingTimerRef.current = null
       }
     }
-  }, [sessionId, jobId])
+  }, [sessionId, jobId, isTokenValid, refreshToken])
 
   // Cleanup polling timer on unmount
   React.useEffect(() => {
@@ -2313,14 +2488,14 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setOptimizationLayerError(null)
 
     try {
-      const response = await fetch(requestUrl, {
+      const response = await fetchWithTimeout(requestUrl, {
         method: 'GET',
         cache: 'no-store',
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${activeToken}`
         }
-      })
+      }, 30000)
 
       if (!response.ok) {
         throw new Error(`Layer request failed with status ${response.status}`)
@@ -2340,7 +2515,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         setOptimizationLayerStatus('success')
       }
     } catch (error) {
-      console.error('Failed to load optimization layer', error)
+      logger.error('[Layer] Failed to load optimization layer', error)
 
       // Update per-result status if we have an active result
       if (activeResultIndex !== null && optimizationResultsArray[activeResultIndex]) {
@@ -2350,12 +2525,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
       setOptimizationLayerData(null)
       setOptimizationLayerStatus('error')
-      const message = error instanceof TypeError
-        ? 'Network or CORS error reaching layer endpoint'
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error'
-      setOptimizationLayerError(message)
+      setOptimizationLayerError(getUserFriendlyError(error, 'optimization'))
     }
   }, [sessionId, jobId, activeResultIndex, optimizationResultsArray, clearOverlay, applyOverlayStyle])
 
@@ -2363,37 +2533,37 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     const token = authTokenRef.current
 
     if (!token || !sessionId || !jobId) {
-      console.log('[Optimization] Cannot fetch results: missing token or IDs')
+      logger.debug('[Optimization] Cannot fetch results: missing token or IDs')
       return
     }
 
     const resultsUrl = `https://bird.web.abc.com/oauth21/api/optimization/tile/${encodeURIComponent(sessionId)}/${encodeURIComponent(jobId)}/data.json`
-    console.log('[Optimization] Fetching results from:', resultsUrl)
+    logger.debug('[Optimization] Fetching results from:', resultsUrl)
     setResultsError(null)
 
     try {
-      const response = await fetch(resultsUrl, {
+      const response = await fetchWithTimeout(resultsUrl, {
         method: 'GET',
         cache: 'no-store',
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${token}`
         }
-      })
+      }, 30000)
 
-      console.log('[Optimization] Results response:', response.status, response.statusText)
+      logger.debug('[Optimization] Results response:', response.status, response.statusText)
 
       let body: any = null
       let bodyText = ''
       try {
         bodyText = await response.text()
-        console.log('[Optimization] Results body (raw, first 500 chars):', bodyText.substring(0, 500))
+        logger.debug('[Optimization] Results body (raw, first 500 chars):', bodyText.substring(0, 500))
         if (bodyText) {
           body = JSON.parse(bodyText)
-          console.log('[Optimization] Results parsed successfully')
+          logger.debug('[Optimization] Results parsed successfully')
         }
       } catch (parseError) {
-        console.error('[Optimization] Failed to parse results:', parseError)
+        logger.error('[Optimization] Failed to parse results:', parseError)
         throw new Error('Failed to parse results JSON')
       }
 
@@ -2418,9 +2588,9 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       // Extract the submission time from the API response
       // The "time" field may be at the top level or nested under "results"
       const apiTime: string | undefined = body?.time || body?.results?.time
-      console.log('[Optimization] API response top-level keys:', Object.keys(body || {}))
-      console.log('[Optimization] body.time:', body?.time, '| body.results?.time:', body?.results?.time)
-      console.log('[Optimization] Resolved apiTime:', apiTime)
+      logger.debug('[Optimization] API response top-level keys:', Object.keys(body || {}))
+      logger.debug('[Optimization] body.time:', body?.time, '| body.results?.time:', body?.results?.time)
+      logger.debug('[Optimization] Resolved apiTime:', apiTime)
 
       const newResult: OptimizationResult = {
         id: generateUniqueId(),
@@ -2447,7 +2617,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
       // Check if we've reached the limit of 4 results
       if (optimizationResultsArray.length >= 4) {
-        console.warn('[Optimization] Maximum of 4 results reached')
+        logger.warn('[Optimization] Maximum of 4 results reached')
         return
       }
 
@@ -2460,15 +2630,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       optimizationBoundsRef.current = null
       setOptimizationStatus('idle')
 
-      console.log('[Optimization] Results loaded successfully, added to array:', newResult.id)
+      logger.debug('[Optimization] Results loaded successfully, added to array:', newResult.id)
     } catch (error) {
-      console.error('[Optimization] Failed to fetch results:', error)
-      const message = error instanceof TypeError
-        ? 'Network or CORS error reaching results endpoint'
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error'
-      setResultsError(message)
+      logger.error('[Optimization] Failed to fetch results:', error)
+      setResultsError(getUserFriendlyError(error, 'optimization'))
     }
   }, [sessionId, jobId])
 
@@ -2491,19 +2656,19 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setRecallForm((prev: RecallFormState) => ({ ...prev, loading: true, error: null }))
 
     const resultsUrl = `https://bird.web.abc.com/oauth21/api/optimization/tile/${encodeURIComponent(trimmedSessionId)}/${encodeURIComponent(trimmedJobId)}/data.json`
-    console.log('[Recall] Fetching results from:', resultsUrl)
+    logger.debug('[Recall] Fetching results from:', resultsUrl)
 
     try {
-      const response = await fetch(resultsUrl, {
+      const response = await fetchWithTimeout(resultsUrl, {
         method: 'GET',
         cache: 'no-store',
         headers: {
           Accept: 'application/json',
           Authorization: `Bearer ${token}`
         }
-      })
+      }, 30000)
 
-      console.log('[Recall] Response:', response.status, response.statusText)
+      logger.debug('[Recall] Response:', response.status, response.statusText)
 
       if (!response.ok) {
         let body: any = {}
@@ -2518,7 +2683,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       }
 
       const data = await response.json()
-      console.log('[Recall] Results loaded successfully')
+      logger.debug('[Recall] Results loaded successfully')
 
       // Extract bounding box from results data if available, otherwise use placeholder
       const bounds: BBoxBounds = extractBoundsFromResults(data) || {
@@ -2535,9 +2700,9 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       // Extract the original submission time from the API response
       // The "time" field may be at the top level or nested under "results"
       const apiTime: string | undefined = data?.time || data?.results?.time
-      console.log('[Recall] API response top-level keys:', Object.keys(data || {}))
-      console.log('[Recall] data.time:', data?.time, '| data.results?.time:', data?.results?.time)
-      console.log('[Recall] Resolved apiTime:', apiTime)
+      logger.debug('[Recall] API response top-level keys:', Object.keys(data || {}))
+      logger.debug('[Recall] data.time:', data?.time, '| data.results?.time:', data?.results?.time)
+      logger.debug('[Recall] Resolved apiTime:', apiTime)
 
       const newResult: OptimizationResult = {
         id: generateUniqueId(),
@@ -2576,15 +2741,10 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       setRecallForm({ sessionId: '', jobId: '', error: null, loading: false })
       setRecallFormVisible(false)
 
-      console.log('[Recall] Result added to array:', newResult.id)
+      logger.debug('[Recall] Result added to array:', newResult.id)
     } catch (error) {
-      console.error('[Recall] Failed to fetch results:', error)
-      const message = error instanceof TypeError
-        ? 'Network or CORS error reaching results endpoint'
-        : error instanceof Error
-          ? error.message
-          : 'Unknown error'
-      setRecallForm((prev: RecallFormState) => ({ ...prev, error: message, loading: false }))
+      logger.error('[Recall] Failed to fetch results:', error)
+      setRecallForm((prev: RecallFormState) => ({ ...prev, error: getUserFriendlyError(error, 'optimization'), loading: false }))
     }
   }, [optimizationResultsArray])
 
@@ -2594,12 +2754,17 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setMetadataStyleError(null)
     setLastMetadataStyleUrl(requestUrl)
 
+    // Cancel any in-flight metadata fetch
+    if (metadataFetchControllerRef.current) {
+      metadataFetchControllerRef.current.abort()
+    }
+    metadataFetchControllerRef.current = new AbortController()
+
     try {
-      const response = await fetch(requestUrl, {
-        headers: {
-          Authorization: `Bearer ${activeToken}`
-        }
-      })
+      const response = await retryFetch(requestUrl, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+        signal: metadataFetchControllerRef.current.signal
+      }, { retries: 2, backoffMs: 1500, timeoutMs: 30000 })
 
       if (!response.ok) {
         throw new Error(`Metadata sector style request failed with status ${response.status}`)
@@ -2609,10 +2774,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       setMetadataStyleData(body)
       setMetadataStyleStatus('success')
     } catch (error) {
-      console.error('Failed to load metadata sector style', error)
+      if ((error as Error)?.name === 'AbortError') return
+      logger.error('[Metadata] Failed to load metadata sector style', error)
       setMetadataStyleData(null)
       setMetadataStyleStatus('error')
-      setMetadataStyleError(error instanceof Error ? error.message : 'Unknown error')
+      setMetadataStyleError(getUserFriendlyError(error, 'metadata'))
     }
   }, [])
 
@@ -2622,12 +2788,17 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setCoverageStyleError(null)
     setLastCoverageStyleUrl(requestUrl)
 
+    // Cancel any in-flight coverage fetch (prevents stale responses from overwriting newer ones)
+    if (coverageFetchControllerRef.current) {
+      coverageFetchControllerRef.current.abort()
+    }
+    coverageFetchControllerRef.current = new AbortController()
+
     try {
-      const response = await fetch(requestUrl, {
-        headers: {
-          Authorization: `Bearer ${activeToken}`
-        }
-      })
+      const response = await retryFetch(requestUrl, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+        signal: coverageFetchControllerRef.current.signal
+      }, { retries: 2, backoffMs: 1500, timeoutMs: 30000 })
 
       if (!response.ok) {
         throw new Error(`Coverage style request failed with status ${response.status}`)
@@ -2637,10 +2808,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       setCoverageStyleData(body)
       setCoverageStyleStatus('success')
     } catch (error) {
-      console.error('Failed to load coverage style', error)
+      if ((error as Error)?.name === 'AbortError') return
+      logger.error('[Coverage] Failed to load coverage style', error)
       setCoverageStyleData(null)
       setCoverageStyleStatus('error')
-      setCoverageStyleError(error instanceof Error ? error.message : 'Unknown error')
+      setCoverageStyleError(getUserFriendlyError(error, 'coverage'))
     }
   }, [])
 
@@ -2649,12 +2821,17 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setSectorMetadataStatus('loading')
     setSectorMetadataError(null)
 
+    // Cancel any in-flight sector metadata fetch
+    if (sectorMetadataFetchControllerRef.current) {
+      sectorMetadataFetchControllerRef.current.abort()
+    }
+    sectorMetadataFetchControllerRef.current = new AbortController()
+
     try {
-      const response = await fetch(metadataUrl, {
-        headers: {
-          Authorization: `Bearer ${activeToken}`
-        }
-      })
+      const response = await retryFetch(metadataUrl, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+        signal: sectorMetadataFetchControllerRef.current.signal
+      }, { retries: 2, backoffMs: 1000, timeoutMs: 20000 })
 
       if (!response.ok) {
         throw new Error(`Sector metadata request failed with status ${response.status}`)
@@ -2669,10 +2846,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       }
       return body
     } catch (error) {
-      console.error('Failed to load sector metadata', error)
+      if ((error as Error)?.name === 'AbortError') return null
+      logger.error('[Sector] Failed to load sector metadata', error)
       setSectorMetadata(null)
       setSectorMetadataStatus('error')
-      setSectorMetadataError(error instanceof Error ? error.message : 'Unknown error')
+      setSectorMetadataError(getUserFriendlyError(error, 'sector'))
       return null
     }
   }, [])
@@ -2683,12 +2861,17 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     setSectorStyleError(null)
     setLastSectorStyleUrl(requestUrl)
 
+    // Cancel any in-flight sector style fetch
+    if (sectorStyleFetchControllerRef.current) {
+      sectorStyleFetchControllerRef.current.abort()
+    }
+    sectorStyleFetchControllerRef.current = new AbortController()
+
     try {
-      const response = await fetch(requestUrl, {
-        headers: {
-          Authorization: `Bearer ${activeToken}`
-        }
-      })
+      const response = await retryFetch(requestUrl, {
+        headers: { Authorization: `Bearer ${activeToken}` },
+        signal: sectorStyleFetchControllerRef.current.signal
+      }, { retries: 1, backoffMs: 1000, timeoutMs: 20000 })
 
       if (!response.ok) {
         throw new Error(`Sector style request failed with status ${response.status}`)
@@ -2698,10 +2881,11 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       setSectorStyleData(body)
       setSectorStyleStatus('success')
     } catch (error) {
-      console.error('Failed to load sector style', error)
+      if ((error as Error)?.name === 'AbortError') return
+      logger.error('[Sector] Failed to load sector style', error)
       setSectorStyleData(null)
       setSectorStyleStatus('error')
-      setSectorStyleError(error instanceof Error ? error.message : 'Unknown error')
+      setSectorStyleError(getUserFriendlyError(error, 'sector'))
     }
   }, [])
 
@@ -2813,7 +2997,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         }
       }
     } catch (error) {
-      console.error('Failed to apply coverage style', error)
+      logger.error('Failed to apply coverage style', error)
       setCoverageStyleStatus('error')
       setCoverageStyleError(error instanceof Error ? error.message : 'Failed to apply coverage style')
     }
@@ -3008,20 +3192,20 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
     try {
       applyOverlayStyle('meta', metadataStyleData)
-      console.log('[3D Sectors] Metadata layer loaded, triggering 3D scene update')
+      logger.debug('[3D Sectors] Metadata layer loaded, triggering 3D scene update')
       
       // Trigger 3D sectors to update after metadata layer is added
       setTimeout(() => {
         if (mapRef.current && show3DSectors) {
           const updated = threeDSceneRef.current.updateAfterMove()
           if (updated) {
-            console.log('[3D Sectors] Scene updated after metadata load')
+            logger.debug('[3D Sectors] Scene updated after metadata load')
             mapRef.current.triggerRepaint()
           }
         }
       }, 500)
     } catch (error) {
-      console.error('Failed to apply metadata sector style', error)
+      logger.error('Failed to apply metadata sector style', error)
       setMetadataStyleStatus('error')
       setMetadataStyleError(error instanceof Error ? error.message : 'Failed to apply metadata sector style')
     }
@@ -3040,7 +3224,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       
       applyOverlayStyle('clicked-sector', sectorStyleData)
     } catch (error) {
-      console.error('Failed to apply sector style', error)
+      logger.error('Failed to apply sector style', error)
       setSectorStyleStatus('error')
       setSectorStyleError(error instanceof Error ? error.message : 'Failed to apply sector style')
     }
@@ -3065,7 +3249,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
           }
         }
       } catch (error) {
-        console.error('Failed to re-apply coverage style', error)
+        logger.error('Failed to re-apply coverage style', error)
       }
     }
   }, [clickedSectorData, sectorStyleData, coverageStyleData, mapReady, applyOverlayStyle, coverageVisible])
@@ -3125,7 +3309,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
     const handleError = (event: any) => {
       const message = event?.error?.message || 'Map error'
-      console.error('MapLibre error event', event)
+      logger.error('MapLibre error event', event)
       setLastMapError(message)
     }
 
@@ -3226,26 +3410,26 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         }
 
         if (!map.getLayer('three-d-sectors-layer')) {
-          console.log('[3D Sectors] Adding 3D sectors custom layer')
+          logger.debug('[3D Sectors] Adding 3D sectors custom layer')
           map.addLayer({
             id: 'three-d-sectors-layer',
             type: 'custom',
             renderingMode: '3d',
             onAdd: function (_map: MapLibreMap, gl: WebGLRenderingContext | WebGL2RenderingContext) {
-              console.log('[3D Sectors] Initializing 3D scene')
+              logger.debug('[3D Sectors] Initializing 3D scene')
               threeDSceneRef.current.initialize(_map, gl)
               threeDSceneRef.current.setLayerProps(ThreeD.LayerType.Sectors, {
                 getSectorColor: getSectorColor,
                 visible: show3DSectors,
                 scale: sectorScale
               })
-              console.log('[3D Sectors] Initial scene update (metadata layer may not be ready yet)')
+              logger.debug('[3D Sectors] Initial scene update (metadata layer may not be ready yet)')
               const updated = threeDSceneRef.current.updateAfterMove()
               if (updated) {
-                console.log('[3D Sectors] Initial update successful')
+                logger.debug('[3D Sectors] Initial update successful')
                 _map.triggerRepaint()
               } else {
-                console.log('[3D Sectors] Waiting for metadata layer to load...')
+                logger.debug('[3D Sectors] Waiting for metadata layer to load...')
               }
             },
             render: function (_gl: WebGLRenderingContext | WebGL2RenderingContext, args: any) {
@@ -3283,7 +3467,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         if (selectionStateChange.changed()) {
           if (selectionStateChange.after?.mesh?.userData) {
             const sectorData = selectionStateChange.after.mesh.userData as SectorData
-            console.log('Selected sector:', sectorData.sector_name, sectorData)
+            logger.debug('Selected sector:', sectorData.sector_name, sectorData)
             setClickedSectorData(sectorData)
 
             const token = authTokenRef.current
@@ -3312,14 +3496,14 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
 
         const currentZoom = map.getZoom()
         const minZoom = threeDSceneRef.current.minZoom
-        console.log(`[3D Sectors] Zoom: ${currentZoom.toFixed(1)} (min required: ${minZoom})`)
+        logger.debug(`[3D Sectors] Zoom: ${currentZoom.toFixed(1)} (min required: ${minZoom})`)
 
         const updated = threeDSceneRef.current.updateAfterMove()
         if (updated || updateFromTerrain) {
-          console.log('[3D Sectors] Scene updated after map move')
+          logger.debug('[3D Sectors] Scene updated after map move')
           map.triggerRepaint()
         } else if (currentZoom < minZoom) {
-          console.log(`[3D Sectors] Zoom too low for 3D sectors (need ${minZoom}+)`)
+          logger.debug(`[3D Sectors] Zoom too low for 3D sectors (need ${minZoom}+)`)
         }
       }
 
@@ -3684,7 +3868,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         }
       )
     } catch (error) {
-      console.error('[Auto-zoom] Failed to fit bounds:', error)
+      logger.error('[Auto-zoom] Failed to fit bounds:', error)
     }
   }, [mapReady, activeResultIndex, optimizationResultsArray])
 
@@ -3718,7 +3902,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
         setOptimizationSectors([...activeResult.availableFrequencies])
       }
 
-      console.log('[Parameter Switch] Loaded parameters for result:', activeResult.id, {
+      logger.debug('[Parameter Switch] Loaded parameters for result:', activeResult.id, {
         frequency: activeResult.frequency,
         networkType: activeResult.networkType
       })
@@ -3855,7 +4039,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
       return
     }
 
-    console.log('[3D Sectors] Visibility:', show3DSectors, 'Scale:', sectorScale)
+    logger.debug('[3D Sectors] Visibility:', show3DSectors, 'Scale:', sectorScale)
     const propChanges = threeDSceneRef.current.setLayerProps(ThreeD.LayerType.Sectors, {
       getSectorColor: getSectorColor,
       visible: show3DSectors,
@@ -3863,7 +4047,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
     })
     const repaintableChange = threeDSceneRef.current.updateAfterPropsChanges(ThreeD.LayerType.Sectors, propChanges)
     if (repaintableChange) {
-      console.log('[3D Sectors] Props changed, triggering repaint')
+      logger.debug('[3D Sectors] Props changed, triggering repaint')
       mapRef.current.triggerRepaint()
     }
   }, [mapReady, show3DSectors, sectorScale, getSectorColor])
@@ -3880,8 +4064,107 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
             0%   { left: -50%; }
             100% { left: 110%; }
           }
+          @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+          }
+          @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+          }
         `}
       </style>
+
+      {/* Initial loading overlay — shown until map + auth are ready */}
+      {(!mapReady || tokenStatus === 'loading') && tokenStatus !== 'error' && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          zIndex: 50,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(10,14,20,0.92)',
+          animation: 'fadeIn 0.3s ease',
+          gap: 16
+        }}>
+          <div style={{
+            width: 32,
+            height: 32,
+            border: '3px solid rgba(79,195,247,0.2)',
+            borderTop: '3px solid #4fc3f7',
+            borderRadius: '50%',
+            animation: 'spinLoader 0.8s linear infinite'
+          }} />
+          <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: 500 }}>
+            {!mapReady ? 'Loading map...' : 'Authenticating...'}
+          </div>
+        </div>
+      )}
+
+      {/* Offline detection banner */}
+      {!isOnline && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 40,
+          background: 'rgba(255,152,0,0.95)',
+          color: '#fff',
+          textAlign: 'center',
+          padding: '6px 12px',
+          fontSize: 12,
+          fontWeight: 600,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          animation: 'fadeIn 0.3s ease'
+        }}>
+          You are offline. Some features may not work until your connection is restored.
+        </div>
+      )}
+
+      {/* Auth failure banner */}
+      {tokenStatus === 'error' && (
+        <div style={{
+          position: 'absolute',
+          top: !isOnline ? 30 : 0,
+          left: 0,
+          right: 0,
+          zIndex: 39,
+          background: 'rgba(239,83,80,0.95)',
+          color: '#fff',
+          textAlign: 'center',
+          padding: '6px 12px',
+          fontSize: 12,
+          fontWeight: 600,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 8,
+          animation: 'fadeIn 0.3s ease'
+        }}>
+          <span>{tokenError || 'Authentication failed. Some features may be unavailable.'}</span>
+          <button
+            type="button"
+            onClick={() => { void refreshToken() }}
+            style={{
+              padding: '2px 10px',
+              borderRadius: 3,
+              border: '1px solid rgba(255,255,255,0.5)',
+              background: 'rgba(255,255,255,0.15)',
+              color: '#fff',
+              cursor: 'pointer',
+              fontSize: 11,
+              fontWeight: 600
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
       {(optimizationJobStatus === 'submitting' || optimizationJobStatus === 'polling' || optimizationJobStatus === 'error') && (
         <div style={{
           position: 'absolute',
@@ -5234,7 +5517,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                       onClick={() => {
                         const text = `Session ID: ${sessionId}, Job ID: ${jobId}`
                         navigator.clipboard.writeText(text)
-                        console.log('IDs copied:', text)
+                        logger.debug('IDs copied:', text)
                       }}
                       style={{
                         width: '100%',
@@ -5261,7 +5544,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                   <button
                     type="button"
                     onClick={() => {
-                      console.log('[Optimization] View Results clicked')
+                      logger.debug('[Optimization] View Results clicked')
                       if (optimizationResults) {
                         setShowResultsView(true)
                       } else if (submissionResponse?.results) {
@@ -5397,7 +5680,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                   onClick={() => {
                     const text = `Session ID: ${optimizationResultsArray[activeResultIndex].sessionId}, Job ID: ${optimizationResultsArray[activeResultIndex].jobId}`
                     navigator.clipboard.writeText(text)
-                    console.log('IDs copied:', text)
+                    logger.debug('IDs copied:', text)
                   }}
                   style={{
                     width: '100%',
@@ -5495,7 +5778,7 @@ const MapLibreView = ({ config }: MapLibreViewProps) => {
                         }
                       )
                     } catch (error) {
-                      console.error('[Zoom] Failed to fit bounds:', error)
+                      logger.error('[Zoom] Failed to fit bounds:', error)
                     }
                   }
                 }
